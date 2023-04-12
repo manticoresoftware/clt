@@ -1,0 +1,460 @@
+// Copyright (c) 2023, Manticore Software LTD (https://manticoresearch.com)
+// All rights reserved
+//
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use regex::Regex;
+use tokio::fs::{OpenOptions, File};
+use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader, BufWriter};
+use tokio::sync::oneshot;
+
+#[derive(Debug, structopt::StructOpt)]
+#[structopt(
+	name = "rec",
+	about = "Records input and output in rec files",
+	long_about = "\n\
+		This program will run a shell (or other program specified by the -c \
+		option), and record the full input and output into a single file)."
+)]
+struct Opt {
+	#[structopt(
+		short = "-I",
+		long,
+		help = "File to read command to replay from"
+	)]
+	input_file: Option<std::ffi::OsString>,
+
+	#[structopt(
+		short = "-O",
+		long,
+		default_value = "output.rec",
+		help = "File to save recorded results to"
+	)]
+	output_file: std::ffi::OsString,
+}
+
+const SHELL_CMD: &str = "/usr/bin/env";
+const SHELL_PROMPT: &str = "clt> ";
+const COMMAND_PREFIX: &str = "––– input –––";
+const COMMAND_SEPARATOR: &str = "––– output –––";
+const PROMPT_REGEX: &str = r"(?m)^\s*(.+?)([$#>])\s*[^$]+$";
+const INIT_CMD: &[u8] = b"exec 2>&1; enable -n exit enable;\r";
+#[derive(Debug)]
+enum Event {
+	Key(textmode::Result<Option<textmode::Key>>),
+	Stdout(std::io::Result<Vec<u8>>),
+	Write(std::io::Result<Vec<u8>>),
+	Error(anyhow::Error),
+	Replay(String, oneshot::Sender<()>),
+	Quit,
+}
+
+#[tokio::main]
+async fn async_main(opt: Opt) -> anyhow::Result<()> {
+	let Opt { input_file, output_file } = opt;
+
+	let mut stdout = tokio::io::stdout();
+
+	let mut pty = pty_process::Pty::new()?;
+	let pts = pty.pts()?;
+	let mut process = pty_process::Command::new(SHELL_CMD);
+	process.arg("-i")
+		.arg(format!("PS1={}", SHELL_PROMPT))
+		.arg("bash")
+		.arg("--noprofile")
+		.arg("--norc")
+		// .arg("--init-file")
+		// .arg(get_bash_rcfile().await.unwrap())
+		.stdout(std::process::Stdio::piped())
+	;
+
+	let mut child = process.spawn(&pts)?;
+
+	let mut input = textmode::blocking::Input::new()?;
+	let _input_guard = input.take_raw_guard();
+
+	let (event_w, mut event_r) = tokio::sync::mpsc::unbounded_channel();
+	let (input_w, mut input_r) = tokio::sync::mpsc::unbounded_channel();
+
+	// We use this buffer to gather all inputs we type
+	let mut output_fh = tokio::fs::File::create(output_file.clone()).await?;
+
+	// Retrieve the stdout of the child process
+	let child_stdout = child.stdout.take().unwrap();
+
+	// Initialize
+	pty.write(INIT_CMD).await.unwrap();
+	pty.flush().await?;
+
+	let event_w2 = event_w.clone();
+	// Spawn a task to asynchronously copy the output of the child process to stdout
+	tokio::spawn(async move {
+		let mut reader = BufReader::new(child_stdout);
+		loop {
+			let mut buf = vec![0; 4096];
+			let bytes_read = reader.read_buf(&mut buf).await.unwrap();
+			if bytes_read == 0 {
+				break;
+			}
+			let bytes = filter_stdout_buf(buf);
+			event_w2.send(Event::Write(Ok(bytes.clone()))).unwrap();
+			event_w2.send(Event::Stdout(Ok(bytes))).unwrap();
+    }
+	});
+
+	// If we have input file passed, we replay, otherwise – record
+	// Replay the input_file and save results in output_file
+	let is_replay = input_file.is_some();
+  if let Some(input_file) = input_file {
+		let input_fh = tokio::fs::File::open(input_file).await?;
+
+		let mut lines = BufReader::new(input_fh).lines();
+
+		let mut commands = Vec::new();
+    let mut last_line = String::new();
+    while let Some(line) = lines.next_line().await? {
+			if line.starts_with(COMMAND_SEPARATOR) {
+				commands.push(last_line)
+			}
+			last_line = line;
+    }
+
+		// Add exit command, because we do not write it
+		commands.push("^D".to_string());
+
+		{
+			let event_w = event_w.clone();
+			tokio::spawn(async move {
+				for command in commands {
+					let (tx, rx) = oneshot::channel();
+					event_w.send(Event::Replay(command, tx)).unwrap();
+					// Block until the command has finished executing.
+					rx.await.unwrap();
+				}
+			});
+		}
+
+	} else {
+		{
+			let event_w = event_w.clone();
+			std::thread::spawn(move || {
+				loop {
+					event_w
+						.send(Event::Key(input.read_key()))
+						// event_w is never closed, so this can never fail
+						.unwrap();
+				}
+			});
+		}
+	}
+
+	{
+		let event_w = event_w.clone();
+		tokio::task::spawn(async move {
+			loop {
+				let mut buf = [0_u8; 4096];
+				tokio::select! {
+					res = pty.read(&mut buf) => {
+						let res = res.map(|n| buf[..n].to_vec());
+						let err = res.is_err();
+						event_w
+							.send(Event::Stdout(res))
+							// event_w is never closed, so this can never fail
+							.unwrap();
+						if err {
+							eprintln!("pty read failed: {}", err);
+							break;
+						}
+					}
+					res = input_r.recv() => {
+						if res.is_none() {
+							return;
+						}
+
+						let bytes: Vec<u8> = res.unwrap();
+
+						if let Err(e) = pty.write(&bytes).await {
+							event_w
+								.send(Event::Error(anyhow::anyhow!(e)))
+								// event_w is never closed, so this can never
+								// fail
+								.unwrap();
+						}
+					}
+					_ = child.wait() => {
+						event_w.send(Event::Quit).unwrap();
+						break;
+					}
+				}
+			}
+		});
+	}
+
+	let mut input_pos: usize = 0;
+	let mut input: Vec<u8> = Vec::new();
+	loop {
+		match event_r.recv().await.unwrap() {
+			Event::Key(key) => {
+				let key = key?;
+				if let Some(ref key) = key {
+					let bytes = key.clone().into_bytes();
+					match *key {
+						textmode::Key::Char(c) => {
+							input.insert(input_pos, c as u8);
+							input_pos += 1;
+						}
+						textmode::Key::Backspace => {
+							if input_pos > 0 {
+								input.remove(input_pos - 1);
+								input_pos -= 1;
+							}
+						}
+						textmode::Key::Delete => {
+							if input_pos < input.len() {
+								input.remove(input_pos);
+							}
+						}
+						textmode::Key::Left => {
+							if input_pos > 0 {
+								input_pos -= 1;
+							}
+						}
+						textmode::Key::Right => {
+							if input_pos < input.len() {
+								input_pos += 1;
+							}
+						}
+						textmode::Key::Ctrl(b'a') => {
+							input_pos = 0;
+						}
+						textmode::Key::Ctrl(b'e') => {
+							input_pos = input.len();
+						}
+						_ => {}
+					}
+
+					// And when we hit enter – send it
+					if bytes == [13] || bytes == [04] {
+						let mut command = if bytes == [04] {
+							"^D".to_string()
+						} else {
+							String::from_utf8_lossy(&input).to_string()
+						};
+
+						// Do not write ^D to the end of file because we are just exiting
+						if command != String::from("^D") {
+							command = format!("\r\n{}\r\n{}\r\n{}\r\n", COMMAND_PREFIX, command, COMMAND_SEPARATOR);
+							event_w.send(Event::Write(Ok(command.as_bytes().to_vec()))).unwrap();
+						}
+
+						input.clear();
+						input_pos = 0;
+					}
+					input_w.send(bytes).unwrap();
+				} else {
+					break;
+				}
+			}
+			Event::Stdout(bytes) => match bytes {
+				Ok(bytes) => {
+					// print!("Default: [{}]", String::from_utf8_lossy(&bytes));
+					if !is_replay {
+						stdout.write_all(&bytes).await?;
+						stdout.flush().await?;
+					}
+				}
+				Err(e) => {
+					anyhow::bail!("failed to read from child process: {}", e);
+				}
+			}
+			Event::Write(bytes) => match bytes {
+				Ok(bytes) => {
+					let output = std::str::from_utf8(&bytes)?;
+					// We write only when the output is not the same as input
+					// This solves problem with readline usage in interactive mysql shell
+					// That duplicates output to stdout from user input
+					let input = std::str::from_utf8(&input)?;
+					if !input.ends_with(output) {
+						let filtered_output = filter_prompt(output);
+						// println!("writing: [{}]", String::from_utf8_lossy(&bytes));
+						output_fh.write_all(&filtered_output.as_bytes()).await?;
+					}
+				}
+				Err(e) => {
+					anyhow::bail!("failed to read from child process: {}", e);
+				}
+			}
+			Event::Error(e) => {
+				return Err(e);
+			}
+			Event::Replay(command, tx) => {
+				let mut bytes: Vec<u8>;
+				if command == "^D" {
+					bytes = vec![04];
+				} else {
+					bytes = command.as_bytes().to_vec();
+					bytes.push(b'\r');
+					bytes.push(b'\n');
+				}
+
+				let mut result: Vec<u8> = Vec::new();
+				let input_cmd = format!("\r\n{}\r\n{}\r\n{}\r\n", COMMAND_PREFIX, command, COMMAND_SEPARATOR);
+				result.extend_from_slice(input_cmd.as_bytes());				// Send the command to the pty
+				input_w.send(bytes).unwrap();
+				// Wait for the shell prompt to appear in the output, indicating that
+				// the command has finished executing. You may need to adjust the
+				// prompt detection logic depending on the shell being used.
+				loop {
+					if let Event::Stdout(Ok(bytes)) = event_r.recv().await.unwrap() {
+						// print!("Replay: [{}]", String::from_utf8_lossy(&bytes));
+						let command_bytes = command.trim().as_bytes().to_vec();
+
+						let mut final_bytes = bytes.clone();
+						if final_bytes.starts_with(&command_bytes) {
+							let len = command_bytes.len();
+							final_bytes.drain(0..len);
+						}
+						let output = format!("{}", String::from_utf8_lossy(&final_bytes));
+						let filtered_output = filter_prompt(output.as_str());
+						let has_prompt = filtered_output != output;
+						let is_endint_with_prompt = !filtered_output.ends_with(last_x_chars(output.as_str(), 5).as_str());
+						let is_done = if command == String::from("^D") || (String::from_utf8_lossy(&result).trim() != input_cmd.trim() && has_prompt) || is_endint_with_prompt {
+							true
+						} else {
+							false
+						};
+						// println!("is done {:?} output {:?}", is_done, output);
+						// output = filtered_output;
+						if command != "^D" && filtered_output.len() > 0 {
+							result.extend_from_slice(filtered_output.as_bytes());
+						}
+
+						if is_done {
+							if command != String::from("^D") {
+								let content = filter_stdout_buf(result);
+								if content.len() > 0 {
+									// println!("CONTENT [{}]", String::from_utf8_lossy(&content));
+									event_w.send(Event::Write(Ok(content))).unwrap();
+									// output_fh.write_all(&content).await?;
+								}
+							}
+							// Signal that the command has finished executing.
+							tx.send(()).unwrap();
+							break;
+						}
+					}
+				}
+			}
+			Event::Quit => {
+				// Do a file clean up to remove spaces and make consistent output
+				let file_path = output_file.clone().into_string().unwrap();
+				cleanup_file(file_path).await.unwrap();
+
+				println!("");
+				break
+			}
+		}
+	}
+
+	Ok(())
+}
+
+#[paw::main]
+fn main(opt: Opt) {
+	match async_main(opt) {
+		Ok(_) => (),
+		Err(e) => {
+			eprintln!("rec: {}", e);
+			std::process::exit(1);
+		}
+	};
+}
+
+fn filter_stdout_buf(buf: Vec<u8>) -> Vec<u8> {
+	// Create new bytes vector and filter from buf zero bytes
+	// and also replace \n to \r int it due to we need return caret in terminal
+	let mut prev_byte = &0;
+	let mut bytes: Vec<u8> = Vec::new();
+	for byte in buf.iter() {
+		if *byte == b'\0' {
+			continue;
+		}
+
+		if *prev_byte != b'\r' && *byte == b'\n' {
+			bytes.push(b'\r');
+		}
+
+		bytes.push(*byte);
+		prev_byte = byte;
+	}
+	bytes
+}
+
+fn filter_prompt(prompt: &str) -> String {
+	let re = Regex::new(PROMPT_REGEX).unwrap();
+	re.replace_all(prompt, "").to_string()
+}
+
+fn last_x_chars(s: &str, x: usize) -> String {
+	s.chars().rev().take(x).collect::<Vec<char>>().into_iter().rev().collect()
+}
+
+/// This function cleans up all empty lines to make the consistent output
+async fn cleanup_file(file_path: String) -> Result<(), Box<dyn std::error::Error>> {
+	let file =  File::open(&file_path).await?;
+	let temp_output_file: String = format!("{}.tmp", &file_path);
+	let temp_file = OpenOptions::new()
+		.write(true)
+		.create(true)
+		.open(&temp_output_file)
+		.await?;
+	let reader = BufReader::new(file);
+	let mut writer = BufWriter::new(temp_file);
+
+
+	let mut lines = reader.lines();
+
+	while let Some(line) = lines.next_line().await? {
+		if line.trim().is_empty() {
+			continue;
+		}
+		writer.write_all(line.trim().as_bytes()).await?;
+		writer.write_all(b"\r\n").await?;
+	}
+
+	writer.flush().await?;
+
+	tokio::fs::remove_file(&file_path).await?;
+	tokio::fs::rename(temp_output_file, file_path).await?;
+
+	Ok(())
+}
+
+// async fn get_bash_rcfile() -> Result<String, Box<dyn std::error::Error>> {
+// 	let file_name = ".rec-bashrc";
+// 	let temp_dir = std::env::temp_dir();
+// 	let file_path = temp_dir.join(file_name);
+
+// 	let file = OpenOptions::new()
+// 		.write(true)
+// 		.create(true)
+// 		.open(&file_path)
+// 		.await?;
+// 	let mut writer = BufWriter::new(file);
+// 	writer.write_all(INIT_CMD).await?;
+// 	writer.flush().await?;
+
+
+// 	Ok(file_path.to_string_lossy().to_string())
+// }

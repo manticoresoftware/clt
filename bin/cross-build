@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -e
+
+for folder in rec cmp; do
+  cd $folder
+  # https://github.com/joseluisq/rust-linux-darwin-builder
+  docker run --network host --rm -v "$(pwd):/root/src" -w /root/src -it joseluisq/rust-linux-darwin-builder:1.67.1 bash -c "\
+    cargo build --target=x86_64-unknown-linux-musl --release; \
+    cargo build --target=aarch64-unknown-linux-musl --release; \
+  "
+  cd ..
+  # Copy binaries
+  cp "$folder/target/x86_64-unknown-linux-musl/release/$folder" bin/x86_64/
+  cp "$folder/target/aarch64-unknown-linux-musl/release/$folder" bin/aarch64/
+done

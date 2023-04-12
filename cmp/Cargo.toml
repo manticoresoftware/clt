@@ -1,0 +1,17 @@
+[package]
+name = "cmp"
+version = "0.1.0"
+edition = "2021"
+authors = ["Manticore Software Ltd <contact@manticoresearch.com>"]
+license = "Apache-2.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+regex = "1.7.1"
+
+[profile.release]
+strip = true  # Automatically strip symbols from the binary.
+opt-level = "z"  # Optimize for size.
+lto = true
+codegen-units = 1

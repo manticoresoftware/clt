@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Copyright (c) 2023, Manticore Software LTD (https:#manticoresearch.com)
+# All rights reserved
+#
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -e
+
+PROGRAM='./clt'
+if [[ -z "$1" ]]; then
+	>&2 echo "No command specified. Run '$PROGRAM command'. '$PROGRAM help' for more info." && exit 1
+fi
+
+# Get first command and shift it out of input args
+cmd=$1
+shift
+
+PROJECT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+DOCKER_PROJECT_DIR='/.clt'
+
+# Export global variables
+export PROJECT_DIR DOCKER_PROJECT_DIR
+
+case "$cmd" in
+	record)
+		bash "$PROJECT_DIR/src/record.sh" "$@"
+		;;
+
+	test)
+		bash "$PROJECT_DIR/src/test.sh" "$@"
+		;;
+
+	refine)
+		bash "$PROJECT_DIR/src/refine.sh" "$@"
+		;;
+
+	create-ci)
+		bash "$PROJECT_DIR/src/create-ci.sh" "$@"
+		;;
+
+	help)
+		bash "$PROJECT_DIR/src/help.sh" "$@"
+		;;
+
+	*)
+		>&2 echo "Unknown command '$cmd'"
+		;;
+esac
+
