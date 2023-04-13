@@ -50,7 +50,7 @@ const COMMAND_PREFIX: &str = "––– input –––";
 const COMMAND_SEPARATOR: &str = "––– output –––";
 const PROMPT_REGEX: &str = r"(?m)^\s*(.+?)([$#>])\s*$";
 const PROMPT_LINE_REGEX: &str = r"(?m)^\s*(.+?)([$#>])\s*[^$]+$";
-const INIT_CMD: &[u8] = b"export PS1='clt> ';enable -n exit enable;exec 2>&1;";
+const INIT_CMD: &[u8] = b"export PS1='clt> ';export LANG='en_US.UTF-8';export LC_ALL='en_US.UTF-8';enable -n exit enable;exec 2>&1;";
 
 #[derive(Debug)]
 enum Event {
