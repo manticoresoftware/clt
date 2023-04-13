@@ -48,8 +48,10 @@ const SHELL_CMD: &str = "/usr/bin/env";
 const SHELL_PROMPT: &str = "clt> ";
 const COMMAND_PREFIX: &str = "––– input –––";
 const COMMAND_SEPARATOR: &str = "––– output –––";
-const PROMPT_REGEX: &str = r"(?m)^\s*(.+?)([$#>])\s*[^$]+$";
-const INIT_CMD: &[u8] = b"exec 2>&1; enable -n exit enable;\r";
+const PROMPT_REGEX: &str = r"(?m)^\s*(.+?)([$#>])\s*$";
+const PROMPT_LINE_REGEX: &str = r"(?m)^\s*(.+?)([$#>])\s*[^$]+$";
+const INIT_CMD: &[u8] = b"export PS1='clt> ';enable -n exit enable;exec 2>&1;";
+
 #[derive(Debug)]
 enum Event {
 	Key(textmode::Result<Option<textmode::Key>>),
@@ -73,11 +75,21 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 		.arg(format!("PS1={}", SHELL_PROMPT))
 		.arg("bash")
 		.arg("--noprofile")
-		.arg("--norc")
-		// .arg("--init-file")
-		// .arg(get_bash_rcfile().await.unwrap())
+		// .arg("--norc")
 		.stdout(std::process::Stdio::piped())
 	;
+
+	let is_replay = input_file.is_some();
+	// We do not use rc for replay because stderr already redirected
+	// And in case we have it enabled we have rudiment int output file that makes diff
+	if is_replay {
+		process.arg("--norc");
+	} else {
+		process
+			.arg("--rcfile")
+			.arg(get_bash_rcfile().await.unwrap())
+		;
+	}
 
 	let mut child = process.spawn(&pts)?;
 
@@ -92,10 +104,6 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 
 	// Retrieve the stdout of the child process
 	let child_stdout = child.stdout.take().unwrap();
-
-	// Initialize
-	pty.write(INIT_CMD).await.unwrap();
-	pty.flush().await?;
 
 	let event_w2 = event_w.clone();
 	// Spawn a task to asynchronously copy the output of the child process to stdout
@@ -115,7 +123,6 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 
 	// If we have input file passed, we replay, otherwise – record
 	// Replay the input_file and save results in output_file
-	let is_replay = input_file.is_some();
   if let Some(input_file) = input_file {
 		let input_fh = tokio::fs::File::open(input_file).await?;
 
@@ -168,14 +175,15 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 					res = pty.read(&mut buf) => {
 						let res = res.map(|n| buf[..n].to_vec());
 						let err = res.is_err();
-						event_w
-							.send(Event::Stdout(res))
-							// event_w is never closed, so this can never fail
-							.unwrap();
 						if err {
 							eprintln!("pty read failed: {}", err);
 							break;
 						}
+						let bytes = res.unwrap();
+						event_w
+							.send(Event::Stdout(Ok(bytes)))
+							// event_w is never closed, so this can never fail
+							.unwrap();
 					}
 					res = input_r.recv() => {
 						if res.is_none() {
@@ -308,6 +316,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 					bytes.push(b'\n');
 				}
 
+				// print!("command [{}]\r\n", command);
 				let mut result: Vec<u8> = Vec::new();
 				let input_cmd = format!("\r\n{}\r\n{}\r\n{}\r\n", COMMAND_PREFIX, command, COMMAND_SEPARATOR);
 				result.extend_from_slice(input_cmd.as_bytes());				// Send the command to the pty
@@ -317,24 +326,29 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 				// prompt detection logic depending on the shell being used.
 				loop {
 					if let Event::Stdout(Ok(bytes)) = event_r.recv().await.unwrap() {
-						// print!("Replay: [{}]", String::from_utf8_lossy(&bytes));
-						let command_bytes = command.trim().as_bytes().to_vec();
-
-						let mut final_bytes = bytes.clone();
-						if final_bytes.starts_with(&command_bytes) {
-							let len = command_bytes.len();
-							final_bytes.drain(0..len);
+						// print!("Replay: [{}]\r\n", String::from_utf8_lossy(&bytes));
+						let output = format!("{}", String::from_utf8_lossy(&bytes));
+						let mut filtered_output = filter_prompt(output.as_str());
+						if filtered_output.starts_with(command.as_str()) {
+							filtered_output = substring(&filtered_output, command.len() as usize, filtered_output.len() - command.len()).to_string();
 						}
-						let output = format!("{}", String::from_utf8_lossy(&final_bytes));
-						let filtered_output = filter_prompt(output.as_str());
-						let has_prompt = filtered_output != output;
+						// print!("filtered: [{}]\r\n", filtered_output);
+
+						// let command_bytes = command.trim().as_bytes().to_vec();
+						// let mut final_bytes = bytes.clone();
+						// if final_bytes.starts_with(&command_bytes) {
+						// 	let len = command_bytes.len();
+						// 	final_bytes.drain(0..len);
+						// }
+
+						// let has_prompt = filtered_output != output;
 						let is_endint_with_prompt = !filtered_output.ends_with(last_x_chars(output.as_str(), 5).as_str());
-						let is_done = if command == String::from("^D") || (String::from_utf8_lossy(&result).trim() != input_cmd.trim() && has_prompt) || is_endint_with_prompt {
+						let is_done = if command == String::from("^D") || (String::from_utf8_lossy(&result).trim() != input_cmd.trim() && is_endint_with_prompt) || is_prompting(&output) {
 							true
 						} else {
 							false
 						};
-						// println!("is done {:?} output {:?}", is_done, output);
+						// print!("is done {:?}\r\n", is_done);
 						// output = filtered_output;
 						if command != "^D" && filtered_output.len() > 0 {
 							result.extend_from_slice(filtered_output.as_bytes());
@@ -402,8 +416,13 @@ fn filter_stdout_buf(buf: Vec<u8>) -> Vec<u8> {
 }
 
 fn filter_prompt(prompt: &str) -> String {
-	let re = Regex::new(PROMPT_REGEX).unwrap();
+	let re = Regex::new(PROMPT_LINE_REGEX).unwrap();
 	re.replace_all(prompt, "").to_string()
+}
+
+fn is_prompting(output: &str) -> bool {
+	let re = Regex::new(PROMPT_REGEX).unwrap();
+	re.is_match(output)
 }
 
 fn last_x_chars(s: &str, x: usize) -> String {
@@ -441,20 +460,30 @@ async fn cleanup_file(file_path: String) -> Result<(), Box<dyn std::error::Error
 	Ok(())
 }
 
-// async fn get_bash_rcfile() -> Result<String, Box<dyn std::error::Error>> {
-// 	let file_name = ".rec-bashrc";
-// 	let temp_dir = std::env::temp_dir();
-// 	let file_path = temp_dir.join(file_name);
+async fn get_bash_rcfile() -> Result<String, Box<dyn std::error::Error>> {
+	let file_name = ".rec-bashrc";
+	let temp_dir = std::env::temp_dir();
+	let file_path = temp_dir.join(file_name);
 
-// 	let file = OpenOptions::new()
-// 		.write(true)
-// 		.create(true)
-// 		.open(&file_path)
-// 		.await?;
-// 	let mut writer = BufWriter::new(file);
-// 	writer.write_all(INIT_CMD).await?;
-// 	writer.flush().await?;
+	let file = OpenOptions::new()
+		.write(true)
+		.create(true)
+		.truncate(true)
+		.open(&file_path)
+		.await?;
+	let mut writer = BufWriter::new(file);
+	writer.write_all(INIT_CMD).await?;
+	writer.flush().await?;
 
+	Ok(file_path.to_string_lossy().to_string())
+}
 
-// 	Ok(file_path.to_string_lossy().to_string())
-// }
+fn substring(s: &str, start: usize, len: usize) -> &str {
+	let end = start + len;
+
+	if end > s.len() {
+		panic!("Substring index out of range");
+	}
+
+	&s[start..end]
+}
