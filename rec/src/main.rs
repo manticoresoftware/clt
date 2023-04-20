@@ -50,7 +50,7 @@ const COMMAND_PREFIX: &str = "––– input –––";
 const COMMAND_SEPARATOR: &str = "––– output –––";
 const PROMPT_REGEX: &str = r"(?m)^\s*(.+?)([$#>])\s*$";
 const PROMPT_LINE_REGEX: &str = r"(?m)^\s*(.+?)([$#>])\s*[^$]+$";
-const INIT_CMD: &[u8] = b"export PS1='clt> ';export LANG='en_US.UTF-8';export LC_ALL='en_US.UTF-8';enable -n exit enable;exec 2>&1;";
+const INIT_CMD: &[u8] = b"export PS1='clt> ';export LANG='en_US.UTF-8';enable -n exit enable;exec 2>&1;";
 
 #[derive(Debug)]
 enum Event {
@@ -75,22 +75,12 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 		.arg(format!("PS1={}", SHELL_PROMPT))
 		.arg("bash")
 		.arg("--noprofile")
-		// .arg("--norc")
-		.stdout(std::process::Stdio::piped())
+		.arg("--rcfile")
+		.arg(get_bash_rcfile().await.unwrap())
+		// .stdout(std::process::Stdio::piped())
 	;
 
 	let is_replay = input_file.is_some();
-	// We do not use rc for replay because stderr already redirected
-	// And in case we have it enabled we have rudiment int output file that makes diff
-	if is_replay {
-		process.arg("--norc");
-	} else {
-		process
-			.arg("--rcfile")
-			.arg(get_bash_rcfile().await.unwrap())
-		;
-	}
-
 	let mut child = process.spawn(&pts)?;
 
 	let mut input = textmode::blocking::Input::new()?;
@@ -102,24 +92,27 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	// We use this buffer to gather all inputs we type
 	let mut output_fh = tokio::fs::File::create(output_file.clone()).await?;
 
-	// Retrieve the stdout of the child process
-	let child_stdout = child.stdout.take().unwrap();
+	// // Retrieve the stdout of the child process
+	// let child_stdout = child.stdout.take().unwrap();
 
-	let event_w2 = event_w.clone();
-	// Spawn a task to asynchronously copy the output of the child process to stdout
-	tokio::spawn(async move {
-		let mut reader = BufReader::new(child_stdout);
-		loop {
-			let mut buf = vec![0; 4096];
-			let bytes_read = reader.read_buf(&mut buf).await.unwrap();
-			if bytes_read == 0 {
-				break;
-			}
-			let bytes = filter_stdout_buf(buf);
-			event_w2.send(Event::Write(Ok(bytes.clone()))).unwrap();
-			event_w2.send(Event::Stdout(Ok(bytes))).unwrap();
-    }
-	});
+	// let event_w2 = event_w.clone();
+	// // Spawn a task to asynchronously copy the output of the child process to stdout
+	// tokio::spawn(async move {
+	// 	let mut reader = BufReader::new(child_stdout);
+	// 	loop {
+	// 		let mut buf = vec![0; 4096];
+	// 		let bytes_read = reader.read_buf(&mut buf).await.unwrap();
+	// 		if bytes_read == 0 {
+	// 			break;
+	// 		}
+	// 		let bytes = filter_stdout_buf(buf);
+	// 		// We need this write only for non replay action
+	// 		if !is_replay {
+	// 			event_w2.send(Event::Write(Ok(bytes.clone()))).unwrap();
+	// 		}
+	// 		event_w2.send(Event::Stdout(Ok(bytes))).unwrap();
+  //   }
+	// });
 
 	// If we have input file passed, we replay, otherwise – record
 	// Replay the input_file and save results in output_file
@@ -143,6 +136,9 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 		{
 			let event_w = event_w.clone();
 			tokio::spawn(async move {
+				// block thread for short time to make sure that pty is forked
+				// The proper way is to wait until we get prompt shell response and continue
+				tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 				for command in commands {
 					let (tx, rx) = oneshot::channel();
 					event_w.send(Event::Replay(command, tx)).unwrap();
@@ -180,6 +176,11 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 							break;
 						}
 						let bytes = res.unwrap();
+						// println!("[{}]", String::from_utf8_lossy(&bytes));
+						// We need this write only for non replay action
+						if !is_replay {
+							event_w.send(Event::Write(Ok(bytes.clone()))).unwrap();
+						}
 						event_w
 							.send(Event::Stdout(Ok(bytes)))
 							// event_w is never closed, so this can never fail
@@ -211,6 +212,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 
 	let mut input_pos: usize = 0;
 	let mut input: Vec<u8> = Vec::new();
+	let mut is_typing = false;
 	loop {
 		match event_r.recv().await.unwrap() {
 			Event::Key(key) => {
@@ -253,12 +255,14 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 					}
 
 					// And when we hit enter – send it
+					is_typing = true;
 					if bytes == [13] || bytes == [04] {
 						let mut command = if bytes == [04] {
 							"^D".to_string()
 						} else {
 							String::from_utf8_lossy(&input).to_string()
 						};
+						is_typing = false;
 
 						// Do not write ^D to the end of file because we are just exiting
 						if command != String::from("^D") {
@@ -293,9 +297,8 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 					// This solves problem with readline usage in interactive mysql shell
 					// That duplicates output to stdout from user input
 					let input = std::str::from_utf8(&input)?;
-					if !input.ends_with(output) {
+					if !is_typing && !input.ends_with(output) {
 						let filtered_output = filter_prompt(output);
-						// println!("writing: [{}]", String::from_utf8_lossy(&bytes));
 						output_fh.write_all(&filtered_output.as_bytes()).await?;
 					}
 				}
@@ -311,12 +314,13 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 				if command == "^D" {
 					bytes = vec![04];
 				} else {
-					bytes = command.as_bytes().to_vec();
+					bytes = command.trim().as_bytes().to_vec();
 					bytes.push(b'\r');
 					bytes.push(b'\n');
 				}
 
 				// print!("command [{}]\r\n", command);
+				let mut command_output: String = String::new();
 				let mut result: Vec<u8> = Vec::new();
 				let input_cmd = format!("\r\n{}\r\n{}\r\n{}\r\n", COMMAND_PREFIX, command, COMMAND_SEPARATOR);
 				result.extend_from_slice(input_cmd.as_bytes());				// Send the command to the pty
@@ -328,33 +332,28 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 					if let Event::Stdout(Ok(bytes)) = event_r.recv().await.unwrap() {
 						// print!("Replay: [{}]\r\n", String::from_utf8_lossy(&bytes));
 						let output = format!("{}", String::from_utf8_lossy(&bytes));
-						let mut filtered_output = filter_prompt(output.as_str());
-						if filtered_output.starts_with(command.as_str()) {
-							filtered_output = substring(&filtered_output, command.len() as usize, filtered_output.len() - command.len()).to_string();
-						}
-						// print!("filtered: [{}]\r\n", filtered_output);
-
-						// let command_bytes = command.trim().as_bytes().to_vec();
-						// let mut final_bytes = bytes.clone();
-						// if final_bytes.starts_with(&command_bytes) {
-						// 	let len = command_bytes.len();
-						// 	final_bytes.drain(0..len);
-						// }
-
+						// print!("output: [{}]\r\n", output);
 						// let has_prompt = filtered_output != output;
-						let is_endint_with_prompt = !filtered_output.ends_with(last_x_chars(output.as_str(), 5).as_str());
-						let is_done = if command == String::from("^D") || (String::from_utf8_lossy(&result).trim() != input_cmd.trim() && is_endint_with_prompt) || is_prompting(&output) {
+						let is_endint_with_prompt = !output.ends_with(last_x_chars(output.as_str(), 5).as_str());
+						let is_done = if command == String::from("^D") || (!command_output.is_empty() && is_endint_with_prompt) || is_prompting(&output) {
 							true
 						} else {
 							false
 						};
 						// print!("is done {:?}\r\n", is_done);
 						// output = filtered_output;
-						if command != "^D" && filtered_output.len() > 0 {
-							result.extend_from_slice(filtered_output.as_bytes());
+						if command != "^D" {
+							command_output.push_str(&output);
 						}
 
 						if is_done {
+							let mut filtered_output = filter_prompt(command_output.as_str());
+							if filtered_output.trim() == command.as_str() || filtered_output.starts_with(format!("{}{}", command.as_str(), "\r\n").as_str()) {
+								filtered_output = substring(&filtered_output, command.len() as usize, filtered_output.len() - command.len()).to_string();
+							}
+							result.extend_from_slice(filtered_output.as_bytes());
+							// print!("filtered: [{}]\r\n", filtered_output.trim());
+
 							if command != String::from("^D") {
 								let content = filter_stdout_buf(result);
 								if content.len() > 0 {
@@ -422,16 +421,17 @@ fn filter_prompt(prompt: &str) -> String {
 
 fn is_prompting(output: &str) -> bool {
 	let re = Regex::new(PROMPT_REGEX).unwrap();
-	re.is_match(output)
+	let last_line = output.lines().last().unwrap_or("");
+	re.is_match(last_line)
 }
 
 fn last_x_chars(s: &str, x: usize) -> String {
 	s.chars().rev().take(x).collect::<Vec<char>>().into_iter().rev().collect()
 }
 
-/// This function cleans up all empty lines to make the consistent output
+/// This function cleans up all empty lines and removes the last line containing "exit" to make the consistent output
 async fn cleanup_file(file_path: String) -> Result<(), Box<dyn std::error::Error>> {
-	let file =  File::open(&file_path).await?;
+	let file = File::open(&file_path).await?;
 	let temp_output_file: String = format!("{}.tmp", &file_path);
 	let temp_file = OpenOptions::new()
 		.write(true)
@@ -441,13 +441,22 @@ async fn cleanup_file(file_path: String) -> Result<(), Box<dyn std::error::Error
 	let reader = BufReader::new(file);
 	let mut writer = BufWriter::new(temp_file);
 
-
 	let mut lines = reader.lines();
+	let mut non_empty_lines = Vec::new();
 
 	while let Some(line) = lines.next_line().await? {
-		if line.trim().is_empty() {
-			continue;
+		if !line.trim().is_empty() {
+			non_empty_lines.push(line);
 		}
+	}
+
+	if let Some(last_line) = non_empty_lines.last() {
+		if last_line.trim().to_lowercase().contains("exit") {
+			non_empty_lines.pop();
+		}
+	}
+
+	for line in non_empty_lines {
 		writer.write_all(line.trim().as_bytes()).await?;
 		writer.write_all(b"\r\n").await?;
 	}
