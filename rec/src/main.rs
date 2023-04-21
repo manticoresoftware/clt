@@ -178,11 +178,12 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 						let bytes = res.unwrap();
 						// println!("[{}]", String::from_utf8_lossy(&bytes));
 						// We need this write only for non replay action
+						let filtered = filter_stdout_buf(bytes);
 						if !is_replay {
-							event_w.send(Event::Write(Ok(bytes.clone()))).unwrap();
+							event_w.send(Event::Write(Ok(filtered.clone()))).unwrap();
 						}
 						event_w
-							.send(Event::Stdout(Ok(bytes)))
+							.send(Event::Stdout(Ok(filtered)))
 							// event_w is never closed, so this can never fail
 							.unwrap();
 					}
@@ -400,7 +401,7 @@ fn filter_stdout_buf(buf: Vec<u8>) -> Vec<u8> {
 	let mut prev_byte = &0;
 	let mut bytes: Vec<u8> = Vec::new();
 	for byte in buf.iter() {
-		if *byte == b'\0' {
+		if *byte == b'\0' || *byte == 7u8 {
 			continue;
 		}
 
