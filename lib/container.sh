@@ -31,7 +31,7 @@ container_exec() {
   docker run \
     -v "$bin_path/rec:/usr/bin/rec" \
     -v "$bin_path/cmp:/usr/bin/cmp" \
-    -v "$PROJECT_DIR/tests:$DOCKER_PROJECT_DIR/tests" \
+    -v "$PWD/tests:$DOCKER_PROJECT_DIR/tests" \
     -w "$DOCKER_PROJECT_DIR" \
     --network host \
     --entrypoint /bin/bash \
