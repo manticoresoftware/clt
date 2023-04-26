@@ -33,6 +33,7 @@ container_exec() {
     -v "$bin_path/cmp:/usr/bin/cmp" \
     -v "$PWD/tests:$DOCKER_PROJECT_DIR/tests" \
     -w "$DOCKER_PROJECT_DIR" \
+    $RUN_ARGS \
     --network host \
     --entrypoint /bin/bash \
     --rm -it "$image" \

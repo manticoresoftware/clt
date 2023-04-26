@@ -20,7 +20,11 @@ set -e
 argument_parse_docker_image() {
 	docker_image="${!#}"
 	if [ -n "$docker_image" ]; then
-		if ! docker pull "$docker_image" 1> /dev/null 2>&1; then
+		image_exists=0
+		if docker images | grep "$docker_image" 1> /dev/null 2>&1; then
+			image_exists=1
+		fi
+		if [ $image_exists = 0 ] && ! docker pull "$docker_image" 1> /dev/null 2>&1; then
 			>&2 echo "Failed to find passed Docker image: $docker_image" && exit 1
 		fi
 	fi
