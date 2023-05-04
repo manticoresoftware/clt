@@ -130,9 +130,6 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 			last_line = line;
     }
 
-		// Add exit command, because we do not write it
-		commands.push("^D".to_string());
-
 		{
 			let event_w = event_w.clone();
 			tokio::spawn(async move {
@@ -145,6 +142,12 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 					// Block until the command has finished executing.
 					rx.await.unwrap();
 				}
+
+				// Exit with ^D because we do not write it
+				// We should not send ^D here because it probably will go to replay,
+				// but we do not handle it now
+				event_w.send(Event::Quit).unwrap();
+
 			});
 		}
 
@@ -312,13 +315,9 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 			}
 			Event::Replay(command, tx) => {
 				let mut bytes: Vec<u8>;
-				if command == "^D" {
-					bytes = vec![04];
-				} else {
-					bytes = command.trim().as_bytes().to_vec();
-					bytes.push(b'\r');
-					bytes.push(b'\n');
-				}
+				bytes = command.trim().as_bytes().to_vec();
+				bytes.push(b'\r');
+				bytes.push(b'\n');
 
 				// print!("command [{}]\r\n", command);
 				let mut command_output: String = String::new();
@@ -336,16 +335,14 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 						// print!("output: [{}]\r\n", output);
 						// let has_prompt = filtered_output != output;
 						let is_endint_with_prompt = !output.ends_with(last_x_chars(output.as_str(), 5).as_str());
-						let is_done = if command == String::from("^D") || (!command_output.is_empty() && is_endint_with_prompt) || is_prompting(&output) {
+						let is_done = if (!command_output.is_empty() && is_endint_with_prompt) || is_prompting(&output) {
 							true
 						} else {
 							false
 						};
 						// print!("is done {:?}\r\n", is_done);
 						// output = filtered_output;
-						if command != "^D" {
-							command_output.push_str(&output);
-						}
+						command_output.push_str(&output);
 
 						if is_done {
 							let mut filtered_output = filter_prompt(command_output.as_str());
@@ -355,14 +352,13 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 							result.extend_from_slice(filtered_output.as_bytes());
 							// print!("filtered: [{}]\r\n", filtered_output.trim());
 
-							if command != String::from("^D") {
-								let content = filter_stdout_buf(result);
-								if content.len() > 0 {
-									// println!("CONTENT [{}]", String::from_utf8_lossy(&content));
-									event_w.send(Event::Write(Ok(content))).unwrap();
-									// output_fh.write_all(&content).await?;
-								}
+							let content = filter_stdout_buf(result);
+							if content.len() > 0 {
+								// println!("CONTENT [{}]", String::from_utf8_lossy(&content));
+								event_w.send(Event::Write(Ok(content))).unwrap();
+								// output_fh.write_all(&content).await?;
 							}
+
 							// Signal that the command has finished executing.
 							tx.send(()).unwrap();
 							break;
