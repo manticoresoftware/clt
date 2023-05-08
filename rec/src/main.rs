@@ -48,8 +48,9 @@ const SHELL_CMD: &str = "/usr/bin/env";
 const SHELL_PROMPT: &str = "clt> ";
 const COMMAND_PREFIX: &str = "––– input –––";
 const COMMAND_SEPARATOR: &str = "––– output –––";
-const PROMPT_REGEX: &str = r"(?m)^\s*(.+?)([$#>])\s*$";
-const PROMPT_LINE_REGEX: &str = r"(?m)^\s*(.+?)([$#>])\s*[^$]+$";
+const PROMPT_REGEX_STR: &str = "(.+?[$#>])";
+const PROMPT_REGEX: &str = r"(?m)^(.+?[$#>])\s*$";
+const PROMPT_LINE_REGEX: &str = r"(?m)^(.+?[$#>][^\n]+?$)+";
 const INIT_CMD: &[u8] = b"export PS1='clt> ';export LANG='en_US.UTF-8';enable -n exit enable;exec 2>&1;";
 
 #[derive(Debug)]
@@ -92,28 +93,6 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	// We use this buffer to gather all inputs we type
 	let mut output_fh = tokio::fs::File::create(output_file.clone()).await?;
 
-	// // Retrieve the stdout of the child process
-	// let child_stdout = child.stdout.take().unwrap();
-
-	// let event_w2 = event_w.clone();
-	// // Spawn a task to asynchronously copy the output of the child process to stdout
-	// tokio::spawn(async move {
-	// 	let mut reader = BufReader::new(child_stdout);
-	// 	loop {
-	// 		let mut buf = vec![0; 4096];
-	// 		let bytes_read = reader.read_buf(&mut buf).await.unwrap();
-	// 		if bytes_read == 0 {
-	// 			break;
-	// 		}
-	// 		let bytes = filter_stdout_buf(buf);
-	// 		// We need this write only for non replay action
-	// 		if !is_replay {
-	// 			event_w2.send(Event::Write(Ok(bytes.clone()))).unwrap();
-	// 		}
-	// 		event_w2.send(Event::Stdout(Ok(bytes))).unwrap();
-  //   }
-	// });
-
 	// If we have input file passed, we replay, otherwise – record
 	// Replay the input_file and save results in output_file
   if let Some(input_file) = input_file {
@@ -122,6 +101,9 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 		let mut lines = BufReader::new(input_fh).lines();
 
 		let mut commands = Vec::new();
+		// We need to send empty command to block thread till we get forked and get clt> prompt
+		commands.push(String::from(""));
+
     let mut last_line = String::new();
     while let Some(line) = lines.next_line().await? {
 			if line.starts_with(COMMAND_SEPARATOR) {
@@ -133,9 +115,6 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 		{
 			let event_w = event_w.clone();
 			tokio::spawn(async move {
-				// block thread for short time to make sure that pty is forked
-				// The proper way is to wait until we get prompt shell response and continue
-				tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 				for command in commands {
 					let (tx, rx) = oneshot::channel();
 					event_w.send(Event::Replay(command, tx)).unwrap();
@@ -172,23 +151,25 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 				let mut buf = [0_u8; 4096];
 				tokio::select! {
 					res = pty.read(&mut buf) => {
-						let res = res.map(|n| buf[..n].to_vec());
-						let err = res.is_err();
-						if err {
-							eprintln!("pty read failed: {}", err);
-							break;
+						match res {
+							Ok(n) => {
+								let bytes = buf[..n].to_vec();
+								// println!("[{}]", String::from_utf8_lossy(&bytes));
+								// We need this write only for non replay action
+								let filtered = filter_stdout_buf(bytes);
+								if !is_replay {
+									event_w.send(Event::Write(Ok(filtered.clone()))).unwrap();
+								}
+								event_w
+									.send(Event::Stdout(Ok(filtered)))
+									// event_w is never closed, so this can never fail
+									.unwrap();
+							},
+							Err(err) => {
+								eprintln!("pty read failed: {}", err);
+								break;
+							}
 						}
-						let bytes = res.unwrap();
-						// println!("[{}]", String::from_utf8_lossy(&bytes));
-						// We need this write only for non replay action
-						let filtered = filter_stdout_buf(bytes);
-						if !is_replay {
-							event_w.send(Event::Write(Ok(filtered.clone()))).unwrap();
-						}
-						event_w
-							.send(Event::Stdout(Ok(filtered)))
-							// event_w is never closed, so this can never fail
-							.unwrap();
 					}
 					res = input_r.recv() => {
 						if res.is_none() {
@@ -217,6 +198,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	let mut input_pos: usize = 0;
 	let mut input: Vec<u8> = Vec::new();
 	let mut is_typing = false;
+	let mut command_output_last_line = String::new();
 	loop {
 		match event_r.recv().await.unwrap() {
 			Event::Key(key) => {
@@ -284,7 +266,6 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 			}
 			Event::Stdout(bytes) => match bytes {
 				Ok(bytes) => {
-					// print!("Default: [{}]", String::from_utf8_lossy(&bytes));
 					if !is_replay {
 						stdout.write_all(&bytes).await?;
 						stdout.flush().await?;
@@ -314,49 +295,52 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 				return Err(e);
 			}
 			Event::Replay(command, tx) => {
-				let mut bytes: Vec<u8>;
-				bytes = command.trim().as_bytes().to_vec();
-				bytes.push(b'\r');
-				bytes.push(b'\n');
-
-				// print!("command [{}]\r\n", command);
 				let mut command_output: String = String::new();
+				command_output.push_str(&command_output_last_line);
 				let mut result: Vec<u8> = Vec::new();
-				let input_cmd = format!("\r\n{}\r\n{}\r\n{}\r\n", COMMAND_PREFIX, command, COMMAND_SEPARATOR);
-				result.extend_from_slice(input_cmd.as_bytes());				// Send the command to the pty
-				input_w.send(bytes).unwrap();
+				if !command.is_empty() {
+					let mut bytes: Vec<u8>;
+					bytes = command.trim().as_bytes().to_vec();
+					bytes.push(13u8); // Add enter keystroke
+
+					let input_cmd = format!("\r\n{}\r\n{}\r\n{}\r\n", COMMAND_PREFIX, command, COMMAND_SEPARATOR);
+					result.extend_from_slice(input_cmd.as_bytes());				// Send the command to the pty
+					input_w.send(bytes).unwrap();
+				}
+
 				// Wait for the shell prompt to appear in the output, indicating that
 				// the command has finished executing. You may need to adjust the
 				// prompt detection logic depending on the shell being used.
 				loop {
 					if let Event::Stdout(Ok(bytes)) = event_r.recv().await.unwrap() {
-						// print!("Replay: [{}]\r\n", String::from_utf8_lossy(&bytes));
 						let output = format!("{}", String::from_utf8_lossy(&bytes));
-						// print!("output: [{}]\r\n", output);
-						// let has_prompt = filtered_output != output;
-						let is_endint_with_prompt = !output.ends_with(last_x_chars(output.as_str(), 5).as_str());
-						let is_done = if (!command_output.is_empty() && is_endint_with_prompt) || is_prompting(&output) {
+						command_output.push_str(&output);
+
+						let prompt_command_string = format!(r"^{} {}", PROMPT_REGEX_STR, regex::escape(&command));
+						let prompt_command_regex = prompt_command_string.as_str();
+						let re = Regex::new(prompt_command_regex).unwrap();
+						let is_done = if re.is_match(&command_output) && is_prompting(&command_output) {
 							true
 						} else {
 							false
 						};
-						// print!("is done {:?}\r\n", is_done);
-						// output = filtered_output;
-						command_output.push_str(&output);
 
 						if is_done {
+							{
+								let command_output_clone = command_output.clone();
+								let command_output_lines = command_output_clone.lines();
+								command_output_last_line = String::from(command_output_lines.last().unwrap_or(""));
+							}
 							let mut filtered_output = filter_prompt(command_output.as_str());
-							if filtered_output.trim() == command.as_str() || filtered_output.starts_with(format!("{}{}", command.as_str(), "\r\n").as_str()) {
-								filtered_output = substring(&filtered_output, command.len() as usize, filtered_output.len() - command.len()).to_string();
+							if filtered_output.trim() == command.as_str() || filtered_output.trim().starts_with(format!("{}{}", command.as_str(), "\r\n").as_str()) {
+								let start: usize = filtered_output.find(command.as_str()).unwrap_or(0) + command.len();
+								filtered_output = substring(&filtered_output, start, filtered_output.len() - start).to_string();
 							}
 							result.extend_from_slice(filtered_output.as_bytes());
-							// print!("filtered: [{}]\r\n", filtered_output.trim());
 
 							let content = filter_stdout_buf(result);
 							if content.len() > 0 {
-								// println!("CONTENT [{}]", String::from_utf8_lossy(&content));
 								event_w.send(Event::Write(Ok(content))).unwrap();
-								// output_fh.write_all(&content).await?;
 							}
 
 							// Signal that the command has finished executing.
@@ -420,10 +404,6 @@ fn is_prompting(output: &str) -> bool {
 	let re = Regex::new(PROMPT_REGEX).unwrap();
 	let last_line = output.lines().last().unwrap_or("");
 	re.is_match(last_line)
-}
-
-fn last_x_chars(s: &str, x: usize) -> String {
-	s.chars().rev().take(x).collect::<Vec<char>>().into_iter().rev().collect()
 }
 
 /// This function cleans up all empty lines and removes the last line containing "exit" to make the consistent output
