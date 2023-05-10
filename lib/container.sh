@@ -29,8 +29,8 @@ container_exec() {
   fi
 
   docker run \
-    -v "$bin_path/rec:/usr/bin/rec" \
-    -v "$bin_path/cmp:/usr/bin/cmp" \
+    -v "$bin_path/rec:/usr/bin/clt-rec" \
+    -v "$bin_path/cmp:/usr/bin/clt-cmp" \
     -v "$PWD/tests:$DOCKER_PROJECT_DIR/tests" \
     -w "$DOCKER_PROJECT_DIR" \
     $RUN_ARGS \

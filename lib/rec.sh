@@ -40,7 +40,7 @@ record() {
   echo "Recording data to file: $record_file"
   echo "Run commands one by one and after you finish press ^D to save"
 
-  container_exec "$image" "rec -O '$record_file'"
+  container_exec "$image" "clt-rec -O '$record_file'"
 }
 
 # Replay recorded test from the file
@@ -59,7 +59,7 @@ replay() {
   echo "Replaying data from the file: $record_file"
   echo "The replay result will be stored to the file: $replay_file"
 
-  container_exec "$image" "rec -I '$record_file' -O $replay_file"
+  container_exec "$image" "clt-rec -I '$record_file' -O $replay_file"
 }
 
 # Run compare binary
@@ -71,7 +71,7 @@ compare() {
   fi
 
   # We validate file existence in cmp tool, so it's fine to skip it here
-  container_exec "$image" "cmp '$record_file' '$replay_file'"
+  container_exec "$image" "clt-cmp '$record_file' '$replay_file'"
 }
 
 # Replay recorded test and launch refine
