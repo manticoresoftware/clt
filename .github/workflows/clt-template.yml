@@ -1,0 +1,65 @@
+name: CLT Template
+
+on:
+  workflow_call:
+    inputs:
+      docker_images:
+        description: 'Docker images that we will use to run CLT tests'
+        required: true
+        type: string
+      ghcr_user:
+        description: 'GHCR user'
+        required: true
+        type: string
+      ghcr_password:
+        description: 'GHCR password'
+        required: true
+        type: string
+      init_code:
+        description: 'Code that we need to executed on init stage before running tests'
+        required: false
+        type: string
+        default: ''
+      run_args:
+        description: 'Run args that we will pass to each test we run'
+        required: false
+        type: string
+        default: ''
+jobs:
+  clt:
+    name: Run CLT tests
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include: ${{ fromJson(inputs.docker_images) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Download CLT tool
+        run: |
+          git clone https://github.com/manticoresoftware/clt.git
+
+      - name: Initialize the testing Env
+        if: ${{ inputs.init_code }}
+        run: |
+          ${{ inputs.init_code }}
+        shell: bash
+
+      - name: Run all tests
+        run: |
+          set +e
+          docker pull ${{ matrix.image }}
+          for test in tests/*.rec; do
+            echo "Running test: $test"
+            RUN_ARGS="${{ inputs.run_args }}" script -q -e -c "clt/clt test -t $test ${{ matrix.image }}"
+            exit_code=$?
+            rep_file=$(echo $test | cut -d. -f1).rep
+            cat $rep_file
+            if [ $exit_code -ne 0 ]; then
+              echo "Test failed with exit code: $exit_code"
+              exit $exit_code
+            fi
+            echo "–––"
+          done
+        shell: bash
