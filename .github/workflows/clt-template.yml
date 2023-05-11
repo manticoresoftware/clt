@@ -7,14 +7,6 @@ on:
         description: 'Docker images that we will use to run CLT tests'
         required: true
         type: string
-      ghcr_user:
-        description: 'GHCR user'
-        required: true
-        type: string
-      ghcr_password:
-        description: 'GHCR password'
-        required: true
-        type: string
       init_code:
         description: 'Code that we need to executed on init stage before running tests'
         required: false
