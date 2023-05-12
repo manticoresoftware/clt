@@ -17,6 +17,11 @@ on:
         required: false
         type: string
         default: ''
+      test_prefix:
+        description: 'Filter tests by using this prefix in tests folder'
+        required: false
+        type: string
+        default: ''
 jobs:
   clt:
     name: Run CLT tests
@@ -42,7 +47,7 @@ jobs:
         run: |
           set +e
           docker pull ${{ matrix.image }}
-          for test in tests/*.rec; do
+          for test in tests/${{ inputs.test_prefix }}*.rec; do
             echo "Running test: $test"
             RUN_ARGS="${{ inputs.run_args }}" script -q -e -c "clt/clt test -t $test ${{ matrix.image }}"
             exit_code=$?
