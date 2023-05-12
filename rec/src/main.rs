@@ -51,7 +51,7 @@ const COMMAND_SEPARATOR: &str = "––– output –––";
 const PROMPT_REGEX_STR: &str = "([a-z]+?[$#>])";
 const PROMPT_REGEX: &str = r"(?m)^([a-z]+?[$#>])\s*$";
 const PROMPT_LINE_REGEX: &str = r"(?m)^([a-z]+?[$#>][^\n]+?$)+";
-const INIT_CMD: &[u8] = b"export PS1='clt> ';export LANG='en_US.UTF-8';export COLUMNS=10000;enable -n exit enable;exec 2>&1;";
+const INIT_CMD: &[u8] = b"export PS1='clt> ';export LANG='en_US.UTF-8' PATH='/bin:/usr/bin:/usr/local/bin:/sbin:/usr/local/sbin' COLUMNS=10000;enable -n exit enable;exec 2>&1;";
 
 #[derive(Debug)]
 enum Event {
