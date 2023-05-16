@@ -49,7 +49,7 @@ const SHELL_PROMPT: &str = "clt> ";
 const COMMAND_PREFIX: &str = "––– input –––";
 const COMMAND_SEPARATOR: &str = "––– output –––";
 const PROMPT_REGEX_STR: &str = "([a-z]+?[$#>])";
-const PROMPT_REGEX: &str = r"(?m)^([a-z]+?[$#>])\s*$";
+const PROMPT_REGEX: &str = r"(?m)^([a-z]+?[$#>])\s+?$";
 const PROMPT_LINE_REGEX: &str = r"(?m)^([a-z]+?[$#>][^\n]+?$)+";
 const INIT_CMD: &[u8] = b"export PS1='clt> ';export LANG='en_US.UTF-8' PATH='/bin:/usr/bin:/usr/local/bin:/sbin:/usr/local/sbin' COLUMNS=10000;enable -n exit enable;exec 2>&1;";
 
@@ -252,7 +252,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 
 						// Do not write ^D to the end of file because we are just exiting
 						if command != String::from("^D") {
-							command = format!("\r\n{}\r\n{}\r\n{}\r\n", COMMAND_PREFIX, command, COMMAND_SEPARATOR);
+							command = format!("\n{}\n{}\n{}\n", COMMAND_PREFIX, command, COMMAND_SEPARATOR);
 							event_w.send(Event::Write(Ok(command.as_bytes().to_vec()))).unwrap();
 						}
 
@@ -303,7 +303,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 					bytes = command.trim().as_bytes().to_vec();
 					bytes.push(13u8); // Add enter keystroke
 
-					let input_cmd = format!("\r\n{}\r\n{}\r\n{}\r\n", COMMAND_PREFIX, command, COMMAND_SEPARATOR);
+					let input_cmd = format!("\n{}\n{}\n{}\n", COMMAND_PREFIX, command, COMMAND_SEPARATOR);
 					result.extend_from_slice(input_cmd.as_bytes());				// Send the command to the pty
 					input_w.send(bytes).unwrap();
 				}
@@ -332,7 +332,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 								command_output_last_line = String::from(command_output_lines.last().unwrap_or(""));
 							}
 							let mut filtered_output = filter_prompt(command_output.as_str());
-							if filtered_output.trim() == command.as_str() || filtered_output.trim().starts_with(format!("{}{}", command.as_str(), "\r\n").as_str()) {
+							if filtered_output.trim() == command.as_str() || filtered_output.trim().starts_with(format!("{}{}", command.as_str(), "\n").as_str()) {
 								let start: usize = filtered_output.find(command.as_str()).unwrap_or(0) + command.len();
 								filtered_output = substring(&filtered_output, start, filtered_output.len() - start).to_string();
 							}
@@ -423,7 +423,7 @@ async fn cleanup_file(file_path: String) -> Result<(), Box<dyn std::error::Error
 
 	while let Some(line) = lines.next_line().await? {
 		if !line.trim().is_empty() {
-			non_empty_lines.push(line);
+			non_empty_lines.push(format!("{}\n", line.trim()));
 		}
 	}
 
@@ -434,8 +434,7 @@ async fn cleanup_file(file_path: String) -> Result<(), Box<dyn std::error::Error
 	}
 
 	for line in non_empty_lines {
-		writer.write_all(line.trim().as_bytes()).await?;
-		writer.write_all(b"\r\n").await?;
+		writer.write_all(line.as_bytes()).await?;
 	}
 
 	writer.flush().await?;
