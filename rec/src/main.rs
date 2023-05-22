@@ -314,6 +314,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 				loop {
 					if let Event::Stdout(Ok(bytes)) = event_r.recv().await.unwrap() {
 						let output = format!("{}", String::from_utf8_lossy(&bytes));
+						println!("Output: [{}]", output);
 						command_output.push_str(&output);
 
 						let prompt_command_string = format!(r"^{} {}", PROMPT_REGEX_STR, regex::escape(&command));
