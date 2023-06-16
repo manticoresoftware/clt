@@ -19,6 +19,9 @@ use std::io::{BufReader, BufRead};
 use std::env;
 use regex::Regex;
 
+const COMMAND_PREFIX: &str = "––– input –––";
+const COMMAND_SEPARATOR: &str = "––– output –––";
+
 fn main() {
 	let args: Vec<String> = env::args().collect();
 	if args.len() != 3 {
@@ -28,45 +31,112 @@ fn main() {
 
 	let file1 = File::open(&args[1]).unwrap();
 	let file2 = File::open(&args[2]).unwrap();
-	let file1_reader = BufReader::new(file1);
-	let file2_reader = BufReader::new(file2);
+	let mut reader1 = BufReader::new(file1);
+	let mut reader2 = BufReader::new(file2);
+
+	let mut line1 = String::new();
+	let mut line2 = String::new();
 
 	let pattern_regex = Regex::new(r"#!/(.+?)/!#").unwrap();
+	let mut files_have_diff = false;
+	let mut is_line1_output = false;
+	let mut is_line2_output = false;
 
-	let mut line_no = 0;
-	let mut diff = Vec::new();
-	for (line1, line2) in file1_reader.lines().zip(file2_reader.lines()) {
-		line_no += 1;
-		let line1 = line1.unwrap();
-		let line2 = line2.unwrap();
-		let mut has_diff = false;
-		let mut match_count = 0;
-		for capture in pattern_regex.captures_iter(&line1) {
-			match_count += 1;
-			let pattern = capture.get(1).unwrap().as_str();
-			let pattern_regex = Regex::new(pattern).unwrap();
-			if !pattern_regex.is_match(&line2) {
-				has_diff = true;
+	let mut line1_skip_read = false;
+	let mut line2_skip_read = false;
+	loop {
+		let [read1, read2] = if line1_skip_read || line2_skip_read {
+			line1_skip_read = false;
+			line2_skip_read = false;
+			[line1.len() as usize, line2.len() as usize]
+		} else {
+			[
+				reader1.read_line(&mut line1).unwrap(),
+				reader2.read_line(&mut line2).unwrap(),
+			]
+		};
+
+		if read1 == 0 && read2 == 0 {
+			break;
+		}
+
+		// Change the current mode if we are in output section or not
+		if line1.trim() == COMMAND_SEPARATOR {
+			is_line1_output = true;
+		}
+		if line2.trim() == COMMAND_SEPARATOR {
+			is_line2_output = true;
+		}
+
+		if line1.trim() == COMMAND_PREFIX {
+			is_line1_output = false;
+		}
+		if line2.trim() == COMMAND_PREFIX {
+			is_line2_output = false;
+		}
+
+		// Skip all lines of second file until to move cursor to the same position
+		while !is_line1_output && is_line2_output && line2.trim() != COMMAND_PREFIX {
+			eprintln!("+ {}", line2.trim());
+			line2.clear();
+			line2_skip_read = true;
+			let read2 = reader2.read_line(&mut line2).unwrap();
+			if read2 == 0 {
 				break;
 			}
 		}
 
-		// If no matches but lines are different – also add to diff
-		if match_count == 0 && &line1 != &line2 {
-			has_diff = true;
+		// Skip all lines of first file until to move cursor to the same position
+		while !is_line2_output && is_line1_output && line1.trim() != COMMAND_PREFIX {
+			eprintln!("- {}", line1.trim());
+			line1.clear();
+			line1_skip_read = true;
+			let read1 = reader1.read_line(&mut line1).unwrap();
+			if read1 == 0 {
+				break;
+			}
 		}
 
-		if has_diff {
-			eprintln!("- {}", line1);
-			eprintln!("+ {}", line2);
+		if line1_skip_read || line2_skip_read {
+			continue;
+		}
 
-			diff.push((line_no, line1, line2));
+		// Do the logic only for output
+		if is_line1_output && is_line2_output {
+			let mut has_diff: bool = false;
+			let mut match_count = 0;
+			for capture in pattern_regex.captures_iter(&line1) {
+				match_count += 1;
+				let pattern = capture.get(1).unwrap().as_str();
+				let pattern_regex = Regex::new(pattern).unwrap();
+				if !pattern_regex.is_match(&line2) {
+					has_diff = true;
+					break;
+				}
+			}
+
+			// If no matches but lines are different – also add to diff
+			if match_count == 0 && &line1 != &line2 {
+				has_diff = true;
+			}
+
+			if has_diff {
+				eprintln!("- {}", line1.trim());
+				eprintln!("+ {}", line2.trim());
+
+				files_have_diff = true;
+			} else {
+				println!("{}", line1.trim());
+			}
 		} else {
-			println!("{}", line1);
+			println!("{}", line1.trim());
 		}
+
+		line1.clear();
+		line2.clear();
 	}
 
-	if !diff.is_empty() {
+	if files_have_diff {
 		std::process::exit(1);
 	}
 }
