@@ -1,0 +1,13 @@
+––– input –––
+input 1
+––– output –––
+#!/[a-z]{3}/!#
+two
+three
+four
+five
+––– input –––
+input 2
+––– output –––
+one
+two

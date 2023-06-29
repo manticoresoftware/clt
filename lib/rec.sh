@@ -96,8 +96,8 @@ refine() {
   replay_file="${record_file%.*}.rep"
 
   replay "$image" "$record_file"
-  compare "$image" "$record_file" "$replay_file" > "$record_file.diff" 2>&1 || true
-  mv -f "$record_file.diff" "$record_file"
+  compare "$image" "$record_file" "$replay_file" > "$record_file.cmp" 2>&1 || true
+  mv -f "$record_file.cmp" "$record_file"
   $editor "$record_file"
 }
 
@@ -106,6 +106,7 @@ test() {
   # Validate input args
   image=$1
   record_file=$2
+  show_diff=${3:-0}
   if [ -z "$image" ] || [ -z "$record_file" ]; then
     >&2 echo 'Usage: test "image" "record_file"' && exit 1
   fi
@@ -117,5 +118,9 @@ test() {
   replay_file="${record_file%.*}.rep"
 
   replay "$image" "$record_file"
-  compare "$image" "$record_file" "$replay_file" > /dev/null 2>&1
+  output="$record_file.cmp"
+  if [ "$show_diff" -eq 1 ]; then
+    output=/dev/stdout
+  fi
+  compare "$image" "$record_file" "$replay_file" > "$output" 2>&1
 }
