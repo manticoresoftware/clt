@@ -39,6 +39,8 @@ Record options:
 Test options:
   -t, --test-file=path-to-file
     Path to the .rec file containing inputs and outputs
+  -d, --debug, --diff
+    Show diff produced by cmp tool to stdout
   [docker image]
     Docker image to run commands in
 

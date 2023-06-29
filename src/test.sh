@@ -36,10 +36,14 @@ while [[ $# -gt 0 ]]; do
       shift
       shift
       ;;
+    -d|--debug|--diff)
+      show_diff=1
+      shift
+      ;;
     *)
       >&2 echo "Unsupported flag: $key" && exit 1
       ;;
   esac
 done
 
-test "$docker_image" "$record_file"
+test "$docker_image" "$record_file" "$show_diff"
