@@ -26,16 +26,19 @@ fn main() {
 		std::process::exit(1);
 	}
 
-	let file1 = File::open(&args[1]).unwrap();
+	let input_content = parser::compile(&args[1]).unwrap();
+
+	// Split compiled file into lines to process it next
+	let file1_lines: Vec<&str> = input_content.split('\n').collect();
+
 	let file2 = File::open(&args[2]).unwrap();
-	let file1_reader = BufReader::new(file1);
 	let file2_reader = BufReader::new(file2);
 
 	let pattern_regex = Regex::new(r"#!/(.+?)/!#").unwrap();
 
 	let mut line_no = 0;
 	let mut diff = Vec::new();
-	for (line1, line2) in file1_reader.lines().zip(file2_reader.lines()) {
+  for (line1, line2) in file1_lines.iter().map(|s| Ok::<_, std::io::Error>(s.clone())).zip(file2_reader.lines()) {
 		line_no += 1;
 		let line1 = line1.unwrap();
 		let line2 = line2.unwrap();

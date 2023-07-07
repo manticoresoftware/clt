@@ -35,3 +35,17 @@ Not all keyboard and bash controls are supported. Here is the list of supported 
 - Left and right arrows.
 - Backspace and delete.
 - CTRL+a and CTRL+e
+
+## The replay flow
+
+To replay and validate that tests pass, we check for .rec files and compile them into .recc. Afterward, we use the compiled versions of the files to execute each command sequentially and generate a .rep file. This file is then compared with the original .recc.
+
+## File Extension Description
+
+There are several types of files:
+| Extension | Description |
+|-|-|
+| .rec | Original record for the input commands and their outputs. It may contain links to block files. |
+| .recb | Record block file, contains reusable blocks that can be included in .rec files. |
+| .recc | Compiled record file, it contains a parsed .rec file with all blocks expanded from .recb. It is used to run the final tests and all cmp processes. |
+| .rep | Replay file that contains the results of replaying the .recc file. |

@@ -46,8 +46,6 @@ struct Opt {
 
 const SHELL_CMD: &str = "/usr/bin/env";
 const SHELL_PROMPT: &str = "clt> ";
-const COMMAND_PREFIX: &str = "––– input –––";
-const COMMAND_SEPARATOR: &str = "––– output –––";
 const PROMPT_REGEX_STR: &str = "([A-Za-z\\[\\]\\(\\)\\s]+?[$#>])";
 const PROMPT_REGEX: &str = r"(?m)^([A-Za-z\[\]\(\)\s]+?[$#>])\s+?$";
 const PROMPT_LINE_REGEX: &str = r"(?m)^([A-Za-z\[\]\(\)\s]+?[$#>][^\n]+?$)+";
@@ -96,18 +94,20 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	// If we have input file passed, we replay, otherwise – record
 	// Replay the input_file and save results in output_file
   if let Some(input_file) = input_file {
-		let input_fh = tokio::fs::File::open(input_file).await?;
+		let input_file = input_file.into_string().unwrap();
+		let input_content = parser::compile(&input_file)?;
 
-		let mut lines = BufReader::new(input_fh).lines();
+		// Split compiled file into lines to process it next
+		let lines: Vec<&str> = input_content.split('\n').collect();
 
 		let mut commands = Vec::new();
 		// We need to send empty command to block thread till we get forked and get clt> prompt
 		commands.push(String::from(""));
 
-    let mut last_line = String::new();
-    while let Some(line) = lines.next_line().await? {
-			if line.starts_with(COMMAND_SEPARATOR) {
-				commands.push(last_line)
+    let mut last_line = "";
+    for line in lines {
+			if line.starts_with(parser::COMMAND_SEPARATOR) {
+				commands.push(last_line.to_string())
 			}
 			last_line = line;
     }
@@ -252,7 +252,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 
 						// Do not write ^D to the end of file because we are just exiting
 						if command != String::from("^D") {
-							command = format!("\n{}\n{}\n{}\n", COMMAND_PREFIX, command, COMMAND_SEPARATOR);
+							command = format!("\n{}\n{}\n{}\n", parser::COMMAND_PREFIX, command, parser::COMMAND_SEPARATOR);
 							event_w.send(Event::Write(Ok(command.as_bytes().to_vec()))).unwrap();
 						}
 
@@ -303,7 +303,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 					bytes = command.trim().as_bytes().to_vec();
 					bytes.push(13u8); // Add enter keystroke
 
-					let input_cmd = format!("\n{}\n{}\n{}\n", COMMAND_PREFIX, command, COMMAND_SEPARATOR);
+					let input_cmd = format!("\n{}\n{}\n{}\n", parser::COMMAND_PREFIX, command, parser::COMMAND_SEPARATOR);
 					result.extend_from_slice(input_cmd.as_bytes());				// Send the command to the pty
 					input_w.send(bytes).unwrap();
 				}
