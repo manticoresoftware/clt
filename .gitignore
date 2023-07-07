@@ -1,3 +1,4 @@
 *.rep
+*.recc
 /tests/*
 !/tests/.gitkeep
