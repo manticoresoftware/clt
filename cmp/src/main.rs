@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, BufRead};
+use std::io::{Cursor, BufReader, BufRead};
 use std::env;
 use std::path::Path;
 use regex::Regex;
@@ -39,10 +39,12 @@ fn main() {
 		false => None,
 	}).unwrap();
 
-	let file1 = File::open(&args[1]).unwrap();
+	let input_content = parser::compile(&args[1]).unwrap();
+	let file1_cursor = Cursor::new(input_content);
+	let mut file1_reader = BufReader::new(file1_cursor);
+
 	let file2 = File::open(&args[2]).unwrap();
-	let mut reader1 = BufReader::new(file1);
-	let mut reader2 = BufReader::new(file2);
+	let mut file2_reader = BufReader::new(file2);
 
 	let mut line1 = String::new();
 	let mut line2 = String::new();
@@ -60,8 +62,8 @@ fn main() {
 			[line1.len() as usize, line2.len() as usize]
 		} else {
 			[
-				reader1.read_line(&mut line1).unwrap(),
-				reader2.read_line(&mut line2).unwrap(),
+				file1_reader.read_line(&mut line1).unwrap(),
+				file2_reader.read_line(&mut line2).unwrap(),
 			]
 		};
 
@@ -89,7 +91,7 @@ fn main() {
 			eprintln!("+ {}", line2.trim());
 			line2.clear();
 			line2_skip_read = true;
-			let read2 = reader2.read_line(&mut line2).unwrap();
+			let read2 = file2_reader.read_line(&mut line2).unwrap();
 			if read2 == 0 {
 				break;
 			}
@@ -100,7 +102,7 @@ fn main() {
 			eprintln!("- {}", line1.trim());
 			line1.clear();
 			line1_skip_read = true;
-			let read1 = reader1.read_line(&mut line1).unwrap();
+			let read1 = file1_reader.read_line(&mut line1).unwrap();
 			if read1 == 0 {
 				break;
 			}
