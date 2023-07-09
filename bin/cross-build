@@ -4,7 +4,8 @@ set -e
 for folder in rec cmp; do
   cd $folder
   # https://github.com/joseluisq/rust-linux-darwin-builder
-  docker run --network host --rm -v "$(pwd):/root/src" -w /root/src -it joseluisq/rust-linux-darwin-builder:1.67.1 bash -c "\
+  parser_src="$(pwd)/../parser"
+  docker run --network host --rm -v "${parser_src}:/root/parser" -v "$(pwd):/root/src" -w /root/src -it joseluisq/rust-linux-darwin-builder:1.67.1 bash -c "\
     cargo clean; \
     cargo build --target=x86_64-unknown-linux-musl --release; \
     cargo build --target=aarch64-unknown-linux-musl --release; \
