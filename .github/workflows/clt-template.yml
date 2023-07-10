@@ -22,6 +22,11 @@ on:
         required: false
         type: string
         default: ''
+      version:
+        description: 'Use the specified version of the CLT tool.'
+        required: false
+        type: string
+        default: 'main'
 jobs:
   clt:
     name: Run CLT tests
@@ -36,6 +41,7 @@ jobs:
       - name: Download CLT tool
         run: |
           git clone https://github.com/manticoresoftware/clt.git
+          git checkout ${{ inputs.version }}
 
       - name: Initialize the testing Env
         if: ${{ inputs.init_code }}

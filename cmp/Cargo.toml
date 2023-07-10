@@ -9,7 +9,7 @@ license = "Apache-2.0"
 
 [dependencies]
 parser = { path = "../parser" }
-regex = "1.7.1"
+regex = "1.9.1"
 
 [profile.release]
 strip = true  # Automatically strip symbols from the binary.

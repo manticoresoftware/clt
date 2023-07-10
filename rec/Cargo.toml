@@ -7,13 +7,13 @@ license = "Apache-2.0"
 
 [dependencies]
 parser = { path = "../parser" }
-anyhow = "1.0.55"
+anyhow = "1.0.71"
 paw = "1.0.0"
 pty-process = { git = "https://github.com/donhardman/pty-process.git", rev = "c8de8dfcec68b988ac2b95af46c700108ebf857a", version = "0.3.0", features = ["async"] }
 structopt = { version = "0.3.26", features = ["paw", "wrap_help"] }
 textmode = { version = "0.4.0", features = ["async"] }
-tokio = { version = "1.17.0", features = ["full"] }
-regex = "1.7.2"
+tokio = { version = "1.29.1", features = ["full"] }
+regex = "1.9.1"
 
 [profile.release]
 strip = true  # Automatically strip symbols from the binary.
