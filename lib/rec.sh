@@ -118,7 +118,7 @@ test() {
   replay_file="${record_file%.*}.rep"
 
   replay "$image" "$record_file"
-  output="$record_file.cmp"
+  output="${record_file%.*}.cmp"
   if [ "$show_diff" -eq 1 ]; then
     output=/dev/stdout
   fi
