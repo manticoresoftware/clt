@@ -41,7 +41,8 @@ jobs:
       - name: Download CLT tool
         run: |
           git clone https://github.com/manticoresoftware/clt.git
-          git checkout ${{ inputs.version }}
+          cd clt && git checkout ${{ inputs.version }} && cd ..
+          cat clt/.patterns >> .patterns
 
       - name: Initialize the testing Env
         if: ${{ inputs.init_code }}
