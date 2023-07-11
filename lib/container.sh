@@ -30,7 +30,7 @@ container_exec() {
 
   extra_args=
   if [ -f ".patterns" ]; then
- 		extra_args=".pattenrs:$DOCKER_PROJECT_DIR/.patterns"
+		extra_args="-v $PWD/.patterns:$DOCKER_PROJECT_DIR/.patterns"
   fi
 
   docker run \
