@@ -14,6 +14,7 @@ pub const BLOCK_REGEX: &str = r"(?m)^––– block: ([a-zA-Z0-9\-]+) –––
 pub fn compile(rec_file_path: &str) -> Result<String> {
   let input_file = File::open(rec_file_path)?;
 	let input_dir = Path::new(rec_file_path).parent().unwrap_or_else(|| Path::new(""));
+	println!("{:?}", input_dir);
   let reader = BufReader::new(input_file);
   let mut result = String::new();
 
@@ -23,6 +24,7 @@ pub fn compile(rec_file_path: &str) -> Result<String> {
     if let Some(caps) = re.captures(&line) {
       let block_name = caps.get(1).map_or("", |m| m.as_str());
       let block_path = input_dir.join(format!("{}.recb", block_name));
+			println!("{:?}", block_path);
       let block_content = read_to_string(block_path)?;
       result.push_str(block_content.trim());
       result.push('\n');
