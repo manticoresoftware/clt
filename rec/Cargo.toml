@@ -13,7 +13,7 @@ pty-process = { git = "https://github.com/donhardman/pty-process.git", rev = "c8
 structopt = { version = "0.3.26", features = ["paw", "wrap_help"] }
 textmode = { version = "0.4.0", features = ["async"] }
 tokio = { version = "1.29.1", features = ["full"] }
-regex = "1.9.1"
+regex = "^1.8.4"
 
 [profile.release]
 strip = true  # Automatically strip symbols from the binary.

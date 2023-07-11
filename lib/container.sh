@@ -28,11 +28,17 @@ container_exec() {
     >&2 echo 'Usage: container_exec "image" "command"' && exit 1
   fi
 
+  extra_args=
+  if [ -f ".patterns" ]; then
+ 		extra_args=".pattenrs:$DOCKER_PROJECT_DIR/.patterns"
+  fi
+
   docker run \
     -v "$bin_path/rec:/usr/bin/clt-rec" \
     -v "$bin_path/cmp:/usr/bin/clt-cmp" \
     -v "$PWD/tests:$DOCKER_PROJECT_DIR/tests" \
     -w "$DOCKER_PROJECT_DIR" \
+    $extra_args \
     $RUN_ARGS \
     --entrypoint /bin/bash \
     --rm -it "$image" \
