@@ -30,7 +30,7 @@ help     Show this help message
 
 Record options:
   -t, --test-file=path-to-file
-    Path to the .rec file to store inputs and outputs
+    Path to the .rec file to store inputs and outputs (optional)
   -n, --no-refine
     Do not run refine, just record inputs in the .rec file (optional)
   [docker image]
