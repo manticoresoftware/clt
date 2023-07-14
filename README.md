@@ -24,14 +24,22 @@ We have prebuilt binaries for use in a Linux environment, for both amd64 and arm
 
 	Here, centos:7 is the docker image that you want to use for tests. You can incorporate the `--no-refine` option if you wish to omit the refine step and execute the test later.
 
-2. Next, perform various commands in interactive mode. Once you're done, press `^D` to stop and record your test results. By default, the test results will be saved in the `test.rec` file.
+	You can see the file which is used to write your recording as a first string, it looks like this:
+
+	```bash
+	Recording data to file: ./tests/centos:7_20230714_161043.rec
+	```
+
+2. Next, perform various commands in interactive mode. Once you're done, press `^D` to stop and record your test results.
 
 3. To validate and replay it, execute the following command:
 
 	```bash
-	./clt test -d centos:7
+	./clt test -t ./tests/centos:7_20230714_161043.rec -d centos:7
 	echo $?
 	```
+
+	`./tests/centos:7_20230714_161043.rec` is your actual pass to the file you recroded on the step 1.
 
 	This will display the exit code and print the diff (if outputs vary while you replay it). If the exit code equals 1, everything is fine. Otherwise, you should examine the diff created by the cmp tool and introduce the necessary changes to the file, provided you executed it with the `--no-refine` option.
 
