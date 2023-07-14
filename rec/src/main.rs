@@ -48,7 +48,7 @@ const SHELL_CMD: &str = "/usr/bin/env";
 const SHELL_PROMPT: &str = "clt> ";
 const PROMPT_REGEX_STR: &str = "([A-Za-z\\[\\]\\(\\)\\s]+?[$#>])";
 const PROMPT_REGEX: &str = r"(?m)^([A-Za-z\[\]\(\)\s]+?[$#>])\s+?$";
-const PROMPT_LINE_REGEX: &str = r"(?m)^([A-Za-z\[\]\(\)\s]+?[$#>][^\n]+?$)+";
+const PROMPT_LINE_REGEX: &str = r"(?m)^[A-Za-z\[\]\(\)\t ]+?[$#>].*$";
 const INIT_CMD: &[u8] = b"export PS1='clt> ';export LANG='en_US.UTF-8' PATH='/bin:/usr/bin:/usr/local/bin:/sbin:/usr/local/sbin' COLUMNS=10000;enable -n exit enable;exec 2>&1;";
 
 #[derive(Debug)]
