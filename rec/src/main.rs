@@ -44,6 +44,7 @@ struct Opt {
 	output_file: std::ffi::OsString,
 }
 
+const OUTPUT_HEADER: &str = "You can use regex in the output sections.\nMore info here: https://github.com/manticoresoftware/clt#refine\n";
 const SHELL_CMD: &str = "/usr/bin/env";
 const SHELL_PROMPT: &str = "clt> ";
 const PROMPT_REGEX_STR: &str = "([A-Za-z\\[\\]\\(\\)\\s]+?[$#>])";
@@ -420,7 +421,7 @@ async fn cleanup_file(file_path: String) -> Result<(), Box<dyn std::error::Error
 
 	let mut lines = reader.lines();
 	let mut non_empty_lines = Vec::new();
-
+	non_empty_lines.push(String::from(OUTPUT_HEADER));
 	while let Some(line) = lines.next_line().await? {
 		if !line.trim().is_empty() {
 			non_empty_lines.push(format!("{}\n", line.trim()));
