@@ -250,8 +250,8 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 						};
 						is_typing = false;
 
-						// Do not write ^D to the end of file because we are just exiting
-						if command != String::from("^D") {
+						// Do not write empty commands and ^D to the end of file because we are just exiting
+						if !command.trim().is_empty() && command != String::from("^D") {
 							command = format!("\n{}\n{}\n{}\n", parser::COMMAND_PREFIX, command, parser::COMMAND_SEPARATOR);
 							event_w.send(Event::Write(Ok(command.as_bytes().to_vec()))).unwrap();
 						}
