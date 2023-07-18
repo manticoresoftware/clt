@@ -82,11 +82,11 @@ The code is self-explanatory and covers almost everything that the current templ
 
 ## Refine
 
-Once you've successfully captured your commands in interactive mode and stored them into a `.rec` file, the next step is to refine your command. This is achieved by implementing the comparator to highlight the disparities between the initial output and replayed output.
+Once you've successfully captured your commands in interactive mode and stored them into a `.rec` file, the next step is to refine the test (if required). This is achieved by running the comparator which highlights the disparities between the initial output and replayed output.
 
 For creating dynamic content that effortlessly passes tests, you can utilize regular expressions (regex). Position the appropriate regex within the command output section, enclosed between `#!/` and `!/#` marks. To illustrate, the regex `#!/[0-9]+/!#` can be utilized to match any numerical value composed of digits 0 through 9, irrespective of its length.
 
-To streamline this process, we've introduced patterns. We already offer several predefined patterns within the `.patterns` file. However, you possess the capability to define your own by appending your definitions to the `.patterns` file situated at the root of your project. The format must comply with the `VARIABLE NAME[space]RAW REGEX` rule. A typical `.patterns` file may resemble:
+To streamline this process, we've introduced patterns. We already offer several predefined patterns within the `.patterns` file. However, you possess the capability to define your own by appending your definitions to the `.patterns` file located at the root of your project. The format must comply with the `VARIABLE NAME[space]RAW REGEX` rule. A typical `.patterns` file may resemble:
 
 ```text
 SEMVER [0-9]+\.[0-9]+\.[0-9]+
