@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Cursor, BufReader, BufRead};
+use std::io::{Cursor, BufReader, BufRead, SeekFrom, Seek, self};
 use std::env;
 use std::path::Path;
 use regex::Regex;
@@ -42,9 +42,11 @@ fn main() {
 	let input_content = parser::compile(&args[1]).unwrap();
 	let file1_cursor = Cursor::new(input_content);
 	let mut file1_reader = BufReader::new(file1_cursor);
+	move_cursor_to_line(&mut file1_reader, COMMAND_PREFIX).unwrap();
 
 	let file2 = File::open(&args[2]).unwrap();
 	let mut file2_reader = BufReader::new(file2);
+	move_cursor_to_line(&mut file2_reader, COMMAND_PREFIX).unwrap();
 
 	let mut line1 = String::new();
 	let mut line2 = String::new();
@@ -214,4 +216,26 @@ impl PatternMatcher {
 
 		Ok(config)
 	}
+}
+
+fn move_cursor_to_line<R: BufRead + Seek>(reader: &mut R, command_prefix: &str) -> io::Result<()> {
+  let mut line = String::new();
+
+  loop {
+    let pos = reader.seek(SeekFrom::Current(0))?;
+    let len = reader.read_line(&mut line)?;
+
+    if len == 0 {
+      break;
+    }
+
+    if line.trim() == command_prefix {
+      reader.seek(SeekFrom::Start(pos))?;
+      break;
+    }
+
+    line.clear();
+  }
+
+  Ok(())
 }
