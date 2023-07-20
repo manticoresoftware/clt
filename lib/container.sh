@@ -22,26 +22,31 @@ ARCH=$(arch)
 bin_path="$PROJECT_DIR/bin/${ARCH/arm64/aarch64}"
 
 container_exec() {
-  image=$1
-  command=$2
-  if [ -z "$image" ] || [ -z "$command" ]; then
-    >&2 echo 'Usage: container_exec "image" "command"' && exit 1
-  fi
+	image=$1
+	command=$2
+	directory=${3:-tests}
+	if [ ! -d "$directory" ]; then
+		>&2 echo "Directory with tests does not exist: $directory" && exit 1
+	fi
 
-  extra_args=
-  if [ -f ".patterns" ]; then
+	if [ -z "$image" ] || [ -z "$command" ]; then
+		>&2 echo 'Usage: container_exec "image" "command"' && exit 1
+	fi
+
+	extra_args=
+	if [ -f ".patterns" ]; then
 		extra_args="-v $PWD/.patterns:$DOCKER_PROJECT_DIR/.patterns"
-  fi
+	fi
 
-  docker run \
-    -v "$bin_path/rec:/usr/bin/clt-rec" \
-    -v "$bin_path/cmp:/usr/bin/clt-cmp" \
-    -v "$PWD/tests:$DOCKER_PROJECT_DIR/tests" \
-    -w "$DOCKER_PROJECT_DIR" \
-    $extra_args \
-    $RUN_ARGS \
-    --entrypoint /bin/bash \
-    --rm -it "$image" \
-    -i -c "$command"
+	docker run \
+		-v "$bin_path/rec:/usr/bin/clt-rec" \
+		-v "$bin_path/cmp:/usr/bin/clt-cmp" \
+		-v "$PWD/$directory:$DOCKER_PROJECT_DIR/$directory" \
+		-w "$DOCKER_PROJECT_DIR" \
+		$extra_args \
+		$RUN_ARGS \
+		--entrypoint /bin/bash \
+		--rm -it "$image" \
+		-i -c "$command"
 }
 

@@ -21,7 +21,7 @@ on:
         description: 'Filter tests by using this prefix in tests folder'
         required: false
         type: string
-        default: ''
+        default: 'tests/'
       timeout:
         description: 'Allowed timeout in minutes for tests'
         required: false
@@ -60,7 +60,7 @@ jobs:
         run: |
           set +e
           docker pull ${{ matrix.image }}
-          for test in tests/${{ inputs.test_prefix }}*.rec; do
+          for test in ${{ inputs.test_prefix }}*.rec; do
             echo "Running test: $test"
             RUN_ARGS="${{ inputs.run_args }}" script -q -e -c "clt/clt test -t $test ${{ matrix.image }}"
             exit_code=$?
