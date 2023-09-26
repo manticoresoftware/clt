@@ -25,7 +25,7 @@ argument_parse_docker_image() {
 	docker_image="${!#}"
 
 	image_exists=0
-	if docker images | grep "$docker_image" 1> /dev/null 2>&1; then
+	if docker images --format "{{.Repository}}:{{.Tag}}" | grep "$docker_image" 1> /dev/null 2>&1; then
 		image_exists=1
 	fi
 
