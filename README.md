@@ -1,6 +1,6 @@
-# clt
+# Command Line Tester
 
-The testing tool allows you to execute any commands, repeat them, and validate whether your results are accurate.
+This testing tool allows you to execute and record any commands inside a docker containr, replay them, and validate whether your results are accurate.
 
 ## Installation
 
