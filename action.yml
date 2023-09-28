@@ -54,7 +54,20 @@ runs:
     - name: Prepare patterns
       shell: bash
       run: |
-        echo ${{ github }}
+        echo ${{ github.base_ref }}
+        echo ${{ github.env }}
+        echo ${{ github.head_ref }}
+        echo ${{ github.path }}
+        echo ${{ github.ref }}
+        echo ${{ github.ref_name }}
+        echo ${{ github.ref_name }}
+        echo ${{ github.repository }}
+        echo ${{ github.repositoryUrl }}
+        echo ${{ github.workflow }}
+        echo ${{ github.workflow_ref }}
+        echo ${{ github.workflow_sha }}
+        echo ${{ github.workspace }}
+
         echo "GH_ACTION_REPOSITORY=$GH_ACTION_REPOSITORY"
         echo "GH_ACTION_REF=$GH_ACTION_REF"
         echo "repo '${{ github.action_repository }}'"
