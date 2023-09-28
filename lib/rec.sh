@@ -27,7 +27,7 @@ record() {
 	fi
 
 	# Validate that record_file dir exists and create if not
-	record_dir=$(dirname "${record_file}")
+	record_dir=$(dirname "${record_file}" | cut -d/ -f1)
 	if [ ! -d "$record_dir" ]; then
 		mkdir -p "$record_dir"
 	fi
@@ -55,7 +55,7 @@ replay() {
 		>&2 echo "The record file does not exist: $record_file" && exit 1
 	fi
 
-	record_dir=$(dirname "${record_file}")
+	record_dir=$(dirname "${record_file}" | cut -d/ -f1)
 	replay_file="${record_file%.*}.rep"
 	echo "Replaying data from the file: $record_file"
 	echo "The replay result will be stored to the file: $replay_file"
@@ -71,7 +71,7 @@ compare() {
 		>&2 echo 'Usage: compare "image" "record_file" "replay_file"' && exit 1
 	fi
 
-	record_dir=$(dirname "${record_file}")
+	record_dir=$(dirname "${record_file}" | cut -d/ -f1)
 	# We validate file existence in cmp tool, so it's fine to skip it here
 	container_exec "$image" "clt-cmp '$record_file' '$replay_file'" "$record_dir"
 }
@@ -127,7 +127,8 @@ test() {
 	replay "$image" "$record_file"
 	output="${record_file%.*}.cmp"
 	if [ "$show_diff" -eq 1 ]; then
-		output=/dev/stdout
+		compare "$image" "$record_file" "$replay_file" 2>&1
+	else
+		compare "$image" "$record_file" "$replay_file" > "$output" 2>&1
 	fi
-	compare "$image" "$record_file" "$replay_file" > "$output" 2>&1
 }
