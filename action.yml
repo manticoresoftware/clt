@@ -56,9 +56,9 @@ runs:
         pwd
         ls -la
         ls -la clt
-        cat clt/.patterns >> .patterns
         cd clt
         git remote -v
+        cat clt/.patterns >> .patterns
 
     - name: Download artifact
       if:  ${{ inputs.artifact }}
