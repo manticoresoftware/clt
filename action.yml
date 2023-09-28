@@ -53,6 +53,7 @@ runs:
       run: |
         pwd
         ls -la
+        ls -la clt
         cat clt/.patterns >> .patterns
 
     - name: Download artifact
