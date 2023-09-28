@@ -1,0 +1,84 @@
+name: 'Run CLT test'
+description: 'This action runs a CLT test'
+inputs:
+  image:
+    description: 'Docker image that we will use to run CLT tests'
+    required: true
+    type: string
+  init_code:
+    description: 'Code that is to be executed on init stage before running tests'
+    required: false
+    type: string
+    default: ''
+  run_args:
+    description: 'Run args that we will pass to each test we run'
+    required: false
+    type: string
+    default: ''
+  test_prefix:
+    description: 'Filter tests by using this prefix in tests folder'
+    required: false
+    type: string
+    default: 'tests/'
+  timeout:
+    description: 'Allowed timeout in minutes for tests'
+    required: false
+    type: number
+    default: 5
+  artifact:
+    required: false
+    type: string
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout the calling repo
+      uses: actions/checkout@v4
+
+    - name: Checkout CLT
+      uses: actions/checkout@v4
+      with:
+        repository: '${{ github.action_repository }}'
+        ref: '${{ github.action_ref }}'
+
+    - name: Prepare patterns
+      shell: bash
+      run: |
+        cat clt/.patterns >> .patterns
+
+    - name: Download artifact
+      if:  ${{ inputs.artifact }}
+      uses: manticoresoftware/download_artifact_with_retries@main
+      with:
+        name: ${{ inputs.artifact }}
+        path: .
+
+    - name: Initialize the testing Env
+      if: ${{ inputs.init_code }}
+      run: |
+        ${{ inputs.init_code }}
+      shell: bash
+
+    - name: Run all tests
+      run: |
+        set +e
+        if [ -f "${{ inputs.artifact }}" ]; then
+            cat "${{ inputs.artifact }}" | docker import - "${{ inputs.image }}"
+        fi
+        for test in ${{ inputs.test_prefix }}*.rec; do
+          echo "Running test: $test with command: RUN_ARGS=\"${{ inputs.run_args }}\" script -q -e -c \"clt/clt test -t $test ${{ inputs.image }}\""
+          RUN_ARGS="${{ inputs.run_args }}" script -q -e -c "clt/clt test -t $test ${{ inputs.image }}"
+          exit_code=$?
+          rep_file=$(echo $test | cut -d. -f1).rep
+          cat $rep_file
+          if [ $exit_code -ne 0 ]; then
+            echo -n $'\n'$'\n'$'\n'
+            echo "🚨 Test failed with exit code: $exit_code"
+            echo "CLT-CMP diff output:"
+            cmp_file=$(echo $test | cut -d. -f1).cmp
+            cat $cmp_file
+            exit $exit_code
+          fi
+          echo "–––"
+        done
+      shell: bash
