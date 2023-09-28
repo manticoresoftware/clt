@@ -35,6 +35,12 @@ runs:
     - name: Checkout the calling repo
       uses: actions/checkout@v4
 
+    - name: Tmp
+      shell: bash
+      run: |
+        pwd
+        ls -la
+
     - name: Checkout CLT
       uses: actions/checkout@v4
       with:
