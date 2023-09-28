@@ -29,6 +29,10 @@ inputs:
     required: false
     type: string
 
+env:
+  GH_ACTION_REPOSITORY: ${{ github.action_repository || github.repository }}
+  GH_ACTION_REF: ${{ github.action_ref || github.ref_name }}
+
 runs:
   using: "composite"
   steps:
@@ -51,6 +55,8 @@ runs:
     - name: Prepare patterns
       shell: bash
       run: |
+        echo "GH_ACTION_REPOSITORY=$GH_ACTION_REPOSITORY"
+        echo "GH_ACTION_REF=$GH_ACTION_REF"
         echo "repo '${{ github.action_repository }}'"
         echo "ref '${{ github.action_ref }}'"
         pwd
