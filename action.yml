@@ -43,6 +43,7 @@ runs:
 
     - name: Checkout CLT
       uses: actions/checkout@v4
+      # TODO: remove the env section once https://github.com/actions/runner/issues/2525 is fixed
       env:
         GH_ACTION_REPOSITORY: ${{ github.action_repository }}
         GH_ACTION_REF: ${{ github.action_ref }}
@@ -51,22 +52,9 @@ runs:
         ref: '${{ env.GH_ACTION_REF }}'
         path: 'clt'
 
-    - name: Prepare patterns
+    - name: Prepare .patterns
       shell: bash
-      # TODO: remove the env section once https://github.com/actions/runner/issues/2525 is fixed
-      env:
-        GH_ACTION_REPOSITORY: ${{ github.action_repository }}
-        GH_ACTION_REF: ${{ github.action_ref }}
       run: |
-        echo "GH_ACTION_REPOSITORY=$GH_ACTION_REPOSITORY"
-        echo "GH_ACTION_REF=$GH_ACTION_REF"
-        echo "repo '${{ github.action_repository }}'"
-        echo "ref '${{ github.action_ref }}'"
-        pwd
-        ls -la
-        ls -la clt
-        cd clt
-        git remote -v
         cat clt/.patterns >> .patterns
 
     - name: Download artifact
