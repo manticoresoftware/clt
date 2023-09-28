@@ -6,7 +6,7 @@ use regex::Regex;
 
 pub const COMMAND_PREFIX: &str = "––– input –––";
 pub const COMMAND_SEPARATOR: &str = "––– output –––";
-pub const BLOCK_REGEX: &str = r"(?m)^––– block: ([a-zA-Z0-9\-\/\_]+) –––$";
+pub const BLOCK_REGEX: &str = r"(?m)^––– block: ([\.a-zA-Z0-9\-\/\_]+) –––$";
 
 /// Compile the input rec file into String that
 /// - contains expanded blocks with --- block: file –––
