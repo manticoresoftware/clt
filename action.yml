@@ -29,12 +29,11 @@ inputs:
     required: false
     type: string
 
-env:
-  GH_ACTION_REPOSITORY: ${{ github.action_repository || github.repository }}
-  GH_ACTION_REF: ${{ github.action_ref || github.ref_name }}
-
 runs:
   using: "composite"
+  env:
+    GH_ACTION_REPOSITORY: ${{ github.action_repository }}
+    GH_ACTION_REF: ${{ github.action_ref }}
   steps:
     - name: Checkout the calling repo
       uses: actions/checkout@v4
