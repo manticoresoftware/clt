@@ -44,6 +44,8 @@ runs:
     - name: Prepare patterns
       shell: bash
       run: |
+        pwd
+        ls -la
         cat clt/.patterns >> .patterns
 
     - name: Download artifact
