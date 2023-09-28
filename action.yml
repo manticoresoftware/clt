@@ -46,8 +46,7 @@ runs:
       with:
         repository: '${{ github.action_repository }}'
         ref: '${{ github.action_ref }}'
-        clean: false
-        #path: 'clt'
+        path: 'clt'
 
     - name: Prepare patterns
       shell: bash
