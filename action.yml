@@ -31,9 +31,6 @@ inputs:
 
 runs:
   using: "composite"
-#  env:
-#    GH_ACTION_REPOSITORY: ${{ github.action_repository }}
-#    GH_ACTION_REF: ${{ github.action_ref }}
   steps:
     - name: Checkout the calling repo
       uses: actions/checkout@v4
@@ -53,6 +50,9 @@ runs:
 
     - name: Prepare patterns
       shell: bash
+      env:
+        GH_ACTION_REPOSITORY: ${{ github.action_repository }}
+        GH_ACTION_REF: ${{ github.action_ref }}
       run: |
         echo ${{ github.base_ref }}
         echo ${{ github.env }}
