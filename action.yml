@@ -47,12 +47,13 @@ runs:
         GH_ACTION_REPOSITORY: ${{ github.action_repository }}
         GH_ACTION_REF: ${{ github.action_ref }}
       with:
-        repository: $GH_ACTION_REPOSITORY
-        ref: $GH_ACTION_REF
+        repository: '${{ env.GH_ACTION_REPOSITORY }}'
+        ref: '${{ env.GH_ACTION_REF }}'
         path: 'clt'
 
     - name: Prepare patterns
       shell: bash
+      # TODO: remove the env section once https://github.com/actions/runner/issues/2525 is fixed
       env:
         GH_ACTION_REPOSITORY: ${{ github.action_repository }}
         GH_ACTION_REF: ${{ github.action_ref }}
