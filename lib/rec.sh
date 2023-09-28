@@ -79,7 +79,12 @@ compare() {
 # Replay recorded test and launch refine
 refine() {
 	# Check that we have required software installed for this command
-	editor=$( which nano | which vim | which vi )
+	if [[ -n "$CLT_EDITOR" ]]; then
+		editor="$CLT_EDITOR"
+	else
+		editor=$( which nano | which vim | which vi )
+	fi
+
 	if [ -z "$editor" ]; then
 		>&2 echo 'You need an editor installed to run refine process' && exit 1
 	fi
