@@ -51,10 +51,14 @@ runs:
     - name: Prepare patterns
       shell: bash
       run: |
+        echo "repo '${{ github.action_repository }}'"
+        echo "ref '${{ github.action_ref }}'"
         pwd
         ls -la
         ls -la clt
         cat clt/.patterns >> .patterns
+        cd clt
+        git remote -v
 
     - name: Download artifact
       if:  ${{ inputs.artifact }}
