@@ -46,11 +46,6 @@ runs:
         ref: '${{ env.GH_ACTION_REF }}'
         path: 'clt'
 
-    - name: Prepare .patterns
-      shell: bash
-      run: |
-        cat clt/.patterns >> .patterns
-
     - name: Download artifact
       if:  ${{ inputs.artifact }}
       uses: manticoresoftware/download_artifact_with_retries@main

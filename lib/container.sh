@@ -33,17 +33,21 @@ container_exec() {
 		>&2 echo 'Usage: container_exec "image" "command"' && exit 1
 	fi
 
-	extra_args=
+	# Merge base of patterns
+	temp_file=$(mktemp)
+	cat "$PROJECT_DIR/.patterns" > "$temp_file"
+
+	# Merge project .patterns to extend original
 	if [ -f ".patterns" ]; then
-		extra_args="-v $PWD/.patterns:$DOCKER_PROJECT_DIR/.patterns"
+		cat .patterns >> "$temp_file"
 	fi
 
 	docker run \
 		-v "$bin_path/rec:/usr/bin/clt-rec" \
 		-v "$bin_path/cmp:/usr/bin/clt-cmp" \
 		-v "$PWD/$directory:$DOCKER_PROJECT_DIR/$directory" \
+		-v "$temp_file:$DOCKER_PROJECT_DIR/.patterns" \
 		-w "$DOCKER_PROJECT_DIR" \
-		$extra_args \
 		$RUN_ARGS \
 		--entrypoint /bin/bash \
 		--rm -it "$image" \
