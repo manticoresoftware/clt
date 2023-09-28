@@ -35,15 +35,9 @@ runs:
     - name: Checkout the calling repo
       uses: actions/checkout@v4
 
-    - name: Tmp
-      shell: bash
-      run: |
-        pwd
-        ls -la
-
     - name: Checkout CLT
       uses: actions/checkout@v4
-      # TODO: remove the env section once https://github.com/actions/runner/issues/2525 is fixed
+      # TODO: remove the env section once https://github.com/actions/runner/issues/2525 is solved. Using 'env' is just a workaround.
       env:
         GH_ACTION_REPOSITORY: ${{ github.action_repository }}
         GH_ACTION_REF: ${{ github.action_ref }}
