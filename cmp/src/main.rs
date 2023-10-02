@@ -20,9 +20,16 @@ use std::io::{Cursor, BufReader, BufRead, SeekFrom, Seek, self};
 use std::env;
 use std::path::Path;
 use regex::Regex;
+use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
+use std::io::Write;
 
 const COMMAND_PREFIX: &str = "––– input –––";
 const COMMAND_SEPARATOR: &str = "––– output –––";
+
+enum Diff {
+	Plus,
+	Minus
+}
 
 fn main() {
 	// Set up the SIGINT signal handler
@@ -30,6 +37,8 @@ fn main() {
     println!("Received Ctrl+C! Exiting...");
     std::process::exit(130);
 	}).expect("Error setting Ctrl-C handler");
+
+	let mut stdout = StandardStream::stdout(ColorChoice::Auto);
 
 	let args: Vec<String> = env::args().collect();
 	if args.len() != 3 {
@@ -66,10 +75,17 @@ fn main() {
 			file1_reader.read_line(&mut line1).unwrap(),
 			file2_reader.read_line(&mut line2).unwrap(),
 		];
-		println!("{}", line2.trim());
 
 		if read1 == 0 && read2 == 0 {
 			break;
+		}
+
+		if read1 == 0 {
+			print_diff(&mut stdout, line2.trim(), Diff::Plus);
+		} else if read2 == 0 {
+			print_diff(&mut stdout, line1.trim(), Diff::Minus);
+		} else {
+			println!("{}", line2.trim());
 		}
 
 		// Change the current mode if we are in output section or not
@@ -77,6 +93,9 @@ fn main() {
 		while r1 > 0 && line1.trim() != COMMAND_SEPARATOR {
 			line1.clear();
 			r1 = file1_reader.read_line(&mut line1).unwrap();
+			if read2 == 0 {
+				print_diff(&mut stdout, line1.trim(), Diff::Minus);
+			}
 		}
 
 		lines1.clear();
@@ -93,7 +112,12 @@ fn main() {
 		while r2 > 0 && line2.trim() != COMMAND_SEPARATOR {
 			line2.clear();
 			r2 = file2_reader.read_line(&mut line2).unwrap();
-			println!("{}", line2.trim());
+			if read1 == 0 {
+				print_diff(&mut stdout, line2.trim(), Diff::Plus);
+			} else {
+				println!("{}", line2.trim());
+			}
+
 		}
 
 		lines2.clear();
@@ -101,7 +125,7 @@ fn main() {
 			line2.clear();
 			r2 = file2_reader.read_line(&mut line2).unwrap();
 			if line2.trim() == COMMAND_PREFIX {
-				println!("{}", line2.trim());
+				// println!("{}", line2.trim());
 				break;
 			}
 			lines2.push(line2.trim().to_string());
@@ -112,26 +136,24 @@ fn main() {
 		for i in 0..max_len {
 	    match (lines1.get(i), lines2.get(i)) {
         (None, Some(line)) => {
-          eprintln!("+ {}", line.trim());
+        	print_diff(&mut stdout, line.trim(), Diff::Plus);
           files_have_diff = true;
         },
         (Some(line), None) => {
-          eprintln!("- {}", line.trim());
+        	print_diff(&mut stdout, line.trim(), Diff::Minus);
           files_have_diff = true;
         },
         (Some(line1), Some(line2)) => {
         	let has_diff: bool = pattern_matcher.has_diff(line1.to_string(), line2.to_string());
           if has_diff {
-            eprintln!("- {}", line1.trim());
-            eprintln!("+ {}", line2.trim());
+          	print_diff(&mut stdout, line1.trim(), Diff::Minus);
+          	print_diff(&mut stdout, line2.trim(), Diff::Plus);
             files_have_diff = true;
           } else {
             println!("{}", line1.trim());
           }
         },
-        _ => {
-        	println!("{}", line1.trim());
-        }
+        _ => {}
 	    }
 		}
 	}
@@ -240,4 +262,14 @@ fn move_cursor_to_line<R: BufRead + Seek>(reader: &mut R, command_prefix: &str) 
   }
 
   Ok(())
+}
+
+fn print_diff(stdout:&mut StandardStream, line: &str, diff: Diff) {
+	let (line, color) = match diff {
+    Diff::Plus => (format!("+ {}", line.trim()), Color::Green),
+    Diff::Minus => (format!("- {}", line.trim()), Color::Red),
+	};
+	stdout.set_color(ColorSpec::new().set_fg(Some(color))).unwrap();
+	writeln!(stdout, "{}", line.trim()).unwrap();
+	stdout.reset().unwrap();
 }
