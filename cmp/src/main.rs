@@ -57,87 +57,83 @@ fn main() {
 	let mut line1 = String::new();
 	let mut line2 = String::new();
 
-	let mut files_have_diff = false;
-	let mut is_line1_output = false;
-	let mut is_line2_output = false;
+	let mut lines1 = vec![];
+	let mut lines2 = vec![];
 
-	let mut line1_skip_read = false;
-	let mut line2_skip_read = false;
+	let mut files_have_diff = false;
 	loop {
-		let [read1, read2] = if line1_skip_read || line2_skip_read {
-			line1_skip_read = false;
-			line2_skip_read = false;
-			[line1.len() as usize, line2.len() as usize]
-		} else {
-			[
-				file1_reader.read_line(&mut line1).unwrap(),
-				file2_reader.read_line(&mut line2).unwrap(),
-			]
-		};
+		let [read1, read2] = [
+			file1_reader.read_line(&mut line1).unwrap(),
+			file2_reader.read_line(&mut line2).unwrap(),
+		];
+		println!("{}", line2.trim());
 
 		if read1 == 0 && read2 == 0 {
 			break;
 		}
 
 		// Change the current mode if we are in output section or not
-		if line1.trim() == COMMAND_SEPARATOR {
-			is_line1_output = true;
-		}
-		if line2.trim() == COMMAND_SEPARATOR {
-			is_line2_output = true;
-		}
-
-		if line1.trim() == COMMAND_PREFIX {
-			is_line1_output = false;
-		}
-		if line2.trim() == COMMAND_PREFIX {
-			is_line2_output = false;
-		}
-
-		// Skip all lines of second file until to move cursor to the same position
-		while !is_line1_output && is_line2_output && line2.trim() != COMMAND_PREFIX {
-			eprintln!("+ {}", line2.trim());
-			line2.clear();
-			line2_skip_read = true;
-			let read2 = file2_reader.read_line(&mut line2).unwrap();
-			if read2 == 0 {
-				break;
-			}
-		}
-
-		// Skip all lines of first file until to move cursor to the same position
-		while !is_line2_output && is_line1_output && line1.trim() != COMMAND_PREFIX {
-			eprintln!("- {}", line1.trim());
+		let mut r1 = read1;
+		while r1 > 0 && line1.trim() != COMMAND_SEPARATOR {
 			line1.clear();
-			line1_skip_read = true;
-			let read1 = file1_reader.read_line(&mut line1).unwrap();
-			if read1 == 0 {
+			r1 = file1_reader.read_line(&mut line1).unwrap();
+		}
+
+		lines1.clear();
+		while r1 > 0 {
+			line1.clear();
+			r1 = file1_reader.read_line(&mut line1).unwrap();
+			if line1.trim() == COMMAND_PREFIX {
 				break;
 			}
+			lines1.push(line1.trim().to_string());
 		}
 
-		if line1_skip_read || line2_skip_read {
-			continue;
+		let mut r2 = read2;
+		while r2 > 0 && line2.trim() != COMMAND_SEPARATOR {
+			line2.clear();
+			r2 = file2_reader.read_line(&mut line2).unwrap();
+			println!("{}", line2.trim());
 		}
 
-		// Do the logic only for output
-		if is_line1_output && is_line2_output {
-			let has_diff: bool = pattern_matcher.has_diff(line1.to_string(), line2.to_string());
-
-			if has_diff {
-				eprintln!("- {}", line1.trim());
-				eprintln!("+ {}", line2.trim());
-
-				files_have_diff = true;
-			} else {
-				println!("{}", line1.trim());
+		lines2.clear();
+		while r2 > 0 {
+			line2.clear();
+			r2 = file2_reader.read_line(&mut line2).unwrap();
+			if line2.trim() == COMMAND_PREFIX {
+				println!("{}", line2.trim());
+				break;
 			}
-		} else {
-			println!("{}", line1.trim());
+			lines2.push(line2.trim().to_string());
 		}
 
-		line1.clear();
-		line2.clear();
+		let max_len = std::cmp::max(lines1.len(), lines2.len());
+
+		for i in 0..max_len {
+	    match (lines1.get(i), lines2.get(i)) {
+        (None, Some(line)) => {
+          eprintln!("+ {}", line.trim());
+          files_have_diff = true;
+        },
+        (Some(line), None) => {
+          eprintln!("- {}", line.trim());
+          files_have_diff = true;
+        },
+        (Some(line1), Some(line2)) => {
+        	let has_diff: bool = pattern_matcher.has_diff(line1.to_string(), line2.to_string());
+          if has_diff {
+            eprintln!("- {}", line1.trim());
+            eprintln!("+ {}", line2.trim());
+            files_have_diff = true;
+          } else {
+            println!("{}", line1.trim());
+          }
+        },
+        _ => {
+        	println!("{}", line1.trim());
+        }
+	    }
+		}
 	}
 
 	if files_have_diff {
