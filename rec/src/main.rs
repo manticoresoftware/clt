@@ -17,6 +17,7 @@
 use regex::Regex;
 use tokio::fs::{OpenOptions, File};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader, BufWriter};
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::oneshot;
 
 #[derive(Debug, structopt::StructOpt)]
@@ -94,7 +95,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 
 	// If we have input file passed, we replay, otherwise – record
 	// Replay the input_file and save results in output_file
-  if let Some(input_file) = input_file {
+	if let Some(input_file) = input_file {
 		let input_file = input_file.into_string().unwrap();
 		let input_content = parser::compile(&input_file)?;
 
@@ -105,13 +106,33 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 		// We need to send empty command to block thread till we get forked and get clt> prompt
 		commands.push(String::from(""));
 
-    let mut last_line = "";
-    for line in lines {
+		let mut last_line = "";
+		for line in lines {
 			if line.starts_with(parser::COMMAND_SEPARATOR) {
 				commands.push(last_line.to_string())
 			}
 			last_line = line;
-    }
+		}
+
+		// Trap the signals and exit process in case we recieve it for replay only
+		{
+			tokio::spawn(async move {
+				let mut sigterm = signal(SignalKind::terminate()).unwrap();
+				let mut sigint = signal(SignalKind::interrupt()).unwrap();
+				loop {
+					tokio::select! {
+						_ = sigterm.recv() => {
+							println!("Received SIGINT");
+							std::process::exit(130);
+						}
+						_ = sigint.recv() => {
+							println!("Received SIGTERM");
+							std::process::exit(143);
+						}
+					};
+				}
+			});
+		}
 
 		{
 			let event_w = event_w.clone();

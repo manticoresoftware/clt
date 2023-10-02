@@ -25,6 +25,12 @@ const COMMAND_PREFIX: &str = "––– input –––";
 const COMMAND_SEPARATOR: &str = "––– output –––";
 
 fn main() {
+	// Set up the SIGINT signal handler
+	ctrlc::set_handler(move || {
+    println!("Received Ctrl+C! Exiting...");
+    std::process::exit(130);
+	}).expect("Error setting Ctrl-C handler");
+
 	let args: Vec<String> = env::args().collect();
 	if args.len() != 3 {
 		eprintln!("Usage: {} rec-file rep-file", args[0]);

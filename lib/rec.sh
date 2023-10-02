@@ -40,7 +40,7 @@ record() {
 	echo "Recording data to file: $record_file"
 	echo "Run commands one by one and after you finish press ^D to save"
 
-	container_exec "$image" "clt-rec -O '$record_file'" "$record_dir"
+	container_exec "$image" "clt-rec -O '$record_file'" "$record_dir" "1"
 }
 
 # Replay recorded test from the file

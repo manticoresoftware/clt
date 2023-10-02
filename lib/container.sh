@@ -25,6 +25,7 @@ container_exec() {
 	image=$1
 	command=$2
 	directory=${3:-tests}
+	interactive=${4:-}
 	if [ ! -d "$directory" ]; then
 		>&2 echo "Directory with tests does not exist: $directory" && exit 1
 	fi
@@ -42,15 +43,32 @@ container_exec() {
 		cat .patterns >> "$temp_file"
 	fi
 
-	docker run \
-		-v "$bin_path/rec:/usr/bin/clt-rec" \
-		-v "$bin_path/cmp:/usr/bin/clt-cmp" \
-		-v "$PWD/$directory:$DOCKER_PROJECT_DIR/$directory" \
-		-v "$temp_file:$DOCKER_PROJECT_DIR/.patterns" \
-		-w "$DOCKER_PROJECT_DIR" \
+	flag=
+	if [ -n "$interactive" ]; then
+		flag="-i"
+	fi
+	process=$(echo docker run \
+		-v \"$bin_path/rec:/usr/bin/clt-rec\" \
+		-v \"$bin_path/cmp:/usr/bin/clt-cmp\" \
+		-v \"$PWD/$directory:$DOCKER_PROJECT_DIR/$directory\" \
+		-v \"$temp_file:$DOCKER_PROJECT_DIR/.patterns\" \
+		-w \"$DOCKER_PROJECT_DIR\" \
 		$RUN_ARGS \
 		--entrypoint /bin/bash \
-		--rm -it "$image" \
-		-i -c "$command"
+		--rm $flag -t \"$image\" \
+		-i -c \"$command\")
+
+	if [ -n "$interactive" ]; then
+		eval "$process"
+	else
+		eval "$process" & pid=$!
+
+		trap "kill -s INT '$pid'; exit 130" SIGINT
+		trap "kill -s TERM '$pid'; exit 143" SIGTERM
+		wait "$pid"
+
+		trap - SIGINT SIGTERM
+		wait "$pid"
+	fi
 }
 
