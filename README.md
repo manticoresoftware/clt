@@ -18,38 +18,38 @@ We have prebuilt binaries for use in a Linux environment, for both amd64 and arm
 
 1. Begin by recording your test in interactive mode by executing the `record` command as follows:
 
-	```bash
-	./clt record centos:7
-	```
+  ```bash
+  ./clt record centos:7
+  ```
 
-	Here, centos:7 is the docker image that you want to use for tests. You can incorporate the `--no-refine` option if you wish to omit the refine step and execute the test later.
+  Here, centos:7 is the docker image that you want to use for tests. You can incorporate the `--no-refine` option if you wish to omit the refine step and execute the test later.
 
-	You can see the file which is used to write your recording as a first string, it looks like this:
+  You can see the file which is used to write your recording as a first string, it looks like this:
 
-	```bash
-	Recording data to file: ./tests/centos:7_20230714_161043.rec
-	```
+  ```bash
+  Recording data to file: ./tests/centos:7_20230714_161043.rec
+  ```
 
 2. Next, perform various commands in interactive mode. Once you're done, press `^D` to stop and record your test results.
 
 3. To validate and replay it, execute the following command:
 
-	```bash
-	./clt test -t ./tests/centos:7_20230714_161043.rec -d centos:7
-	echo $?
-	```
+  ```bash
+  ./clt test -t ./tests/centos:7_20230714_161043.rec -d centos:7
+  echo $?
+  ```
 
-	`./tests/centos:7_20230714_161043.rec` is your actual pass to the file you recroded on the step 1.
+  `./tests/centos:7_20230714_161043.rec` is your actual pass to the file you recroded on the step 1.
 
-	This will display the exit code and print the diff (if outputs vary while you replay it). If the exit code equals 1, everything is fine. Otherwise, you should examine the diff created by the cmp tool and introduce the necessary changes to the file, provided you executed it with the `--no-refine` option.
+  This will display the exit code and print the diff (if outputs vary while you replay it). If the exit code equals 1, everything is fine. Otherwise, you should examine the diff created by the cmp tool and introduce the necessary changes to the file, provided you executed it with the `--no-refine` option.
 
-	The `-d` flag is used for debug output and displays the diff, not just the exit code.
+  The `-d` flag is used for debug output and displays the diff, not just the exit code.
 
-	You can locate the complete output replayed in the same file name but with a .rep extension. In this case, it's test.rep.
+  You can locate the complete output replayed in the same file name but with a .rep extension. In this case, it's test.rep.
 
 ## GitHub Workflow example
 
-CLT provides a prearranged workflow for use in GitHub actions to run all tests located in your `tests` folder. You can find the template in `.github/workflows/clt-template.yml`. Here is a simple `clt.yml` example for use in your project:
+CLT provides a ready-to-use GitHub action to run all tests located in your `tests` folder, or any that you specify. Here is an example of how to use it:
 
 ```yaml
 name: CLT tests
@@ -62,20 +62,18 @@ on:
 
 jobs:
   clt:
-    uses: manticoresoftware/clt/.github/workflows/clt-template.yml@v2
-    with:
-      docker_images: |
-        [
-          {"image": "ghcr.io/manticoresoftware/manticoresearch:clt-tmp-47146bd"},
-          {"image": "manticoresearch/manticore-executor-kit:0.6.9"}
-        ]
-      init_code: |
-        git clone https://github.com/manticoresoftware/phar_builder.git
-        ./phar_builder/bin/build --name="Manticore Buddy" --package="manticore-buddy"
-      run_args: |
-        -v $PWD/build/share/modules/manticore-buddy:/usr/local/share/manticore/modules/manticore-buddy
-        -v $PWD/build/manticore-buddy:/usr/local/share/manticore/modules/manticore-buddy/bin/manticore-buddy
-      version: 'v2'
+    name: Run CLT tests
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ "ubuntu:bionic", "ubuntu:focal", "ubuntu:jammy", "debian:buster", "debian:bullseye", "debian:bookworm" ]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: manticoresoftware/clt@0.1.5
+        with:
+          image: ${{ matrix.image }}
+          test_prefix: test/clt-tests/
+          run_args: -e TELEMETRY=0
 ```
 
 The code is self-explanatory and covers almost everything that the current template offers.
@@ -84,7 +82,7 @@ The code is self-explanatory and covers almost everything that the current templ
 
 Once you've successfully captured your commands in interactive mode and stored them into a `.rec` file, the next step is to refine the test (if required). This is achieved by running the comparator which highlights the disparities between the initial output and replayed output.
 
-For creating dynamic content that effortlessly passes tests, you can utilize regular expressions (regex). Position the appropriate regex within the command output section, enclosed between `#!/` and `!/#` marks. To illustrate, the regex `#!/[0-9]+/!#` can be utilized to match any numerical value composed of digits 0 through 9, irrespective of its length.
+For creating dynamic content that effortlessly passes tests, you can utilize regular expressions (regex). Position the appropriate regex within the command output section, enclosed between `#!/` and `/!#` marks. To illustrate, the regex `#!/[0-9]+/!#` can be utilized to match any numerical value composed of digits 0 through 9, irrespective of its length.
 
 To streamline this process, we've introduced patterns. We already offer several predefined patterns within the `.patterns` file. However, you possess the capability to define your own by appending your definitions to the `.patterns` file located at the root of your project. The format must comply with the `VARIABLE NAME[space]RAW REGEX` rule. A typical `.patterns` file may resemble:
 
@@ -104,6 +102,10 @@ We've also integrated an additional feature known as "Reusable blocks". Simply e
 ```
 
 This command will seek the `block/my-block.recb` file within the directory relative to the `.rec` file where it's positioned.
+
+## Customization
+
+By default, we attempt to locate the `nano` or `vim` editors during the refine stage. To customize this, you can set the `CLT_EDITOR` environment variable to any editor of your choosing. For instance, to run with vscode, simply input `export CLT_EDITOR=vscode`, save it to your `.bashrc`, and everything will open in your preferred editor.
 
 ## Developers section
 
