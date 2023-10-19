@@ -67,13 +67,20 @@ replay() {
 compare() {
 	image=$1
 	record_file=$2
+	replay_file=$3
+	no_color=$4
 	if [ -z "$image" ] || [ -z "$record_file" ] || [ -z "$replay_file" ]; then
 		>&2 echo 'Usage: compare "image" "record_file" "replay_file"' && exit 1
 	fi
 
+	prefix=
+	if [ -n "$no_color" ]; then
+		prefix="NO_COLOR=1 "
+	fi
+
 	record_dir=$(dirname "${record_file}" | cut -d/ -f1)
 	# We validate file existence in cmp tool, so it's fine to skip it here
-	container_exec "$image" "clt-cmp '$record_file' '$replay_file'" "$record_dir"
+	container_exec "$image" "${prefix}clt-cmp '$record_file' '$replay_file'" "$record_dir"
 }
 
 # Replay recorded test and launch refine
@@ -103,7 +110,7 @@ refine() {
 	replay_file="${record_file%.*}.rep"
 
 	replay "$image" "$record_file"
-	compare "$image" "$record_file" "$replay_file" > "$record_file.cmp" 2>&1 || true
+	compare "$image" "$record_file" "$replay_file" "1" > "$record_file.cmp" 2>&1 || true
 	mv -f "$record_file.cmp" "$record_file"
 	$editor "$record_file"
 }
