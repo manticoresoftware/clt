@@ -305,8 +305,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 					// That duplicates output to stdout from user input
 					let input = std::str::from_utf8(&input)?;
 					if !is_typing && !input.ends_with(output) {
-						let filtered_output = filter_prompt(output);
-						output_fh.write_all(&filtered_output.as_bytes()).await?;
+						output_fh.write_all(&output.as_bytes()).await?;
 					}
 				}
 				Err(e) => {
@@ -358,8 +357,8 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 								let start: usize = filtered_output.find(command.as_str()).unwrap_or(0) + command.len();
 								filtered_output = substring(&filtered_output, start, filtered_output.len() - start).to_string();
 							}
-							result.extend_from_slice(filtered_output.as_bytes());
 
+							result.extend_from_slice(filtered_output.as_bytes());
 							let content = filter_stdout_buf(result);
 							if content.len() > 0 {
 								event_w.send(Event::Write(Ok(content))).unwrap();
