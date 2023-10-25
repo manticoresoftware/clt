@@ -47,6 +47,8 @@ We have prebuilt binaries for use in a Linux environment, for both amd64 and arm
 
   You can locate the complete output replayed in the same file name but with a .rep extension. In this case, it's test.rep.
 
+We utilize bash to initiate an interactive environment when you record a test. It's important to note that we reset the environment to ensure maximum compatibility with various operating systems. As of now, there is no option to pass environment variables from outside into the test environment.
+
 ## GitHub Workflow example
 
 CLT provides a ready-to-use GitHub action to run all tests located in your `tests` folder, or any that you specify. Here is an example of how to use it:
@@ -107,6 +109,8 @@ This command will seek the `block/my-block.recb` file within the directory relat
 
 By default, we attempt to locate the `nano` or `vim` editors during the refine stage. To customize this, you can set the `CLT_EDITOR` environment variable to any editor of your choosing. For instance, to run with vscode, simply input `export CLT_EDITOR=vscode`, save it to your `.bashrc`, and everything will open in your preferred editor.
 
+You can use `RUN_ARGS` to pass extra parameters to the `docker run` command.
+
 ## Developers section
 
 ### How to build rec and cmp tools
@@ -117,14 +121,6 @@ Build aarch and amd64 static cross for Linux:
 ./bin/cross-build
 git add .
 git commit -m '...'
-```
-
-### How to make output readable
-
-This one-liner removes control characters and console codes/colors from recorded terminal output:
-
-```bash
-cat output.rec | sed -e "s/\x1b\[.\{1,5\}m//g"
 ```
 
 ### Current limitations
