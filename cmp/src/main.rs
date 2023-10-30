@@ -163,10 +163,14 @@ fn main() {
 	}
 }
 
+enum MatchingPart {
+	Static(String),
+	Pattern(String),
+}
+
 struct PatternMatcher {
 	config: HashMap<String, String>,
-	val_regex: Regex,
-	key_regex: Regex,
+	var_regex: Regex,
 }
 
 impl PatternMatcher {
@@ -179,38 +183,63 @@ impl PatternMatcher {
 			None =>  HashMap::new(),
 		};
 
-		let key_regex = Regex::new(r"%\{[A-Z]{1}[A-Z_0-9]*\}")?;
-		let val_regex = Regex::new(r"#!/(.+?)/!#")?;
-
-		Ok(Self { config, key_regex, val_regex })
+		let var_regex = Regex::new(r"%\{[A-Z]{1}[A-Z_0-9]*\}")?;
+		Ok(Self { config, var_regex })
 	}
 
 	/// Validate line from .rec file and line from .rep file
 	/// by using open regex patterns and matched variables
 	/// and return true or false in case if we have diff or not
 	fn has_diff(&self, rec_line: String, rep_line: String) -> bool {
-		// 1. We replace all variables matches to raw regexp
 		let rec_line = self.replace_vars_to_patterns(rec_line);
+    let parts = self.split_into_parts(&rec_line);
+    let mut last_index = 0;
 
-		// 2. We go through the line and validate it as expanded raw regex in it without any vars
-		let mut match_count = 0u8;
-		for capture in self.val_regex.captures_iter(&rec_line) {
-			match_count = match_count + 1;
-			let pattern = capture.get(1).unwrap().as_str();
-			let pattern_regex = Regex::new(pattern).unwrap();
-			if !pattern_regex.is_match(&rep_line) {
-				return true;
-			}
-		}
+    for part in parts {
+      match part {
+        MatchingPart::Static(static_part) => {
+          if let Some(index) = rep_line[last_index..].find(&static_part) {
+            last_index += index + static_part.len();
+          } else {
+            return true;
+          }
+        }
+        MatchingPart::Pattern(pattern) => {
+          let pattern_regex = Regex::new(&pattern).unwrap();
+          if let Some(mat) = pattern_regex.find(&rep_line[last_index..]) {
+            last_index += mat.end();
+          } else {
+            return true;
+          }
+        }
+      }
+    }
 
-		match_count == 0 && rec_line != rep_line
+    last_index != rep_line.len()
+	}
+
+	/// Helper method to split line into parts
+	/// To make it possible to validate pattern matched vars and static parts
+	///
+	fn split_into_parts(&self, rec_line: &str) -> Vec<MatchingPart> {
+    let mut parts = Vec::new();
+    let re = Regex::new(r"(#!/.*/!#)").unwrap(); // specify your pattern here
+    let splits: Vec<&str> = re.split(rec_line).collect();
+    for (i, split) in splits.iter().enumerate() {
+      if i % 2 == 0 {
+        parts.push(MatchingPart::Static(split.to_string()));
+      } else {
+        parts.push(MatchingPart::Pattern(split.to_string()));
+      }
+    }
+    parts
 	}
 
   /// Helper function that go through matched variable patterns in line
 	/// And replace it all with values from our parsed config
 	/// So we have raw regex to validate as an output
 	fn replace_vars_to_patterns(&self, line: String) -> String {
-    let result = self.key_regex.replace_all(&line, |caps: &regex::Captures| {
+    let result = self.var_regex.replace_all(&line, |caps: &regex::Captures| {
 			let matched = &caps[0];
 			let key = matched[2..matched.len() - 1].to_string();
 			self.config.get(&key).unwrap_or(&matched.to_string()).clone()
