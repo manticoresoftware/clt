@@ -34,8 +34,8 @@ enum Diff {
 fn main() {
 	// Set up the SIGINT signal handler
 	ctrlc::set_handler(move || {
-    println!("Received Ctrl+C! Exiting...");
-    std::process::exit(130);
+		println!("Received Ctrl+C! Exiting...");
+		std::process::exit(130);
 	}).expect("Error setting Ctrl-C handler");
 
 	let mut stdout = StandardStream::stdout(ColorChoice::Auto);
@@ -134,27 +134,27 @@ fn main() {
 		let max_len = std::cmp::max(lines1.len(), lines2.len());
 
 		for i in 0..max_len {
-	    match (lines1.get(i), lines2.get(i)) {
-        (None, Some(line)) => {
-        	print_diff(&mut stdout, line.trim(), Diff::Plus);
-          files_have_diff = true;
-        },
-        (Some(line), None) => {
-        	print_diff(&mut stdout, line.trim(), Diff::Minus);
-          files_have_diff = true;
-        },
-        (Some(line1), Some(line2)) => {
-        	let has_diff: bool = pattern_matcher.has_diff(line1.to_string(), line2.to_string());
-          if has_diff {
-          	print_diff(&mut stdout, line1.trim(), Diff::Minus);
-          	print_diff(&mut stdout, line2.trim(), Diff::Plus);
-            files_have_diff = true;
-          } else {
-            println!("{}", line1.trim());
-          }
-        },
-        _ => {}
-	    }
+			match (lines1.get(i), lines2.get(i)) {
+				(None, Some(line)) => {
+					print_diff(&mut stdout, line.trim(), Diff::Plus);
+					files_have_diff = true;
+				},
+				(Some(line), None) => {
+					print_diff(&mut stdout, line.trim(), Diff::Minus);
+					files_have_diff = true;
+				},
+				(Some(line1), Some(line2)) => {
+					let has_diff: bool = pattern_matcher.has_diff(line1.to_string(), line2.to_string());
+					if has_diff {
+						print_diff(&mut stdout, line1.trim(), Diff::Minus);
+						print_diff(&mut stdout, line2.trim(), Diff::Plus);
+						files_have_diff = true;
+					} else {
+						println!("{}", line1.trim());
+					}
+				},
+				_ => {}
+			}
 		}
 	}
 
@@ -192,54 +192,62 @@ impl PatternMatcher {
 	/// and return true or false in case if we have diff or not
 	fn has_diff(&self, rec_line: String, rep_line: String) -> bool {
 		let rec_line = self.replace_vars_to_patterns(rec_line);
-    let parts = self.split_into_parts(&rec_line);
-    let mut last_index = 0;
+		let parts = self.split_into_parts(&rec_line);
+		let mut last_index = 0;
 
-    for part in parts {
-      match part {
-        MatchingPart::Static(static_part) => {
-          if let Some(index) = rep_line[last_index..].find(&static_part) {
-            last_index += index + static_part.len();
-          } else {
-            return true;
-          }
-        }
-        MatchingPart::Pattern(pattern) => {
-          let pattern_regex = Regex::new(&pattern).unwrap();
-          if let Some(mat) = pattern_regex.find(&rep_line[last_index..]) {
-            last_index += mat.end();
-          } else {
-            return true;
-          }
-        }
-      }
-    }
+		for part in parts {
+			match part {
+				MatchingPart::Static(static_part) => {
+					if let Some(index) = rep_line[last_index..].find(&static_part) {
+						last_index += index + static_part.len();
+					} else {
+						return true;
+					}
+				}
+				MatchingPart::Pattern(pattern) => {
+					let pattern_regex = Regex::new(&pattern).unwrap();
+					if let Some(mat) = pattern_regex.find(&rep_line[last_index..]) {
+						last_index += mat.end();
+					} else {
+						return true;
+					}
+				}
+			}
+		}
 
-    last_index != rep_line.len()
+		last_index != rep_line.len()
 	}
 
 	/// Helper method to split line into parts
 	/// To make it possible to validate pattern matched vars and static parts
 	///
 	fn split_into_parts(&self, rec_line: &str) -> Vec<MatchingPart> {
-    let mut parts = Vec::new();
-    let re = Regex::new(r"(#!/.*/!#)").unwrap(); // specify your pattern here
-    let splits: Vec<&str> = re.split(rec_line).collect();
-    for (i, split) in splits.iter().enumerate() {
-      if i % 2 == 0 {
-        parts.push(MatchingPart::Static(split.to_string()));
-      } else {
-        parts.push(MatchingPart::Pattern(split.to_string()));
-      }
-    }
-    parts
+		let mut parts = Vec::new();
+
+		let first_splits: Vec<&str> = rec_line.split("#!/").collect();
+		for first_split in first_splits {
+			let second_splits: Vec<&str> = first_split.split("/!#").collect();
+			if second_splits.len() == 1 {
+				parts.push(MatchingPart::Static(second_splits.first().unwrap().to_string()));
+			} else {
+				for (i, second_split) in second_splits.iter().enumerate() {
+					if i % 2 == 1 {
+						parts.push(MatchingPart::Static(second_split.to_string()));
+					} else {
+						parts.push(MatchingPart::Pattern(second_split.to_string()));
+					}
+				}
+			}
+
+		}
+		parts
 	}
 
-  /// Helper function that go through matched variable patterns in line
+	/// Helper function that go through matched variable patterns in line
 	/// And replace it all with values from our parsed config
 	/// So we have raw regex to validate as an output
 	fn replace_vars_to_patterns(&self, line: String) -> String {
-    let result = self.var_regex.replace_all(&line, |caps: &regex::Captures| {
+		let result = self.var_regex.replace_all(&line, |caps: &regex::Captures| {
 			let matched = &caps[0];
 			let key = matched[2..matched.len() - 1].to_string();
 			self.config.get(&key).unwrap_or(&matched.to_string()).clone()
@@ -272,31 +280,31 @@ impl PatternMatcher {
 }
 
 fn move_cursor_to_line<R: BufRead + Seek>(reader: &mut R, command_prefix: &str) -> io::Result<()> {
-  let mut line = String::new();
+	let mut line = String::new();
 
-  loop {
-    let pos = reader.seek(SeekFrom::Current(0))?;
-    let len = reader.read_line(&mut line)?;
+	loop {
+		let pos = reader.seek(SeekFrom::Current(0))?;
+		let len = reader.read_line(&mut line)?;
 
-    if len == 0 {
-      break;
-    }
+		if len == 0 {
+			break;
+		}
 
-    if line.trim() == command_prefix {
-      reader.seek(SeekFrom::Start(pos))?;
-      break;
-    }
+		if line.trim() == command_prefix {
+			reader.seek(SeekFrom::Start(pos))?;
+			break;
+		}
 
-    line.clear();
-  }
+		line.clear();
+	}
 
-  Ok(())
+	Ok(())
 }
 
 fn print_diff(stdout:&mut StandardStream, line: &str, diff: Diff) {
 	let (line, color) = match diff {
-    Diff::Plus => (format!("+ {}", line.trim()), Color::Green),
-    Diff::Minus => (format!("- {}", line.trim()), Color::Red),
+		Diff::Plus => (format!("+ {}", line.trim()), Color::Green),
+		Diff::Minus => (format!("- {}", line.trim()), Color::Red),
 	};
 	stdout.set_color(ColorSpec::new().set_fg(Some(color))).unwrap();
 	writeln!(stdout, "{}", line.trim()).unwrap();
