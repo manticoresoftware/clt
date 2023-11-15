@@ -198,8 +198,8 @@ impl PatternMatcher {
 		for part in parts {
 			match part {
 				MatchingPart::Static(static_part) => {
-					if let Some(index) = rep_line[last_index..].find(&static_part) {
-						last_index += index + static_part.len();
+					if rep_line[last_index..].starts_with(&static_part) {
+						last_index += static_part.len();
 					} else {
 						return true;
 					}
