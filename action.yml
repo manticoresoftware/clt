@@ -28,12 +28,18 @@ inputs:
   artifact:
     required: false
     type: string
+  ref:
+    required: false
+    type: string
+    default: ''
 
 runs:
   using: "composite"
   steps:
     - name: Checkout the calling repo
       uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
 
     - name: Checkout CLT
       uses: actions/checkout@v4
