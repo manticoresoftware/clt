@@ -23,9 +23,6 @@ use regex::Regex;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 use std::io::Write;
 
-const COMMAND_PREFIX: &str = "––– input –––";
-const COMMAND_SEPARATOR: &str = "––– output –––";
-
 enum Diff {
 	Plus,
 	Minus
@@ -57,11 +54,11 @@ fn main() {
 	let input_content = parser::compile(&args[1]).unwrap();
 	let file1_cursor = Cursor::new(input_content);
 	let mut file1_reader = BufReader::new(file1_cursor);
-	move_cursor_to_line(&mut file1_reader, COMMAND_PREFIX).unwrap();
+	move_cursor_to_line(&mut file1_reader, parser::COMMAND_PREFIX).unwrap();
 
 	let file2 = File::open(&args[2]).unwrap();
 	let mut file2_reader = BufReader::new(file2);
-	move_cursor_to_line(&mut file2_reader, COMMAND_PREFIX).unwrap();
+	move_cursor_to_line(&mut file2_reader, parser::COMMAND_PREFIX).unwrap();
 
 	let mut line1 = String::new();
 	let mut line2 = String::new();
@@ -90,7 +87,7 @@ fn main() {
 
 		// Change the current mode if we are in output section or not
 		let mut r1 = read1;
-		while r1 > 0 && line1.trim() != COMMAND_SEPARATOR {
+		while r1 > 0 && line1.trim() != parser::COMMAND_SEPARATOR {
 			line1.clear();
 			r1 = file1_reader.read_line(&mut line1).unwrap();
 			if read2 == 0 {
@@ -102,14 +99,17 @@ fn main() {
 		while r1 > 0 {
 			line1.clear();
 			r1 = file1_reader.read_line(&mut line1).unwrap();
-			if line1.trim() == COMMAND_PREFIX {
+			if line1.trim() == parser::COMMAND_PREFIX {
 				break;
+			}
+			if parser::is_duration_line(&line1) {
+				continue;
 			}
 			lines1.push(line1.trim().to_string());
 		}
 
 		let mut r2 = read2;
-		while r2 > 0 && line2.trim() != COMMAND_SEPARATOR {
+		while r2 > 0 && line2.trim() != parser::COMMAND_SEPARATOR {
 			line2.clear();
 			r2 = file2_reader.read_line(&mut line2).unwrap();
 			if read1 == 0 {
@@ -124,9 +124,11 @@ fn main() {
 		while r2 > 0 {
 			line2.clear();
 			r2 = file2_reader.read_line(&mut line2).unwrap();
-			if line2.trim() == COMMAND_PREFIX {
-				// println!("{}", line2.trim());
+			if line2.trim() == parser::COMMAND_PREFIX {
 				break;
+			}
+			if parser::is_duration_line(&line2) {
+				continue;
 			}
 			lines2.push(line2.trim().to_string());
 		}

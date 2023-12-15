@@ -19,6 +19,7 @@ use tokio::fs::{OpenOptions, File};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader, BufWriter};
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::oneshot;
+use tokio::time::Instant;
 
 #[derive(Debug, structopt::StructOpt)]
 #[structopt(
@@ -221,6 +222,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	let mut input: Vec<u8> = Vec::new();
 	let mut is_typing = false;
 	let mut command_output_last_line = String::new();
+	let mut total_duration: u128 = 0;
 	loop {
 		match event_r.recv().await.unwrap() {
 			Event::Key(key) => {
@@ -316,6 +318,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 				return Err(e);
 			}
 			Event::Replay(command, tx) => {
+				let start = Instant::now();
 				let mut command_output: String = String::new();
 				command_output.push_str(&command_output_last_line);
 				let mut result: Vec<u8> = Vec::new();
@@ -358,11 +361,20 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 								filtered_output = substring(&filtered_output, start, filtered_output.len() - start).to_string();
 							}
 
-							result.extend_from_slice(filtered_output.as_bytes());
-							let content = filter_stdout_buf(result);
-							if content.len() > 0 {
-								event_w.send(Event::Write(Ok(content))).unwrap();
+							if !command.is_empty() {
+								result.extend_from_slice(filtered_output.as_bytes());
+								// Add duration line
+								let duration = parser::Duration {
+									duration: start.elapsed().as_millis(),
+									percentage: 0.0
+								};
+								total_duration += duration.duration;
+								let duration_line = parser::get_duration_line(duration);
+								result.extend_from_slice(duration_line.as_bytes());
 							}
+
+							let content = filter_stdout_buf(result);
+							event_w.send(Event::Write(Ok(content))).unwrap();
 
 							// Signal that the command has finished executing.
 							tx.send(()).unwrap();
@@ -374,7 +386,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 			Event::Quit => {
 				// Do a file clean up to remove spaces and make consistent output
 				let file_path = output_file.clone().into_string().unwrap();
-				cleanup_file(file_path).await.unwrap();
+				cleanup_file(file_path, total_duration).await.unwrap();
 
 				println!("");
 				break
@@ -428,7 +440,7 @@ fn is_prompting(output: &str) -> bool {
 }
 
 /// This function cleans up all empty lines and removes the last line containing "exit" to make the consistent output
-async fn cleanup_file(file_path: String) -> Result<(), Box<dyn std::error::Error>> {
+async fn cleanup_file(file_path: String, total_duration: u128) -> Result<(), Box<dyn std::error::Error>> {
 	let file = File::open(&file_path).await?;
 	let temp_output_file: String = format!("{}.tmp", &file_path);
 	let temp_file = OpenOptions::new()
@@ -440,11 +452,19 @@ async fn cleanup_file(file_path: String) -> Result<(), Box<dyn std::error::Error
 	let mut writer = BufWriter::new(temp_file);
 
 	let mut lines = reader.lines();
+
 	let mut non_empty_lines = Vec::new();
 	non_empty_lines.push(String::from(OUTPUT_HEADER));
+	non_empty_lines.push(format!("Time taken for test: {}ms\n", total_duration));
 	while let Some(line) = lines.next_line().await? {
 		if !line.trim().is_empty() {
-			non_empty_lines.push(format!("{}\n", line.trim()));
+			if parser::is_duration_line(&line) {
+				let mut duration = parser::parse_duration_line(&line)?;
+				duration.percentage = (duration.duration as f32 / total_duration as f32) * 100.0;
+				non_empty_lines.push(format!("{}\n", parser::get_duration_line(duration)));
+			} else {
+				non_empty_lines.push(format!("{}\n", line.trim()));
+			}
 		}
 	}
 
