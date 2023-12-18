@@ -71,7 +71,7 @@ jobs:
         image: [ "ubuntu:bionic", "ubuntu:focal", "ubuntu:jammy", "debian:buster", "debian:bullseye", "debian:bookworm" ]
     runs-on: ubuntu-22.04
     steps:
-      - uses: manticoresoftware/clt@0.1.9
+      - uses: manticoresoftware/clt@0.1.17
         with:
           image: ${{ matrix.image }}
           test_prefix: test/clt-tests/
