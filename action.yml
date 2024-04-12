@@ -66,6 +66,9 @@ runs:
       shell: bash
 
     - name: Run all tests
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
       run: |
         set +e
         should_exit=0
@@ -104,16 +107,21 @@ runs:
           test_emoji="👎"
         fi
 
-        job_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs/${{ github.job }}"
-        echo "${test_emoji} CLT results: ${{ job.job }}" >> $GITHUB_STEP_SUMMARY
+        job_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        commit_url="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+        commit_sha="$(echo "${{ github.sha }}" | cut -c1-7 )"
+        echo "## ${{ github.job }}" >> $GITHUB_STEP_SUMMARY
+        echo "${test_emoji} CLT tests in \`${{ inputs.test_prefix }}\`" >> $GITHUB_STEP_SUMMARY
         echo "✅ OK: $test_success" >> $GITHUB_STEP_SUMMARY
         echo "❌ Failed: $test_failed" >> $GITHUB_STEP_SUMMARY
         echo "⏳ Duration: ${test_duration}s" >> $GITHUB_STEP_SUMMARY
-        echo "👉 [Check Action Results]($job_url)" >> $GITHUB_STEP_SUMMARY
+        echo "👉 [Check Action Results]($job_url) for commit [$commit_sha]($commit_url)" >> $GITHUB_STEP_SUMMARY
 
         # If we have some test failed, we exit
         if [ "$should_exit" -eq "1" ]; then
           exit 1
         fi
 
+        gh pr comment $PR_NUMBER --body "$(cat $GITHUB_STEP_SUMMARY)"
       shell: bash
+
