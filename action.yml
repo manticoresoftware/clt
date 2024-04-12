@@ -68,8 +68,12 @@ runs:
     - name: Run all tests
       run: |
         set +e
+        should_exit=0
+        test_success=0
+        test_failed=0
+        start_time=$(date +%s)
         if [ -f "${{ inputs.artifact }}" ]; then
-            cat "${{ inputs.artifact }}" | docker import - "${{ inputs.image }}"
+          cat "${{ inputs.artifact }}" | docker import - "${{ inputs.image }}"
         fi
         for test in ${{ inputs.test_prefix }}*.rec; do
           echo "Running test: $test with command: RUN_ARGS=\"${{ inputs.run_args }}\" script -q -e -c \"clt/clt test -t $test ${{ inputs.image }}\""
@@ -83,8 +87,33 @@ runs:
             echo "CLT-CMP diff output:"
             cmp_file=$(echo $test | cut -d. -f1).cmp
             cat $cmp_file
-            exit $exit_code
+            should_exit=1
+            ((test_failed++))
+          else
+            ((test_success++))
           fi
           echo "–––"
         done
+        end_time=$(date +%s)
+        test_duration=$((end_time - start_time))
+
+        # Write summary
+        if [ "$test_failed" -eq "0" ]; then
+          test_emoji="👍"
+        else
+          test_emoji="👎"
+        fi
+
+        job_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs/${{ github.job }}"
+        echo "${test_emoji} CLT results: ${{ job.job }}" >> $GITHUB_STEP_SUMMARY
+        echo "✅ OK: $test_success" >> $GITHUB_STEP_SUMMARY
+        echo "❌ Failed: $test_failed" >> $GITHUB_STEP_SUMMARY
+        echo "⏳ Duration: ${test_duration}s" >> $GITHUB_STEP_SUMMARY
+        echo "👉 [Check Action Results]($job_url)" >> $GITHUB_STEP_SUMMARY
+
+        # If we have some test failed, we exit
+        if [ "$should_exit" -eq "1" ]; then
+          exit 1
+        fi
+
       shell: bash
