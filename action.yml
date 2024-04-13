@@ -122,6 +122,8 @@ runs:
           exit 1
         fi
 
-        gh pr comment $PR_NUMBER --body "$(cat $GITHUB_STEP_SUMMARY)"
+        if [[ $GITHUB_EVENT_NAME == 'pull_request' ]]; then
+          gh pr comment $PR_NUMBER --body "$(cat $GITHUB_STEP_SUMMARY)"
+        fi
       shell: bash
 
