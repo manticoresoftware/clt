@@ -75,6 +75,7 @@ runs:
         test_success=0
         test_failed=0
         start_time=$(date +%s)
+        declare -A failed_tests
         if [ -f "${{ inputs.artifact }}" ]; then
           cat "${{ inputs.artifact }}" | docker import - "${{ inputs.image }}"
         fi
@@ -89,7 +90,9 @@ runs:
             echo "🚨 Test failed with exit code: $exit_code"
             echo "CLT-CMP diff output:"
             cmp_file=$(echo $test | cut -d. -f1).cmp
-            cat $cmp_file
+            output=$(cat $cmp_file)
+            failed_tests[$test]="$output"
+            echo $output
             should_exit=1
             ((test_failed++))
           else
@@ -117,13 +120,28 @@ runs:
         echo "⏳ Duration: ${test_duration}s" >> $GITHUB_STEP_SUMMARY
         echo "👉 [Check Action Results]($job_url) for commit [$commit_sha]($commit_url)" >> $GITHUB_STEP_SUMMARY
 
+        if [ ${#failed_tests[@]} -ne 0 ]; then
+          echo "Failed tests:" >> $GITHUB_STEP_SUMMARY
+          for key in "${!failed_tests[@]}"; do
+            value="${failed_tests[$key]}"
+            echo '<details>' >> $GITHUB_STEP_SUMMARY
+            echo "<summary>$key</summary>" >> $GITHUB_STEP_SUMMARY
+            echo >> $GITHUB_STEP_SUMMARY
+            echo '```diff' >> $GITHUB_STEP_SUMMARY
+            echo "$value" | sed 's/\x1b\[[0-9;]*m//g' >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo >> $GITHUB_STEP_SUMMARY
+            echo '</details>' >> $GITHUB_STEP_SUMMARY
+          done
+        fi
+
+        if [[ ${{ github.event_name }} == 'pull_request' ]]; then
+          gh pr comment $PR_NUMBER --body "$(cat $GITHUB_STEP_SUMMARY)"
+        fi
+
         # If we have some test failed, we exit
         if [ "$should_exit" -eq "1" ]; then
           exit 1
-        fi
-
-        if [[ $GITHUB_EVENT_NAME == 'pull_request' ]]; then
-          gh pr comment $PR_NUMBER --body "$(cat $GITHUB_STEP_SUMMARY)"
         fi
       shell: bash
 
