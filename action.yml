@@ -2,36 +2,55 @@ name: 'Run CLT test'
 description: 'This action runs a CLT test'
 inputs:
   image:
-    description: 'Docker image that we will use to run CLT tests'
+    description: |-
+      Docker image on that we will use to run CLT tests
     required: true
     type: string
   init_code:
-    description: 'Code that is to be executed on init stage before running tests'
+    description: |-
+      Code that is to be executed on init stage before running tests
     required: false
     type: string
     default: ''
   run_args:
-    description: 'Run args that we will pass to each test we run'
+    description: |-
+      Run args that we will pass to each test we run
     required: false
     type: string
     default: ''
   test_prefix:
-    description: 'Filter tests by using this prefix in tests folder'
+    description: |-
+      Filter tests by using this prefix in tests folder.
+      You can specify multiple prefixes each on one line for groupping.
     required: false
     type: string
     default: 'tests/'
   timeout:
-    description: 'Allowed timeout in minutes for tests'
+    description: |-
+      Allowed timeout in minutes for tests
     required: false
     type: number
     default: 5
   artifact:
+    description: |-
+      Artifact to download in case you want to use local built docker image to run.
     required: false
     type: string
   ref:
+    description: |-
+      The branch name or ref to the original repo we test that we will checkout.
+      Optional and by default we use default branch of it.
     required: false
     type: string
     default: ''
+  comment_mode:
+    description: |-
+      If we are in a pull request, we publish summary results of tests to it as comments.
+      By default, it uses the 'always' mode that publishes a comment on any results.
+      You can set it to 'failure' to create a comment in the pull request only when an error occurred.
+    required: false
+    type: string
+    default: 'always'
 
 runs:
   using: "composite"
@@ -79,27 +98,29 @@ runs:
         if [ -f "${{ inputs.artifact }}" ]; then
           cat "${{ inputs.artifact }}" | docker import - "${{ inputs.image }}"
         fi
-        for test in ${{ inputs.test_prefix }}*.rec; do
-          echo "Running test: $test with command: RUN_ARGS=\"${{ inputs.run_args }}\" script -q -e -c \"clt/clt test -t $test ${{ inputs.image }}\""
-          RUN_ARGS="${{ inputs.run_args }}" script -q -e -c "clt/clt test -t $test ${{ inputs.image }}"
-          exit_code=$?
-          rep_file=$(echo $test | cut -d. -f1).rep
-          cat $rep_file
-          if [ $exit_code -ne 0 ]; then
-            echo -n $'\n'$'\n'$'\n'
-            echo "🚨 Test failed with exit code: $exit_code"
-            echo "CLT-CMP diff output:"
-            cmp_file=$(echo $test | cut -d. -f1).cmp
-            output=$(cat $cmp_file)
-            failed_tests[$test]="$output"
-            echo $output
-            should_exit=1
-            ((test_failed++))
-          else
-            ((test_success++))
-          fi
-          echo "–––"
-        done
+        while read -r prefix; do
+          for test in ${prefix}*.rec; do
+            echo "Running test: $test with command: RUN_ARGS=\"${{ inputs.run_args }}\" script -q -e -c \"clt/clt test -t $test ${{ inputs.image }}\""
+            RUN_ARGS="${{ inputs.run_args }}" script -q -e -c "clt/clt test -t $test ${{ inputs.image }}"
+            exit_code=$?
+            rep_file=$(echo $test | cut -d. -f1).rep
+            cat $rep_file
+            if [ $exit_code -ne 0 ]; then
+              echo -n $'\n'$'\n'$'\n'
+              echo "🚨 Test failed with exit code: $exit_code"
+              echo "CLT-CMP diff output:"
+              cmp_file=$(echo $test | cut -d. -f1).cmp
+              output="$(cat "$cmp_file")"
+              failed_tests[$test]="$output"
+              echo "$output"
+              should_exit=1
+              ((test_failed++))
+            else
+              ((test_success++))
+            fi
+            echo "–––"
+          done
+        done <<< "$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "${{ inputs.test_prefix }}")"
         end_time=$(date +%s)
         test_duration=$((end_time - start_time))
 
@@ -142,6 +163,16 @@ runs:
         # If we have some test failed, we exit
         if [ "$should_exit" -eq "1" ]; then
           exit 1
+        fi
+        should_comment="$should_exit"
+        if [ $GITHUB_EVENT_NAME -eq 'pull_request' ]; then
+          if [ "${{ inputs.comment_mode }}" -eq 'always' ]; then
+            should_comment=1
+          fi
+        fi
+
+        if [ "$should_comment" -eq "1" ]; then
+          gh pr comment $PR_NUMBER --body "$(cat $GITHUB_STEP_SUMMARY)"
         fi
       shell: bash
 
