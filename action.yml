@@ -47,7 +47,7 @@ inputs:
     description: |-
       If we are in a pull request, we publish summary results of tests to it as comments.
       By default, it uses the 'always' mode that publishes a comment on any results.
-      You can set it to 'failure' to create a comment in the pull request only when an error occurred.
+      You can set it to 'failures' to create a comment in the pull request only when an error occurred.
     required: false
     type: string
     default: 'always'
@@ -160,10 +160,6 @@ runs:
           gh pr comment $PR_NUMBER --body "$(cat $GITHUB_STEP_SUMMARY)"
         fi
 
-        # If we have some test failed, we exit
-        if [ "$should_exit" -eq "1" ]; then
-          exit 1
-        fi
         should_comment="$should_exit"
         if [ $GITHUB_EVENT_NAME -eq 'pull_request' ]; then
           if [ "${{ inputs.comment_mode }}" -eq 'always' ]; then
@@ -173,6 +169,11 @@ runs:
 
         if [ "$should_comment" -eq "1" ]; then
           gh pr comment $PR_NUMBER --body "$(cat $GITHUB_STEP_SUMMARY)"
+        fi
+
+        # If we have some test failed, we exit
+        if [ "$should_exit" -eq "1" ]; then
+          exit 1
         fi
       shell: bash
 
