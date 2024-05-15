@@ -1,4 +1,4 @@
-// Copyright (c) 2023, Manticore Software LTD (https://manticoresearch.com)
+// Copyright (c) 2023-present, Manticore Software LTD (https://manticoresearch.com)
 // All rights reserved
 //
 //
@@ -31,27 +31,32 @@ use tokio::time::Instant;
 )]
 struct Opt {
 	#[structopt(
-		short = "-I",
-		long,
+		short = "I",
+		long = "input",
 		help = "File to read command to replay from"
 	)]
 	input_file: Option<std::ffi::OsString>,
 
 	#[structopt(
-		short = "-O",
-		long,
+		short = "O",
+		long = "output",
 		default_value = "output.rec",
 		help = "File to save recorded results to"
 	)]
 	output_file: std::ffi::OsString,
+
+	#[structopt(
+		short = "p",
+		long = "prompt",
+		multiple = true,
+		help = "Default prompts to use for parsing"
+	)]
+	prompts: Vec<String>,
 }
 
 const OUTPUT_HEADER: &str = "You can use regex in the output sections.\nMore info here: https://github.com/manticoresoftware/clt#refine\n";
 const SHELL_CMD: &str = "/usr/bin/env";
 const SHELL_PROMPT: &str = "clt> ";
-const PROMPT_REGEX_STR: &str = "([A-Za-z\\[\\]\\(\\)\\s]+?[$#>])";
-const PROMPT_REGEX: &str = r"(?m)^([A-Za-z\[\]\(\)\s]+?[$#>])\s+?$";
-const PROMPT_LINE_REGEX: &str = r"(?m)^[A-Za-z\[\]\(\)\t ]+?[$#>].*$";
 const INIT_CMD: &[u8] = b"export PS1='clt> ';export LANG='en_US.UTF-8' PATH='/bin:/usr/bin:/usr/local/bin:/sbin:/usr/local/sbin' COLUMNS=10000;enable -n exit enable;exec 2>&1;";
 
 #[derive(Debug)]
@@ -66,8 +71,8 @@ enum Event {
 
 #[tokio::main]
 async fn async_main(opt: Opt) -> anyhow::Result<()> {
-	let Opt { input_file, output_file } = opt;
-
+	let Opt { input_file, output_file, mut prompts } = opt;
+	prompts.push(SHELL_PROMPT.to_string());
 	let mut stdout = tokio::io::stdout();
 
 	let mut pty = pty_process::Pty::new()?;
@@ -115,7 +120,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 			last_line = line;
 		}
 
-		// Trap the signals and exit process in case we recieve it for replay only
+		// Trap the signals and exit process in case we receive it for replay only
 		{
 			tokio::spawn(async move {
 				let mut sigterm = signal(SignalKind::terminate()).unwrap();
@@ -140,7 +145,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 			tokio::spawn(async move {
 				for command in commands {
 					let (tx, rx) = oneshot::channel();
-					event_w.send(Event::Replay(command, tx)).unwrap();
+					event_w.send(Event::Replay(command.trim().to_string(), tx)).unwrap();
 					// Block until the command has finished executing.
 					rx.await.unwrap();
 				}
@@ -224,7 +229,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	let mut command_output_last_line = String::new();
 	let mut total_duration: u128 = 0;
 	loop {
-		match event_r.recv().await.unwrap() {
+		let var_name = match event_r.recv().await.unwrap() {
 			Event::Key(key) => {
 				let key = key?;
 				if let Some(ref key) = key {
@@ -275,7 +280,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 						is_typing = false;
 
 						// Do not write empty commands and ^D to the end of file because we are just exiting
-						if !command.trim().is_empty() && command != String::from("^D") {
+						if !command.is_empty() && command != String::from("^D") {
 							command = format!("\n{}\n{}\n{}\n", parser::COMMAND_PREFIX, command, parser::COMMAND_SEPARATOR);
 							event_w.send(Event::Write(Ok(command.as_bytes().to_vec()))).unwrap();
 						}
@@ -324,7 +329,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 				let mut result: Vec<u8> = Vec::new();
 				if !command.is_empty() {
 					let mut bytes: Vec<u8>;
-					bytes = command.trim().as_bytes().to_vec();
+					bytes = command.as_bytes().to_vec();
 					bytes.push(13u8); // Add enter keystroke
 
 					let input_cmd = format!("\n{}\n{}\n{}\n", parser::COMMAND_PREFIX, command, parser::COMMAND_SEPARATOR);
@@ -340,10 +345,10 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 						let output = format!("{}", String::from_utf8_lossy(&bytes));
 						command_output.push_str(&output);
 
-						let prompt_command_string = format!(r"^{} {}", PROMPT_REGEX_STR, regex::escape(&command));
-						let prompt_command_regex = prompt_command_string.as_str();
-						let re = Regex::new(prompt_command_regex).unwrap();
-						let is_done = if re.is_match(&command_output) && is_prompting(&command_output) {
+						let suffix = regex::escape(&command);
+						let pattern_str = get_pattern_string(suffix, &prompts);
+						let re = Regex::new(&pattern_str).unwrap();
+						let is_done = if re.is_match(&command_output) && is_prompting(&command_output, &prompts) {
 							true
 						} else {
 							false
@@ -355,7 +360,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 								let command_output_lines = command_output_clone.lines();
 								command_output_last_line = String::from(command_output_lines.last().unwrap_or(""));
 							}
-							let mut filtered_output = filter_prompt(command_output.as_str());
+							let mut filtered_output = filter_prompt(command_output.as_str(), &prompts);
 							if filtered_output.trim() == command.as_str() || filtered_output.trim().starts_with(format!("{}{}", command.as_str(), "\n").as_str()) {
 								let start: usize = filtered_output.find(command.as_str()).unwrap_or(0) + command.len();
 								filtered_output = substring(&filtered_output, start, filtered_output.len() - start).to_string();
@@ -391,7 +396,9 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 				println!("");
 				break
 			}
-		}
+		};
+let var_name = var_name;
+var_name
 	}
 
 	Ok(())
@@ -428,15 +435,24 @@ fn filter_stdout_buf(buf: Vec<u8>) -> Vec<u8> {
 	bytes
 }
 
-fn filter_prompt(prompt: &str) -> String {
-	let re = Regex::new(PROMPT_LINE_REGEX).unwrap();
+fn filter_prompt(prompt: &str, prompts: &[String]) -> String {
+	let pattern_str = get_pattern_string(String::from(".*"), prompts);
+	let re = regex::Regex::new(&pattern_str).unwrap();
 	re.replace_all(prompt, "").to_string()
 }
 
-fn is_prompting(output: &str) -> bool {
-	let re = Regex::new(PROMPT_REGEX).unwrap();
+fn is_prompting(output: &str, prompts: &[String]) -> bool {
+	let pattern_str: String = get_pattern_string(String::from(""), prompts);
+	let re = regex::Regex::new(&pattern_str).unwrap();
 	let last_line = output.lines().last().unwrap_or("");
 	re.is_match(last_line)
+}
+
+fn get_pattern_string(suffix: String, prompts: &[String]) -> String {
+	prompts.iter()
+		.map(|prompt| format!(r"(?m)^{}{}\r?$", regex::escape(prompt), suffix))
+		.collect::<Vec<_>>()
+		.join("|")
 }
 
 /// This function cleans up all empty lines and removes the last line containing "exit" to make the consistent output
