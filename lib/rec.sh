@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2023, Manticore Software LTD (https:#manticoresearch.com)
+# Copyright (c) 2023-present, Manticore Software LTD (https:#manticoresearch.com)
 # All rights reserved
 #
 #
@@ -60,7 +60,14 @@ replay() {
 	echo "Replaying data from the file: $record_file"
 	echo "The replay result will be stored to the file: $replay_file"
 
-	container_exec "$image" "clt-rec -I '$record_file' -O $replay_file" "$record_dir"
+	if [[ -n "$CLT_PROMPTS" && ! "$CLT_PROMPTS" =~ ^-.* ]]; then
+		echo "Error: CLT_PROMPTS is not an array" >&2
+	fi
+	cmd=("clt-rec" "-I" "$record_file" "-O" "$replay_file")
+	for prompt in "${CLT_PROMPTS[@]}"; do
+		cmd+=("-p" "$prompt")
+	done
+	container_exec "$image" "${cmd[@]}" "$record_dir"
 }
 
 # Run compare binary

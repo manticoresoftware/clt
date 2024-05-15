@@ -12,7 +12,7 @@ cd clt
 ./clt help
 ```
 
-We have prebuilt binaries for use in a Linux environment, for both amd64 and arm64. It's automatically detected based on the platform you're using. Binaries for OSX and Windows are currently not available, but you can build them for your purpose if required. Remember, all tests run in a container environment using Docker, so your machine should have Docker installed.
+We have prebuilt binaries for use in a Linux environment, for both amd64 and arm64. It's automatically detected based on the platform you're using. Binaries for macOS and Windows are currently not available, but you can build them for your purpose if required. Remember, all tests run in a container environment using Docker, so your machine should have Docker installed.
 
 ## Usage
 
@@ -137,12 +137,20 @@ Not all keyboard and Bash controls are supported. Here is the list of supported 
 - Input characters from the keyboard.
 - Left and right arrows.
 - Backspace and delete.
-- CTRL+a and CTRL+e
+- CTRL+a and CTRL+e.
 
 ### The replay flow
 
 To re-run and confirm that tests are successful, we look for .rec files and compile them into a ready-to-use version on the fly. We then utilize these compiled versions to execute each command in sequence, generating a .rep file. Subsequently, we use the cmp tool to compare the results with the compiled version of the .rec files.
 
+Please take a notice that due to we read the pty output on the low level you need to configure additional prompts if
+you need it. Let's think that you run cli tests and have mysql session, so that means the default `cli> ` prompt is not enough
+because you will also have `mysql> ` prompt. To fix it, just define a variable that contains a list of these prompts like
+follows:
+
+```bash
+CLT_PROMPTS=("mysql> ")
+```
 ### File Extension Description
 
 There are several types of files:
@@ -150,4 +158,5 @@ There are several types of files:
 |-|-|
 | .rec | Original record of the input commands and their outputs. It may contain links to block files. |
 | .recb | Record block file, contains reusable blocks that can be included in .rec files. |
-| .rep | Replay file that contains the results of replaying the .recc file. |
+| .rep | Replay file that contains the results of replaying the .rec file. |
+
