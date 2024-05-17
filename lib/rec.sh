@@ -67,7 +67,7 @@ replay() {
 	for prompt in "${CLT_PROMPTS[@]}"; do
 		cmd+=("-p" "$prompt")
 	done
-	container_exec "$image" "${cmd[@]}" "$record_dir"
+	container_exec "$image" "${cmd[*]}" "$record_dir"
 }
 
 # Run compare binary
