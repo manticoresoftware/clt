@@ -131,6 +131,8 @@ git commit -m '...'
 - Complete your tests in the `clt> ` shell and press `^D` to terminate the session and finish recordings.
 - Use a simple default terminal, like iTerm. Using the VS Code terminal may lead to unusual behavior due to various settings.
 - Currently, there is a limitation that requires entering commands only when the prompt is available. This can lead to inaccurate result validation due to the TTY workflow.
+- Each command from the `.rec` test in the `–––input–––` block should have an output that contains a **NEW LINE**, otherwise replaying will get stuck due to the inability to parse the prompt in the TTY raw output.
+
 
 Not all keyboard and Bash controls are supported. Here is the list of supported keystrokes:
 
