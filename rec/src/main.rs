@@ -432,6 +432,7 @@ fn filter_stdout_buf(buf: Vec<u8>) -> Vec<u8> {
 		bytes.push(*byte);
 		prev_byte = byte;
 	}
+	let bytes = clean_escape_sequences(bytes);
 	bytes
 }
 
@@ -439,6 +440,27 @@ fn filter_prompt(prompt: &str, prompts: &[String]) -> String {
 	let pattern_str = get_pattern_string(String::from(".*"), prompts);
 	let re = regex::Regex::new(&pattern_str).unwrap();
 	re.replace_all(prompt, "").to_string()
+}
+
+fn clean_escape_sequences(input: Vec<u8>) -> Vec<u8> {
+	let mut result = Vec::with_capacity(input.len());
+	let mut inside_escape = false;
+	let mut bytes = input.into_iter().peekable();
+
+	while let Some(byte) = bytes.next() {
+		if byte == 0x1B && bytes.peek() == Some(&b'[') {
+			inside_escape = true;
+			bytes.next(); // Skip the '[' byte
+		} else if inside_escape {
+			if byte.is_ascii_alphabetic() {
+				inside_escape = false;
+			}
+		} else {
+			result.push(byte);
+		}
+	}
+
+	result
 }
 
 fn is_prompting(output: &str, prompts: &[String]) -> bool {
