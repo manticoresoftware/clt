@@ -52,6 +52,15 @@ struct Opt {
 		help = "Default prompts to use for parsing"
 	)]
 	prompts: Vec<String>,
+
+	#[structopt(
+		short = "D",
+		long = "delay",
+		multiple = false,
+		help = "Delay between commands in ms",
+		default_value = "0"
+	)]
+	delay: u64
 }
 
 const OUTPUT_HEADER: &str = "You can use regex in the output sections.\nMore info here: https://github.com/manticoresoftware/clt#refine\n";
@@ -71,7 +80,7 @@ enum Event {
 
 #[tokio::main]
 async fn async_main(opt: Opt) -> anyhow::Result<()> {
-	let Opt { input_file, output_file, mut prompts } = opt;
+	let Opt { input_file, output_file, mut prompts, delay } = opt;
 	prompts.push(SHELL_PROMPT.to_string());
 	let mut stdout = tokio::io::stdout();
 
@@ -148,6 +157,11 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 					event_w.send(Event::Replay(command.trim().to_string(), tx)).unwrap();
 					// Block until the command has finished executing.
 					rx.await.unwrap();
+
+					// Sleep for delay before process next command
+					if delay > 0 {
+						tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+					}
 				}
 
 				// Exit with ^D because we do not write it

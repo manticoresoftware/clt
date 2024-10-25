@@ -47,6 +47,7 @@ record() {
 replay() {
 	image=$1
 	record_file=$2
+	delay=${3:-$DEFAULT_DELAY}
 	if [ -z "$image" ] || [ -z "$record_file" ]; then
 		>&2 echo 'Usage: replay "image" "record_file"' && exit 1
 	fi
@@ -63,7 +64,7 @@ replay() {
 	if [[ -n "$CLT_PROMPTS" && ! "$CLT_PROMPTS" =~ ^-.* ]]; then
 		echo "Error: CLT_PROMPTS is not an array" >&2
 	fi
-	cmd=("clt-rec" "-I" "$record_file" "-O" "$replay_file")
+	cmd=("clt-rec" "-I" "$record_file" "-O" "$replay_file" "-D" "$delay")
 	for prompt in "${CLT_PROMPTS[@]}"; do
 		cmd+=("-p" "$prompt")
 	done
@@ -128,6 +129,7 @@ test() {
 	image=$1
 	record_file=$2
 	show_diff=${3:-0}
+	delay=${4:-$DEFAULT_DELAY}
 	if [ -z "$image" ] || [ -z "$record_file" ]; then
 		>&2 echo 'Usage: test "image" "record_file"' && exit 1
 	fi
@@ -138,7 +140,7 @@ test() {
 
 	replay_file="${record_file%.*}.rep"
 
-	replay "$image" "$record_file"
+	replay "$image" "$record_file" "$delay"
 	output="${record_file%.*}.cmp"
 	if [ "$show_diff" -eq 1 ]; then
 		compare "$image" "$record_file" "$replay_file" 2>&1
