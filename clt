@@ -32,6 +32,9 @@ DOCKER_PROJECT_DIR='/.clt'
 # Export global variables
 export PROJECT_DIR DOCKER_PROJECT_DIR
 
+# Set the default delay in ms between each command in the given test
+export DEFAULT_DELAY=5
+
 case "$cmd" in
 	record)
 		bash "$PROJECT_DIR/src/record.sh" "$@"
