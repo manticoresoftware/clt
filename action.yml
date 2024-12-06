@@ -36,6 +36,11 @@ inputs:
       Artifact to download in case you want to use local built docker image to run.
     required: false
     type: string
+  repository:
+    description: |-
+      Repository to checkout.
+    required: false
+    type: string
   ref:
     description: |-
       The branch name or ref to the original repo we test that we will checkout.
@@ -58,6 +63,7 @@ runs:
     - name: Checkout the calling repo
       uses: actions/checkout@v4
       with:
+        repository: ${{ inputs.repository }}
         ref: ${{ inputs.ref }}
 
     - name: Checkout CLT
