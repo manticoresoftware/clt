@@ -132,11 +132,13 @@ runs:
         test_duration=$((end_time - start_time))
 
         # Write summary
-        if [ "$test_failed" -eq "0" ]; then
-          test_emoji="👍"
+        if [ "$test_failed" -gt "0" ]; then
+          test_emoji="❌"
         else
-          test_emoji="👎"
+           # We stop processing if all tests passed
+          exit 0
         fi
+
 
         job_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         commit_url="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
