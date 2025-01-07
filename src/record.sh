@@ -16,6 +16,7 @@
 # limitations under the License.
 
 set -e
+
 source "$PROJECT_DIR/lib/rec.sh"
 source "$PROJECT_DIR/lib/argument.sh"
 
@@ -23,10 +24,10 @@ docker_image=$(argument_parse_docker_image "$@")
 set -- "${@:1:$(($#-1))}"
 
 # Define defaults
-file_prefix=${docker_image/:/_}
-file_prefix=${docker_image/\//_}
+file_prefix=${docker_image//:/_}
+file_prefix=${file_prefix//\//_}
 current_date=$(date +%Y%m%d_%H%M%S)
-record_file="./tests/${file_prefix}_${current_date}.rec"
+record_file="${file_prefix}_${current_date}.rec"
 
 # By default we ask user to refine tests that differ
 refine=1
