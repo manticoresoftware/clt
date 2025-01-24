@@ -175,7 +175,7 @@ runs:
         fi
 
         if [[ "$should_comment" == "1" ]]; then
-          gh pr comment $PR_NUMBER --body "$(cat $GITHUB_STEP_SUMMARY)"
+          gh pr comment $PR_NUMBER --body "$(cat $GITHUB_STEP_SUMMARY)" -R ${{ github.repository }}
         fi
 
         # If we have some test failed, we exit
