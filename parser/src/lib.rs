@@ -33,7 +33,14 @@ pub fn compile(rec_file_path: &str) -> Result<String> {
 			let block_name = format!("{}.recb", caps.get(1).map_or("", |m| m.as_str()));
 			let relative_path = Path::new(&block_name);
 			let block_path = input_dir.join(relative_path);
-			let absolute_path = std::fs::canonicalize(block_path)?;
+			let absolute_path = std::fs::canonicalize(&block_path).map_err(|e| match e.kind() {
+				std::io::ErrorKind::NotFound => std::io::Error::new(
+					std::io::ErrorKind::NotFound,
+					format!("Block file not found at path: {}", block_path.display())
+				),
+				_ => e
+			})?;
+
 			let block_content = read_to_string(absolute_path)?;
 			result.push_str(block_content.trim());
 			result.push('\n');

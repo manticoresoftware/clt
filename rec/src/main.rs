@@ -112,7 +112,10 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	// Replay the input_file and save results in output_file
 	if let Some(input_file) = input_file {
 		let input_file = input_file.into_string().unwrap();
-		let input_content = parser::compile(&input_file)?;
+		let input_content = match parser::compile(&input_file) {
+			Ok(content) => content,
+			Err(e) => panic!("Failed to compile input file: {}", e),
+		};
 
 		// Split compiled file into lines to process it next
 		let lines: Vec<&str> = input_content.split('\n').collect();
