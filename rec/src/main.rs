@@ -124,12 +124,25 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 		// We need to send empty command to block thread till we get forked and get clt> prompt
 		commands.push(String::from(""));
 
-		let mut last_line = "";
+		// Extract all commands
+		let mut command_lines = Vec::new();
+		let mut is_input_command = false;
 		for line in lines {
-			if line.starts_with(parser::COMMAND_SEPARATOR) {
-				commands.push(last_line.to_string())
+			let is_statement_line = parser::is_statement_line(&line);
+			if is_statement_line && parser::get_statement(&line) == parser::Statement::Input {
+				is_input_command = true;
+				continue;
 			}
-			last_line = line;
+			if is_statement_line && is_input_command && parser::get_statement(&line) != parser::Statement::Input {
+				let command = command_lines.join("\n");
+				command_lines.clear();
+				commands.push(command);
+				is_input_command = false;
+			}
+
+			if is_input_command {
+				command_lines.push(line);
+			}
 		}
 
 		// Trap the signals and exit process in case we receive it for replay only
@@ -157,7 +170,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 			tokio::spawn(async move {
 				for command in commands {
 					let (tx, rx) = oneshot::channel();
-					event_w.send(Event::Replay(command.trim().to_string(), tx)).unwrap();
+					event_w.send(Event::Replay(command.to_string(), tx)).unwrap();
 					// Block until the command has finished executing.
 					rx.await.unwrap();
 
@@ -243,7 +256,6 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	let mut input_pos: usize = 0;
 	let mut input: Vec<u8> = Vec::new();
 	let mut is_typing = false;
-	let mut command_output_last_line = String::new();
 	let mut total_duration: u128 = 0;
 	loop {
 		let var_name = match event_r.recv().await.unwrap() {
@@ -342,7 +354,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 			Event::Replay(command, tx) => {
 				let start = Instant::now();
 				let mut command_output: String = String::new();
-				command_output.push_str(&command_output_last_line);
+				let mut command_size = 0;
 				let mut result: Vec<u8> = Vec::new();
 				if !command.is_empty() {
 					let mut bytes: Vec<u8>;
@@ -351,19 +363,35 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 
 					let input_cmd = format!("\n{}\n{}\n{}\n", parser::COMMAND_PREFIX, command, parser::COMMAND_SEPARATOR);
 					result.extend_from_slice(input_cmd.as_bytes());				// Send the command to the pty
+					command_size = bytes.len();
 					input_w.send(bytes).unwrap();
 				}
+
 
 				// Wait for the shell prompt to appear in the output, indicating that
 				// the command has finished executing. You may need to adjust the
 				// prompt detection logic depending on the shell being used.
+				let mut ignored_size = 0;
 				loop {
 					if let Event::Stdout(Ok(bytes)) = event_r.recv().await.unwrap() {
-						let output = format!("{}", String::from_utf8_lossy(&bytes));
-						command_output.push_str(&output);
+						let mut pos = 0;
+						let payload_size = bytes.len();
+						if ignored_size < command_size {
+							if payload_size > (command_size - ignored_size) {
+								pos = command_size - ignored_size;
+								ignored_size = command_size;
+							} else {
+								ignored_size += payload_size;
+								continue;
+							}
+						}
 
-						let suffix = regex::escape(&command);
-						let pattern_str = get_pattern_string(suffix, &prompts);
+						if pos < payload_size {
+							let output = format!("{}", String::from_utf8_lossy(&bytes[pos..payload_size]));
+							command_output.push_str(&output);
+						}
+
+						let pattern_str = get_pattern_string(String::from(""), &prompts);
 						let re = Regex::new(&pattern_str).unwrap();
 						let is_done = if re.is_match(&command_output) && is_prompting(&command_output, &prompts) {
 							true
@@ -372,17 +400,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 						};
 
 						if is_done {
-							{
-								let command_output_clone = command_output.clone();
-								let command_output_lines = command_output_clone.lines();
-								command_output_last_line = String::from(command_output_lines.last().unwrap_or(""));
-							}
-							let mut filtered_output = filter_prompt(command_output.as_str(), &prompts);
-							if filtered_output.trim() == command.as_str() || filtered_output.trim().starts_with(format!("{}{}", command.as_str(), "\n").as_str()) {
-								let start: usize = filtered_output.find(command.as_str()).unwrap_or(0) + command.len();
-								filtered_output = substring(&filtered_output, start, filtered_output.len() - start).to_string();
-							}
-
+							let filtered_output = filter_prompt(command_output.as_str(), &prompts);
 							if !command.is_empty() {
 								result.extend_from_slice(filtered_output.as_bytes());
 								// Add duration line
@@ -518,7 +536,12 @@ async fn cleanup_file(file_path: String, total_duration: u128) -> Result<(), Box
 				duration.percentage = (duration.duration as f32 / total_duration as f32) * 100.0;
 				non_empty_lines.push(format!("{}\n", parser::get_duration_line(duration)));
 			} else {
-				non_empty_lines.push(format!("{}\n", line.trim()));
+				let cur_line = if line.ends_with('\n') {
+					line.to_string()
+				} else {
+					format!("{}\n", line)
+				};
+				non_empty_lines.push(cur_line);
 			}
 		}
 	}
@@ -559,12 +582,3 @@ async fn get_bash_rcfile() -> Result<String, Box<dyn std::error::Error>> {
 	Ok(file_path.to_string_lossy().to_string())
 }
 
-fn substring(s: &str, start: usize, len: usize) -> &str {
-	let end = start + len;
-
-	if end > s.len() {
-		panic!("Substring index out of range");
-	}
-
-	&s[start..end]
-}

@@ -2,18 +2,57 @@ use anyhow::Result;
 use std::fs::{File, read_to_string};
 use std::io::{BufRead, BufReader};
 use std::error::Error;
-
+use std::str::FromStr;
 use std::path::Path;
 use regex::Regex;
 
 pub const COMMAND_PREFIX: &str = "––– input –––";
 pub const COMMAND_SEPARATOR: &str = "––– output –––";
+pub const COMMAND_COMMENT: &str = "––– comment –––";
 pub const BLOCK_REGEX: &str = r"(?m)^––– block: ([\.a-zA-Z0-9\-\/\_]+) –––$";
 pub const DURATION_REGEX: &str = r"(?m)^––– duration: ([0-9\.]+)ms \(([0-9\.]+)%\) –––$";
+pub const STATEMENT_REGEX: &str = r"(?m)^––– ([\.a-zA-Z0-9\/\_]+)(?:\s*:\s*(.+))? –––$";
 
 pub struct Duration {
   pub duration: u128,
   pub percentage: f32,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Statement {
+	Block,
+	Input,
+	Output,
+	Duration,
+	Comment,
+}
+
+impl FromStr for Statement {
+	type Err = String;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		match s.trim().to_lowercase().as_str() {
+			"block" => Ok(Statement::Block),
+			"input" => Ok(Statement::Input),
+			"output" => Ok(Statement::Output),
+			"duration" => Ok(Statement::Duration),
+			"comment" => Ok(Statement::Comment),
+			_ => Err(format!("Invalid statement type: {}", s)),
+		}
+	}
+}
+
+// Optional: Implement Display trait for converting Statement back to string
+impl std::fmt::Display for Statement {
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+		match self {
+			Statement::Block => write!(f, "block"),
+			Statement::Input => write!(f, "input"),
+			Statement::Output => write!(f, "output"),
+			Statement::Duration => write!(f, "duration"),
+			Statement::Comment => write!(f, "comment"),
+		}
+	}
 }
 
 /// Compile the input rec file into String that
@@ -64,6 +103,24 @@ pub fn get_duration_line(duration: Duration) -> String {
 /// Check if the current line is duration line
 pub fn is_duration_line(line: &str) -> bool {
 	line.starts_with("––– duration:")
+}
+
+/// Check if the current line is comment line
+/// Those lines are ignored
+pub fn is_comment_line(line: &str) -> bool {
+	line.starts_with("––– comment –––")
+}
+
+/// Validate if the line is statement line
+pub fn is_statement_line(line: &str) -> bool {
+	line.starts_with("––– ") && line.ends_with(" –––")
+}
+
+/// Parse ––– statement ––– line and get the statement used for it
+pub fn get_statement(line: &str) -> Statement {
+	let statement_re = Regex::new(STATEMENT_REGEX).unwrap();
+	let caps = statement_re.captures(line).unwrap();
+	Statement::from_str(caps.get(1).unwrap().as_str()).unwrap()
 }
 
 /// Parse the line with duration and return the structure
