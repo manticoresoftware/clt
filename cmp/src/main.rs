@@ -95,6 +95,7 @@ fn main() {
 			}
 		}
 
+		let mut is_comment_block = false;
 		lines1.clear();
 		while r1 > 0 {
 			line1.clear();
@@ -103,6 +104,13 @@ fn main() {
 				break;
 			}
 			if parser::is_duration_line(&line1) {
+				continue;
+			}
+			if parser::is_statement_line(&line1) && parser::get_statement(&line1) != parser::Statement::Comment {
+				is_comment_block = false;
+			}
+			if parser::is_comment_line(&line1) || is_comment_block {
+				is_comment_block = true;
 				continue;
 			}
 			lines1.push(line1.trim().to_string());
@@ -120,12 +128,21 @@ fn main() {
 
 		}
 
+		let mut is_comment_block = false;
 		lines2.clear();
 		while r2 > 0 {
 			line2.clear();
 			r2 = file2_reader.read_line(&mut line2).unwrap();
 			if line2.trim() == parser::COMMAND_PREFIX {
 				break;
+			}
+
+			if parser::is_statement_line(&line2) && parser::get_statement(&line2) != parser::Statement::Comment {
+				is_comment_block = false;
+			}
+			if parser::is_comment_line(&line2) || is_comment_block {
+				is_comment_block = true;
+				continue;
 			}
 			if parser::is_duration_line(&line2) {
 				continue;
