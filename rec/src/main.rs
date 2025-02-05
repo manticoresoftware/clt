@@ -66,7 +66,18 @@ struct Opt {
 const OUTPUT_HEADER: &str = "You can use regex in the output sections.\nMore info here: https://github.com/manticoresoftware/clt#refine\n";
 const SHELL_CMD: &str = "/usr/bin/env";
 const SHELL_PROMPT: &str = "clt> ";
-const INIT_CMD: &[u8] = b"export PS1='clt> ' PS2='' PS3='' PS4='';export LANG='en_US.UTF-8' PATH='/bin:/usr/bin:/usr/local/bin:/sbin:/usr/local/sbin' COLUMNS=10000;alias curl='f() { output=$(command curl -s \"$@\"); printf \"%s\" \"$output\"; [ -n \"$output\" ] && [ \"${output: -1}\" != $'\\n' ] && echo; }; f';enable -n exit enable;exec 2>&1;";
+const INIT_CMD: &[u8] = b"export PS1='clt> ' \
+	PS2='' \
+	PS3='' \
+	PS4=''; \
+	export LANG='en_US.UTF-8' \
+	PATH='/bin:/usr/bin:/usr/local/bin:/sbin:/usr/local/sbin' \
+	COLUMNS=10000; \
+	alias curl='function _curl() { \
+		command curl -s \"$@\" | awk \"NR==1{p=\\$0}NR>1{print p;p=\\$0}END{ORS = p ~ /\\\n$/ ? \\\"\\\" : \\\"\\\n\\\";print p}\"; \
+	}; _curl'; \
+	enable -n exit enable; \
+	exec 2>&1;";
 
 #[derive(Debug)]
 enum Event {
