@@ -139,12 +139,12 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 		let mut command_lines = Vec::new();
 		let mut is_input_command = false;
 		for line in lines {
-			let is_statement_line = parser::is_statement_line(&line);
-			if is_statement_line && parser::get_statement(&line) == parser::Statement::Input {
+			let input_check = parser::check_statement!(&line, parser::Statement::Input);
+			if input_check == parser::StatementCheck::Yes {
 				is_input_command = true;
 				continue;
 			}
-			if is_statement_line && is_input_command && parser::get_statement(&line) != parser::Statement::Input {
+			if input_check == parser::StatementCheck::No {
 				let command = command_lines.join("\n");
 				command_lines.clear();
 				commands.push(command);
@@ -269,7 +269,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	let mut is_typing = false;
 	let mut total_duration: u128 = 0;
 	loop {
-		let var_name = match event_r.recv().await.unwrap() {
+		match event_r.recv().await.unwrap() {
 			Event::Key(key) => {
 				let key = key?;
 				if let Some(ref key) = key {
@@ -321,7 +321,9 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 
 						// Do not write empty commands and ^D to the end of file because we are just exiting
 						if !command.is_empty() && command != String::from("^D") {
-							command = format!("\n{}\n{}\n{}\n", parser::COMMAND_PREFIX, command, parser::COMMAND_SEPARATOR);
+							let input_line = parser::get_statement_line(parser::Statement::Input, None);
+							let output_line = parser::get_statement_line(parser::Statement::Output, None);
+							command = format!("\n{}\n{}\n{}\n", input_line, command, output_line);
 							event_w.send(Event::Write(Ok(command.as_bytes().to_vec()))).unwrap();
 						}
 
@@ -372,7 +374,9 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 					bytes = command.as_bytes().to_vec();
 					bytes.push(13u8); // Add enter keystroke
 
-					let input_cmd = format!("\n{}\n{}\n{}\n", parser::COMMAND_PREFIX, command, parser::COMMAND_SEPARATOR);
+					let input_line = parser::get_statement_line(parser::Statement::Input, None);
+					let output_line = parser::get_statement_line(parser::Statement::Output, None);
+					let input_cmd = format!("\n{}\n{}\n{}\n", input_line, command, output_line);
 					result.extend_from_slice(input_cmd.as_bytes());				// Send the command to the pty
 					command_size = bytes.len();
 					input_w.send(bytes).unwrap();
@@ -420,7 +424,8 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 									percentage: 0.0
 								};
 								total_duration += duration.duration;
-								let duration_line = parser::get_duration_line(duration);
+
+								let duration_line = get_duration_line(duration);
 								result.extend_from_slice(duration_line.as_bytes());
 							}
 
@@ -443,8 +448,6 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 				break
 			}
 		};
-let var_name = var_name;
-var_name
 	}
 
 	Ok(())
@@ -542,10 +545,12 @@ async fn cleanup_file(file_path: String, total_duration: u128) -> Result<(), Box
 	non_empty_lines.push(format!("Time taken for test: {}ms\n", total_duration));
 	while let Some(line) = lines.next_line().await? {
 		if !line.trim().is_empty() {
-			if parser::is_duration_line(&line) {
+			let duration_check = parser::check_statement!(&line, parser::Statement::Duration);
+			if duration_check == parser::StatementCheck::Yes {
 				let mut duration = parser::parse_duration_line(&line)?;
 				duration.percentage = (duration.duration as f32 / total_duration as f32) * 100.0;
-				non_empty_lines.push(format!("{}\n", parser::get_duration_line(duration)));
+				let duration_line = get_duration_line(duration);
+				non_empty_lines.push(format!("{}\n", duration_line));
 			} else {
 				let cur_line = if line.ends_with('\n') {
 					line.to_string()
@@ -593,3 +598,8 @@ async fn get_bash_rcfile() -> Result<String, Box<dyn std::error::Error>> {
 	Ok(file_path.to_string_lossy().to_string())
 }
 
+fn get_duration_line(duration: parser::Duration) -> String {
+	let duration_arg = Some(format!("{}ms ({:.2}%)", duration.duration, duration.percentage));
+	let duration_line = parser::get_statement_line(parser::Statement::Duration, duration_arg);
+	duration_line
+}

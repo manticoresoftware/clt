@@ -54,11 +54,12 @@ fn main() {
 	let input_content = parser::compile(&args[1]).unwrap();
 	let file1_cursor = Cursor::new(input_content);
 	let mut file1_reader = BufReader::new(file1_cursor);
-	move_cursor_to_line(&mut file1_reader, parser::COMMAND_PREFIX).unwrap();
+	let input_line = parser::get_statement_line(parser::Statement::Input, None);
+	move_cursor_to_line(&mut file1_reader, &input_line).unwrap();
 
 	let file2 = File::open(&args[2]).unwrap();
 	let mut file2_reader = BufReader::new(file2);
-	move_cursor_to_line(&mut file2_reader, parser::COMMAND_PREFIX).unwrap();
+	move_cursor_to_line(&mut file2_reader, &input_line).unwrap();
 
 	let mut line1 = String::new();
 	let mut line2 = String::new();
@@ -87,7 +88,15 @@ fn main() {
 
 		// Change the current mode if we are in output section or not
 		let mut r1 = read1;
-		while r1 > 0 && line1.trim() != parser::COMMAND_SEPARATOR {
+		while r1 > 0 {
+			match parser::parse_statement(&line1) {
+				Ok((statement, _)) => {
+					if statement == parser::Statement::Output {
+						break;
+					}
+				}
+				Err(_) => {},
+			}
 			line1.clear();
 			r1 = file1_reader.read_line(&mut line1).unwrap();
 			if read2 == 0 {
@@ -100,24 +109,40 @@ fn main() {
 		while r1 > 0 {
 			line1.clear();
 			r1 = file1_reader.read_line(&mut line1).unwrap();
-			if line1.trim() == parser::COMMAND_PREFIX {
-				break;
-			}
-			if parser::is_duration_line(&line1) {
-				continue;
-			}
-			if parser::is_statement_line(&line1) && parser::get_statement(&line1) != parser::Statement::Comment {
-				is_comment_block = false;
-			}
-			if parser::is_comment_line(&line1) || is_comment_block {
-				is_comment_block = true;
-				continue;
+			match parser::parse_statement(&line1) {
+				Ok((statement, _)) => {
+					match statement {
+						parser::Statement::Input => break,
+						parser::Statement::Duration => continue,
+						parser::Statement::Comment => {
+							is_comment_block = true;
+							continue;
+						},
+						_ => {
+							if is_comment_block {
+								is_comment_block = false;
+							}
+							if is_comment_block {
+								continue;
+							}
+						}
+					}
+				},
+				Err(_) => {},
 			}
 			lines1.push(line1.trim().to_string());
 		}
 
 		let mut r2 = read2;
-		while r2 > 0 && line2.trim() != parser::COMMAND_SEPARATOR {
+		while r2 > 0 {
+			match parser::parse_statement(&line2) {
+				Ok((statement, _)) => {
+					if statement == parser::Statement::Output {
+						break;
+					}
+				}
+				Err(_) => {},
+			}
 			line2.clear();
 			r2 = file2_reader.read_line(&mut line2).unwrap();
 			if read1 == 0 {
@@ -133,19 +158,24 @@ fn main() {
 		while r2 > 0 {
 			line2.clear();
 			r2 = file2_reader.read_line(&mut line2).unwrap();
-			if line2.trim() == parser::COMMAND_PREFIX {
-				break;
-			}
 
-			if parser::is_statement_line(&line2) && parser::get_statement(&line2) != parser::Statement::Comment {
-				is_comment_block = false;
-			}
-			if parser::is_comment_line(&line2) || is_comment_block {
-				is_comment_block = true;
-				continue;
-			}
-			if parser::is_duration_line(&line2) {
-				continue;
+			match parser::parse_statement(&line2) {
+				Ok((statement, _)) => {
+					if statement == parser::Statement::Input {
+						break;
+					}
+					if statement != parser::Statement::Comment {
+						is_comment_block = false;
+					}
+					if statement == parser::Statement::Comment || is_comment_block {
+						is_comment_block = true;
+						continue;
+					}
+					if statement == parser::Statement::Duration {
+						continue;
+					}
+				}
+				Err(_) => {},
 			}
 			lines2.push(line2.trim().to_string());
 		}
@@ -194,7 +224,7 @@ struct PatternMatcher {
 
 impl PatternMatcher {
 	/// Initialize struct by using file name of the variables description for patterns
-	/// If the option is none, we just will have empty map of keys for pattersn
+	/// If the option is none, we just will have empty map of keys for patterns
 	/// And in that case we will use only raw regexes to validate
 	fn new(file_name: Option<String>) -> Result<Self, Box<dyn std::error::Error>> {
 		let config = match file_name {

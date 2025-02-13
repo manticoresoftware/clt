@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::fs::{File, read_to_string};
 use std::io::{BufRead, BufReader};
 use std::error::Error;
@@ -6,9 +6,6 @@ use std::str::FromStr;
 use std::path::Path;
 use regex::Regex;
 
-pub const COMMAND_PREFIX: &str = "––– input –––";
-pub const COMMAND_SEPARATOR: &str = "––– output –––";
-pub const COMMAND_COMMENT: &str = "––– comment –––";
 pub const BLOCK_REGEX: &str = r"(?m)^––– block: ([\.a-zA-Z0-9\-\/\_]+) –––$";
 pub const DURATION_REGEX: &str = r"(?m)^––– duration: ([0-9\.]+)ms \(([0-9\.]+)%\) –––$";
 pub const STATEMENT_REGEX: &str = r"(?m)^––– ([\.a-zA-Z0-9\/\_]+)(?:\s*:\s*(.+))? –––$";
@@ -25,6 +22,13 @@ pub enum Statement {
 	Output,
 	Duration,
 	Comment,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum StatementCheck {
+	Yes,
+	No,
+	None,
 }
 
 impl FromStr for Statement {
@@ -95,32 +99,41 @@ pub fn compile(rec_file_path: &str) -> Result<String> {
 	Ok(result)
 }
 
-/// Generate duration line normally for writing it to the replay file
-pub fn get_duration_line(duration: Duration) -> String {
-	format!("––– duration: {}ms ({:.2}%) –––", duration.duration, duration.percentage)
+/// Create a fresh statement line to place in file with additional argument in case we need it
+pub fn get_statement_line(statement: Statement, additional_arg: Option<String>) -> String {
+	let statement_str = statement.to_string();
+
+	let additional_arg_str = match additional_arg {
+		Some(arg) => format!(": {}", arg),
+		None => String::new(),
+	};
+
+	format!("––– {}{} –––", statement_str, additional_arg_str)
 }
 
-/// Check if the current line is duration line
-pub fn is_duration_line(line: &str) -> bool {
-	line.starts_with("––– duration:")
-}
+/// Parse ––– statement ––– line and get the statement and optional argument
+pub fn parse_statement(line: &str) -> Result<(Statement, Option<String>)> {
+	if !line.starts_with("––– ") || !line.trim().ends_with(" –––") {
+		anyhow::bail!("Line does not match statement format");
+	}
 
-/// Check if the current line is comment line
-/// Those lines are ignored
-pub fn is_comment_line(line: &str) -> bool {
-	line.starts_with("––– comment –––")
-}
+	let statement_re = Regex::new(STATEMENT_REGEX)
+		.context("Failed to create regex")?;
 
-/// Validate if the line is statement line
-pub fn is_statement_line(line: &str) -> bool {
-	line.starts_with("––– ") && line.ends_with(" –––")
-}
+	let caps = statement_re
+		.captures(line)
+		.ok_or_else(|| anyhow::anyhow!("Failed to capture statement pattern"))?;
 
-/// Parse ––– statement ––– line and get the statement used for it
-pub fn get_statement(line: &str) -> Statement {
-	let statement_re = Regex::new(STATEMENT_REGEX).unwrap();
-	let caps = statement_re.captures(line).unwrap();
-	Statement::from_str(caps.get(1).unwrap().as_str()).unwrap()
+	let statement = caps
+		.get(1)
+		.ok_or_else(|| anyhow::anyhow!("Missing statement capture group"))?
+		.as_str()
+		.parse::<Statement>()
+		.map_err(|e| anyhow::anyhow!("Failed to parse statement: {}", e))?;
+
+	let additional_arg = caps.get(2).map(|m| m.as_str().to_string());
+
+	Ok((statement, additional_arg))
 }
 
 /// Parse the line with duration and return the structure
@@ -141,4 +154,19 @@ pub fn parse_duration_line(line: &str) -> Result<Duration, Box<dyn Error>> {
   } else {
     Err("Line did not match regex pattern".into())
   }
+}
+
+#[macro_export]
+macro_rules! check_statement {
+	($line:expr, $statement:expr) => {{
+		if let Ok((statement, _)) = parser::parse_statement($line) {
+		if statement == $statement {
+		$crate::StatementCheck::Yes
+		} else {
+		$crate::StatementCheck::No
+		}
+		} else {
+		$crate::StatementCheck::None
+		}
+		}};
 }
