@@ -63,47 +63,47 @@ fn main() {
 
 	let mut files_have_diff = false;
 	// Our new loop no longer assumes every block is output. We “peek” for section markers:
-while !reader_at_end(&mut file1_reader) {
-      // Get the marker from file1 (this is our expected statement)
-      let stmt1_opt = peek_statement(&mut file1_reader).unwrap();
-      if stmt1_opt.is_none() {
-          break;
-      }
-      let stmt1 = stmt1_opt.unwrap();
+	while !reader_at_end(&mut file1_reader) {
+		// Get the marker from file1 (this is our expected statement)
+		let stmt1_opt = peek_statement(&mut file1_reader).unwrap();
+		if stmt1_opt.is_none() {
+			break;
+		}
+		let stmt1 = stmt1_opt.unwrap();
 
-      // Advance file2 until we see the same marker.
-      loop {
-          let stmt2_opt = peek_statement(&mut file2_reader).unwrap();
-          if stmt2_opt.is_none() {
-              eprintln!("Out of sync: expected {:?} but file2 ended", stmt1);
-              std::process::exit(1);
-          }
-          let stmt2 = stmt2_opt.unwrap();
-          if stmt2 == stmt1 {
-              break;
-          } else {
-              // Skip the block in file2 that does not match file1’s marker.
-              match stmt2 {
-                  parser::Statement::Input => {
-                      // Skip the extra input block in file2
-                      let _ = buffer_block(&mut file2_reader)
-                          .expect("Error skipping extra file2 input block");
-                  },
-                  parser::Statement::Output => {
-                      // Skip the extra output block in file2
-                      let _ = buffer_block(&mut file2_reader)
-                          .expect("Error skipping extra file2 output block");
-                  },
-                  _ => {
-                      // In case other types of statements have been marked,
-                      // simply read and discard one line.
-                      let mut dummy = String::new();
-                      file2_reader.read_line(&mut dummy)
-                          .expect("Error skipping extra line in file2");
-                  }
-              }
-          }
-      }
+		// Advance file2 until we see the same marker.
+		loop {
+			let stmt2_opt = peek_statement(&mut file2_reader).unwrap();
+			if stmt2_opt.is_none() {
+				eprintln!("Out of sync: expected {:?} but file2 ended", stmt1);
+				std::process::exit(1);
+			}
+			let stmt2 = stmt2_opt.unwrap();
+			if stmt2 == stmt1 {
+				break;
+			} else {
+				// Skip the block in file2 that does not match file1’s marker.
+				match stmt2 {
+					parser::Statement::Input => {
+						// Skip the extra input block in file2
+						let _ = buffer_block(&mut file2_reader)
+							.expect("Error skipping extra file2 input block");
+					},
+					parser::Statement::Output => {
+						// Skip the extra output block in file2
+						let _ = buffer_block(&mut file2_reader)
+							.expect("Error skipping extra file2 output block");
+					},
+					_ => {
+						// In case other types of statements have been marked,
+						// simply read and discard one line.
+						let mut dummy = String::new();
+						file2_reader.read_line(&mut dummy)
+							.expect("Error skipping extra line in file2");
+					}
+				}
+			}
+		}
 		match stmt1 {
 			parser::Statement::Input => {
 				writeln!(stdout, "{}", parser::get_statement_line(parser::Statement::Input, None)).unwrap();
@@ -136,8 +136,12 @@ while !reader_at_end(&mut file1_reader) {
 						},
 						(Some(l1), Some(l2)) => {
 							if pattern_matcher.has_diff(l1.to_string(), l2.to_string()) {
-								print_diff(&mut stdout, l1, Diff::Minus);
-								print_diff(&mut stdout, l2, Diff::Plus);
+								if stdout.supports_color() {
+									print_inline_diff(&mut stdout, l1, l2);
+								} else {
+									print_diff(&mut stdout, l1, Diff::Minus);
+									print_diff(&mut stdout, l2, Diff::Plus);
+								}
 								files_have_diff = true;
 							} else {
 								writeln!(stdout, "{}", l1).unwrap();
@@ -361,6 +365,7 @@ fn reader_at_end<R: BufRead + Seek>(reader: &mut R) -> bool {
 	}
 }
 
+// Simple printing of the diff with line by line comparison
 fn print_diff(stdout:&mut StandardStream, line: &str, diff: Diff) {
 	let (line, color) = match diff {
 		Diff::Plus => (format!("+ {}", line.trim()), Color::Green),
@@ -368,5 +373,85 @@ fn print_diff(stdout:&mut StandardStream, line: &str, diff: Diff) {
 	};
 	stdout.set_color(ColorSpec::new().set_fg(Some(color))).unwrap();
 	writeln!(stdout, "{}", line.trim()).unwrap();
+	stdout.reset().unwrap();
+}
+
+fn print_inline_diff(stdout: &mut StandardStream, old_line: &str, new_line: &str) {
+	// Compute common prefix length
+	let prefix_len = old_line
+		.chars()
+		.zip(new_line.chars())
+		.take_while(|(c1, c2)| c1 == c2)
+		.count();
+
+	// Compute common suffix length.
+	let old_chars: Vec<char> = old_line.chars().collect();
+	let new_chars: Vec<char> = new_line.chars().collect();
+	let mut suffix_len = 0;
+	while suffix_len < old_chars.len().saturating_sub(prefix_len) &&
+	suffix_len < new_chars.len().saturating_sub(prefix_len) &&
+	old_chars[old_chars.len() - suffix_len - 1] == new_chars[new_chars.len() - suffix_len - 1]
+	{
+		suffix_len += 1;
+	}
+
+	// If no common parts, fall back to printing separate -/+ lines (no bold formatting)
+	if prefix_len == 0 && suffix_len == 0 {
+		// Print the removal in red (non bold)
+		stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(false)).unwrap();
+		writeln!(stdout, "- {}", old_line).unwrap();
+		stdout.reset().unwrap();
+		// Print the addition in green (non bold)
+		stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)).set_bold(false)).unwrap();
+		writeln!(stdout, "+ {}", new_line).unwrap();
+		stdout.reset().unwrap();
+		return;
+	}
+
+	// Otherwise there is at least some common text; so produce a single diff line
+	// We want the entire line (besides the diff-markers) printed in yellow (non bold)
+	// and only the changed parts are highlighted (bold and red/green).
+	// Break the line into three pieces.
+	let old_prefix = &old_line[..prefix_len];
+	let _new_prefix = &new_line[..prefix_len];
+	let _old_suffix = &old_line[old_line.len() - suffix_len..];
+	let new_suffix = &new_line[new_line.len() - suffix_len..];
+	let old_changed = &old_line[prefix_len..old_line.len() - suffix_len];
+	let new_changed = &new_line[prefix_len..new_line.len() - suffix_len];
+
+	// Begin the combined diff line with a "~ " prefix.
+	stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)).set_bold(false)).unwrap();
+	write!(stdout, "~ ").unwrap();
+
+	// Print the common prefix in yellow (non bold).
+	write!(stdout, "{}", old_prefix).unwrap();
+
+	// Now, if both removal and addition parts exist,
+	// then print the deletion followed immediately by the addition.
+	if !old_changed.is_empty() && !new_changed.is_empty() {
+		// Print the removed text: bold red.
+		stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true)).unwrap();
+		write!(stdout, "{}", old_changed).unwrap();
+		// Switch back to yellow for spacing between removals and additions.
+		stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)).set_bold(false)).unwrap();
+		// Then print the added text: bold green.
+		stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)).set_bold(true)).unwrap();
+		write!(stdout, "{}", new_changed).unwrap();
+		stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)).set_bold(false)).unwrap();
+	} else if !old_changed.is_empty() {
+		// Pure deletion: bold red.
+		stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true)).unwrap();
+		write!(stdout, "{}", old_changed).unwrap();
+		stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)).set_bold(false)).unwrap();
+	} else if !new_changed.is_empty() {
+		// Pure addition: bold green.
+		stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)).set_bold(true)).unwrap();
+		write!(stdout, "{}", new_changed).unwrap();
+		stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)).set_bold(false)).unwrap();
+	}
+
+	// Finally, print the common suffix in yellow.
+	write!(stdout, "{}", new_suffix).unwrap();
+	writeln!(stdout).unwrap();
 	stdout.reset().unwrap();
 }
