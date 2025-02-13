@@ -61,149 +61,99 @@ fn main() {
 	let mut file2_reader = BufReader::new(file2);
 	move_cursor_to_line(&mut file2_reader, &input_line).unwrap();
 
-	let mut line1 = String::new();
-	let mut line2 = String::new();
-
-	let mut lines1 = vec![];
-	let mut lines2 = vec![];
-
 	let mut files_have_diff = false;
-	loop {
-		let [read1, read2] = [
-			file1_reader.read_line(&mut line1).unwrap(),
-			file2_reader.read_line(&mut line2).unwrap(),
-		];
+	// Our new loop no longer assumes every block is output. We “peek” for section markers:
+while !reader_at_end(&mut file1_reader) {
+      // Get the marker from file1 (this is our expected statement)
+      let stmt1_opt = peek_statement(&mut file1_reader).unwrap();
+      if stmt1_opt.is_none() {
+          break;
+      }
+      let stmt1 = stmt1_opt.unwrap();
 
-		if read1 == 0 && read2 == 0 {
-			break;
-		}
+      // Advance file2 until we see the same marker.
+      loop {
+          let stmt2_opt = peek_statement(&mut file2_reader).unwrap();
+          if stmt2_opt.is_none() {
+              eprintln!("Out of sync: expected {:?} but file2 ended", stmt1);
+              std::process::exit(1);
+          }
+          let stmt2 = stmt2_opt.unwrap();
+          if stmt2 == stmt1 {
+              break;
+          } else {
+              // Skip the block in file2 that does not match file1’s marker.
+              match stmt2 {
+                  parser::Statement::Input => {
+                      // Skip the extra input block in file2
+                      let _ = buffer_block(&mut file2_reader)
+                          .expect("Error skipping extra file2 input block");
+                  },
+                  parser::Statement::Output => {
+                      // Skip the extra output block in file2
+                      let _ = buffer_block(&mut file2_reader)
+                          .expect("Error skipping extra file2 output block");
+                  },
+                  _ => {
+                      // In case other types of statements have been marked,
+                      // simply read and discard one line.
+                      let mut dummy = String::new();
+                      file2_reader.read_line(&mut dummy)
+                          .expect("Error skipping extra line in file2");
+                  }
+              }
+          }
+      }
+		match stmt1 {
+			parser::Statement::Input => {
+				writeln!(stdout, "{}", parser::get_statement_line(parser::Statement::Input, None)).unwrap();
 
-		if read1 == 0 {
-			print_diff(&mut stdout, line2.trim(), Diff::Plus);
-		} else if read2 == 0 {
-			print_diff(&mut stdout, line1.trim(), Diff::Minus);
-		} else {
-			println!("{}", line2.trim());
-		}
+				let lines1 = buffer_block(&mut file1_reader)
+					.expect("Error reading file1 input block");
+				let _ = buffer_block(&mut file2_reader)
+					.expect("Error reading file2 input block");
 
-		// Change the current mode if we are in output section or not
-		let mut r1 = read1;
-		while r1 > 0 {
-			match parser::parse_statement(&line1) {
-				Ok((statement, _)) => {
-					if statement == parser::Statement::Output {
-						break;
-					}
+				for line in lines1 {
+					writeln!(stdout, "{}", line).unwrap();
 				}
-				Err(_) => {},
-			}
-			line1.clear();
-			r1 = file1_reader.read_line(&mut line1).unwrap();
-			if read2 == 0 {
-				print_diff(&mut stdout, line1.trim(), Diff::Minus);
-			}
-		}
-
-		let mut is_comment_block = false;
-		lines1.clear();
-		while r1 > 0 {
-			line1.clear();
-			r1 = file1_reader.read_line(&mut line1).unwrap();
-			match parser::parse_statement(&line1) {
-				Ok((statement, _)) => {
-					match statement {
-						parser::Statement::Input => break,
-						parser::Statement::Duration => continue,
-						parser::Statement::Comment => {
-							is_comment_block = true;
-							continue;
+			},
+			parser::Statement::Output => {
+				writeln!(stdout, "{}", parser::get_statement_line(parser::Statement::Output, None)).unwrap();
+				let lines1 = buffer_block(&mut file1_reader)
+					.expect("Error reading file1 output block");
+				let lines2 = buffer_block(&mut file2_reader)
+					.expect("Error reading file2 output block");
+				let max_len = std::cmp::max(lines1.len(), lines2.len());
+				for i in 0..max_len {
+					match (lines1.get(i), lines2.get(i)) {
+						(None, Some(line)) => {
+							print_diff(&mut stdout, line, Diff::Plus);
+							files_have_diff = true;
 						},
-						_ => {
-							if is_comment_block {
-								is_comment_block = false;
+						(Some(line), None) => {
+							print_diff(&mut stdout, line, Diff::Minus);
+							files_have_diff = true;
+						},
+						(Some(l1), Some(l2)) => {
+							if pattern_matcher.has_diff(l1.to_string(), l2.to_string()) {
+								print_diff(&mut stdout, l1, Diff::Minus);
+								print_diff(&mut stdout, l2, Diff::Plus);
+								files_have_diff = true;
+							} else {
+								writeln!(stdout, "{}", l1).unwrap();
 							}
-							if is_comment_block {
-								continue;
-							}
-						}
-					}
-				},
-				Err(_) => {},
-			}
-			lines1.push(line1.trim().to_string());
-		}
-
-		let mut r2 = read2;
-		while r2 > 0 {
-			match parser::parse_statement(&line2) {
-				Ok((statement, _)) => {
-					if statement == parser::Statement::Output {
-						break;
+						},
+						_ => {},
 					}
 				}
-				Err(_) => {},
 			}
-			line2.clear();
-			r2 = file2_reader.read_line(&mut line2).unwrap();
-			if read1 == 0 {
-				print_diff(&mut stdout, line2.trim(), Diff::Plus);
-			} else {
-				println!("{}", line2.trim());
-			}
-
-		}
-
-		let mut is_comment_block = false;
-		lines2.clear();
-		while r2 > 0 {
-			line2.clear();
-			r2 = file2_reader.read_line(&mut line2).unwrap();
-
-			match parser::parse_statement(&line2) {
-				Ok((statement, _)) => {
-					if statement == parser::Statement::Input {
-						break;
-					}
-					if statement != parser::Statement::Comment {
-						is_comment_block = false;
-					}
-					if statement == parser::Statement::Comment || is_comment_block {
-						is_comment_block = true;
-						continue;
-					}
-					if statement == parser::Statement::Duration {
-						continue;
-					}
-				}
-				Err(_) => {},
-			}
-			lines2.push(line2.trim().to_string());
-		}
-
-		let max_len = std::cmp::max(lines1.len(), lines2.len());
-
-		for i in 0..max_len {
-			match (lines1.get(i), lines2.get(i)) {
-				(None, Some(line)) => {
-					print_diff(&mut stdout, line.trim(), Diff::Plus);
-					files_have_diff = true;
-				},
-				(Some(line), None) => {
-					print_diff(&mut stdout, line.trim(), Diff::Minus);
-					files_have_diff = true;
-				},
-				(Some(line1), Some(line2)) => {
-					let has_diff: bool = pattern_matcher.has_diff(line1.to_string(), line2.to_string());
-					if has_diff {
-						print_diff(&mut stdout, line1.trim(), Diff::Minus);
-						print_diff(&mut stdout, line2.trim(), Diff::Plus);
-						files_have_diff = true;
-					} else {
-						println!("{}", line1.trim());
-					}
-				},
-				_ => {}
-			}
+			_ => {
+				// For any other section we simply print the next line from either file.
+				let mut line1 = String::new();
+				let mut line2 = String::new();
+				file1_reader.read_line(&mut line1).unwrap();
+				file2_reader.read_line(&mut line2).unwrap();
+			},
 		}
 	}
 
@@ -348,6 +298,67 @@ fn move_cursor_to_line<R: BufRead + Seek>(reader: &mut R, command_prefix: &str) 
 	}
 
 	Ok(())
+}
+
+/// Peek the statement and return it from the given reader
+fn peek_statement<R: BufRead + Seek>(reader: &mut R) -> io::Result<Option<parser::Statement>> {
+	let pos = reader.seek(SeekFrom::Current(0))?;
+	let mut line = String::new();
+	let len = reader.read_line(&mut line)?;
+	reader.seek(SeekFrom::Start(pos))?;
+	if len == 0 {
+		return Ok(None);
+	}
+	match parser::parse_statement(&line) {
+		Ok((statement, _)) => Ok(Some(statement)),
+		Err(_) => Ok(None),
+	}
+}
+
+/// Buffer the statement block and read all content until the next one
+fn buffer_block<R: BufRead + Seek>(reader: &mut R) -> io::Result<Vec<String>> {
+	let mut block_lines = Vec::new();
+	let mut line = String::new();
+	let mut parsed = false;
+
+	loop {
+		let pos = reader.seek(SeekFrom::Current(0))?;
+		line.clear();
+		let len = reader.read_line(&mut line)?;
+		if len == 0 {
+			break; // EOF
+		}
+
+		// If the line can be parsed as a statement...
+		if let Ok((_, _)) = parser::parse_statement(&line) {
+			// Another statement here, stop
+			if parsed {
+				// New section reached, rewind and exit.
+				reader.seek(SeekFrom::Start(pos))?;
+				break;
+			}
+			parsed = true;
+			// Do not include the first statement to the block lines
+			continue;
+		}
+
+		// Empty lines important, so keep it
+		block_lines.push(line.trim().to_string());
+	}
+	Ok(block_lines)
+}
+
+///
+/// Check if the reader is at end-of-file.
+///
+/// Since BufReader does not provide an “is_eof” method, we can try peeking by attempting a read.
+/// Note: In a more robust solution you might maintain state externally.
+///
+fn reader_at_end<R: BufRead + Seek>(reader: &mut R) -> bool {
+	match reader.fill_buf() {
+		Ok(buf) if buf.is_empty() => true,
+		_ => false,
+	}
 }
 
 fn print_diff(stdout:&mut StandardStream, line: &str, diff: Diff) {
