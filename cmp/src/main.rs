@@ -22,6 +22,7 @@ use std::path::Path;
 use regex::Regex;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 use std::io::Write;
+use tempfile;
 
 enum Diff {
 	Plus,
@@ -118,36 +119,90 @@ fn main() {
 				}
 			},
 			parser::Statement::Output => {
-				writeln!(stdout, "{}", parser::get_statement_line(parser::Statement::Output, None)).unwrap();
+				let (_, args) = parser::parse_statement(&{
+            let mut line = String::new();
+            file1_reader.read_line(&mut line).unwrap();
+            line
+        }).unwrap();
+				writeln!(stdout, "{}", parser::get_statement_line(parser::Statement::Output, args.clone())).unwrap();
 				let lines1 = buffer_block(&mut file1_reader)
 					.expect("Error reading file1 output block");
 				let lines2 = buffer_block(&mut file2_reader)
 					.expect("Error reading file2 output block");
-				let max_len = std::cmp::max(lines1.len(), lines2.len());
-				for i in 0..max_len {
-					match (lines1.get(i), lines2.get(i)) {
-						(None, Some(line)) => {
-							print_diff(&mut stdout, line, Diff::Plus);
-							files_have_diff = true;
-						},
-						(Some(line), None) => {
-							print_diff(&mut stdout, line, Diff::Minus);
-							files_have_diff = true;
-						},
-						(Some(l1), Some(l2)) => {
-							if pattern_matcher.has_diff(l1.to_string(), l2.to_string()) {
-								if stdout.supports_color() {
-									print_inline_diff(&mut stdout, l1, l2);
-								} else {
-									print_diff(&mut stdout, l1, Diff::Minus);
-									print_diff(&mut stdout, l2, Diff::Plus);
-								}
-								files_have_diff = true;
-							} else {
-								writeln!(stdout, "{}", l1).unwrap();
+
+        if let Some(checker) = args {
+					// Create temporary files for both outputs
+					let temp_dir = tempfile::Builder::new().prefix("cmp").tempdir().unwrap();
+					let file1_path = temp_dir.path().join("expected.txt");
+					let file2_path = temp_dir.path().join("actual.txt");
+
+					// Write contents to temp files
+					std::fs::write(&file1_path, lines1.join("\n")).unwrap();
+					std::fs::write(&file2_path, lines2.join("\n")).unwrap();
+
+					// Run the checker
+					let checker_path = std::path::Path::new("./checkers/").join(checker);
+					if !checker_path.exists() {
+						panic!("Checker binary not found at: {:?}", checker_path);
+					}
+
+					let output = std::process::Command::new(checker_path)
+						.arg(file1_path)
+						.arg(file2_path)
+						.output()
+						.expect("Failed to execute checker");
+
+					// Print original output as its arguments
+					for line in lines1 {
+						writeln!(stdout, "{}", line).unwrap();
+					}
+					if !output.status.success() {
+						files_have_diff = true;
+						stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red))).unwrap();
+						let output_str = String::from_utf8_lossy(&output.stdout);
+						for line in output_str.lines() {
+							writeln!(stdout, "! {}", line).unwrap();
+						}
+						let output_str = String::from_utf8_lossy(&output.stderr);
+						for line in output_str.lines() {
+							writeln!(stdout, "! {}", line).unwrap();
+						}
+
+						stdout.reset().unwrap();
+						if std::env::var("CLT_DEBUG").is_ok() {
+							// Print original replay output
+							for line in lines2 {
+								writeln!(stdout, "{}", line).unwrap();
 							}
-						},
-						_ => {},
+						}
+					}
+        } else {
+					let max_len = std::cmp::max(lines1.len(), lines2.len());
+					for i in 0..max_len {
+						match (lines1.get(i), lines2.get(i)) {
+							(None, Some(line)) => {
+								print_diff(&mut stdout, line, Diff::Plus);
+								files_have_diff = true;
+							},
+							(Some(line), None) => {
+								print_diff(&mut stdout, line, Diff::Minus);
+								files_have_diff = true;
+							},
+							(Some(l1), Some(l2)) => {
+								if pattern_matcher.has_diff(l1.to_string(), l2.to_string()) {
+									if stdout.supports_color() {
+										print_inline_diff(&mut stdout, l1, l2);
+									} else {
+										print_diff(&mut stdout, l1, Diff::Minus);
+										print_diff(&mut stdout, l2, Diff::Plus);
+									}
+									files_have_diff = true;
+								} else {
+									writeln!(stdout, "{}", l1).unwrap();
+								}
+							},
+							_ => {},
+						}
 					}
 				}
 			}
