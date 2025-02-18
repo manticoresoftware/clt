@@ -119,18 +119,24 @@ fn main() {
 				}
 			},
 			parser::Statement::Output => {
-				let (_, args) = parser::parse_statement(&{
-            let mut line = String::new();
-            file1_reader.read_line(&mut line).unwrap();
-            line
-        }).unwrap();
+
+				let pos = file1_reader.seek(SeekFrom::Current(0)).unwrap();
+
+				let mut line = String::new();
+				file1_reader.read_line(&mut line).unwrap();
+
+				let (_, args) = parser::parse_statement(&line)
+					.expect("Error parsing output statement");
+
+				file1_reader.seek(SeekFrom::Start(pos)).unwrap();
+
 				writeln!(stdout, "{}", parser::get_statement_line(parser::Statement::Output, args.clone())).unwrap();
 				let lines1 = buffer_block(&mut file1_reader)
 					.expect("Error reading file1 output block");
 				let lines2 = buffer_block(&mut file2_reader)
 					.expect("Error reading file2 output block");
 
-        if let Some(checker) = args {
+				if let Some(checker) = args {
 					// Create temporary files for both outputs
 					let temp_dir = tempfile::Builder::new().prefix("cmp").tempdir().unwrap();
 					let file1_path = temp_dir.path().join("expected.txt");
@@ -176,35 +182,47 @@ fn main() {
 							}
 						}
 					}
-        } else {
-					let max_len = std::cmp::max(lines1.len(), lines2.len());
-					for i in 0..max_len {
-						match (lines1.get(i), lines2.get(i)) {
-							(None, Some(line)) => {
-								print_diff(&mut stdout, line, Diff::Plus);
-								files_have_diff = true;
-							},
-							(Some(line), None) => {
-								print_diff(&mut stdout, line, Diff::Minus);
-								files_have_diff = true;
-							},
-							(Some(l1), Some(l2)) => {
-								if pattern_matcher.has_diff(l1.to_string(), l2.to_string()) {
-									if stdout.supports_color() {
-										print_inline_diff(&mut stdout, l1, l2);
-									} else {
-										print_diff(&mut stdout, l1, Diff::Minus);
-										print_diff(&mut stdout, l2, Diff::Plus);
+				} else {
+					let debug_mode = std::env::var("CLT_DEBUG").is_ok();
+					let has_diff = block_has_differences(&lines1, &lines2, &pattern_matcher);
+
+					if has_diff {
+						files_have_diff = true;
+						let max_len = std::cmp::max(lines1.len(), lines2.len());
+						for i in 0..max_len {
+							match (lines1.get(i), lines2.get(i)) {
+								(None, Some(line)) => {
+									print_diff(&mut stdout, line, Diff::Plus);
+								},
+								(Some(line), None) => {
+									print_diff(&mut stdout, line, Diff::Minus);
+								},
+								(Some(l1), Some(l2)) => {
+									if pattern_matcher.has_diff(l1.to_string(), l2.to_string()) {
+										if stdout.supports_color() {
+											print_inline_diff(&mut stdout, l1, l2);
+										} else {
+											print_diff(&mut stdout, l1, Diff::Minus);
+											print_diff(&mut stdout, l2, Diff::Plus);
+										}
+									} else if debug_mode {
+										writeln!(stdout, "{}", l1).unwrap();
 									}
-									files_have_diff = true;
-								} else {
-									writeln!(stdout, "{}", l1).unwrap();
-								}
-							},
-							_ => {},
+								},
+								_ => {},
+							}
 						}
-					}
-				}
+					} else {
+						if debug_mode {
+							// Show all lines when in debug mode
+							for line in &lines1 {
+								writeln!(stdout, "{}", line).unwrap();
+							}
+						} else {
+							// Just show OK when no differences and not in debug mode
+							writeln!(stdout, "OK").unwrap();
+						}
+					}				}
 			}
 			_ => {
 				// For any other section we simply print the next line from either file.
@@ -509,4 +527,18 @@ fn print_inline_diff(stdout: &mut StandardStream, old_line: &str, new_line: &str
 	write!(stdout, "{}", new_suffix).unwrap();
 	writeln!(stdout).unwrap();
 	stdout.reset().unwrap();
+}
+
+/// Helper to get info if we have any differences in block or not
+fn block_has_differences(lines1: &[String], lines2: &[String], pattern_matcher: &PatternMatcher) -> bool {
+	if lines1.len() != lines2.len() {
+		return true;
+	}
+
+	for (l1, l2) in lines1.iter().zip(lines2.iter()) {
+		if pattern_matcher.has_diff(l1.to_string(), l2.to_string()) {
+			return true;
+		}
+	}
+	false
 }
