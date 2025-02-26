@@ -14,12 +14,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use regex::Regex;
 use tokio::fs::{OpenOptions, File};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader, BufWriter};
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::sync::oneshot;
+use tokio::sync::Mutex;
 use tokio::time::Instant;
+use tokio::process::{Child, Command};
+use std::process::Stdio;
+use std::sync::Arc;
 
 #[derive(Debug, structopt::StructOpt)]
 #[structopt(
@@ -46,14 +48,6 @@ struct Opt {
 	output_file: std::ffi::OsString,
 
 	#[structopt(
-		short = "p",
-		long = "prompt",
-		multiple = true,
-		help = "Default prompts to use for parsing"
-	)]
-	prompts: Vec<String>,
-
-	#[structopt(
 		short = "D",
 		long = "delay",
 		multiple = false,
@@ -74,50 +68,44 @@ const INIT_CMD: &[u8] = b"export PS1='clt> ' \
 	PATH='/bin:/usr/bin:/usr/local/bin:/sbin:/usr/local/sbin' \
 	COLUMNS=10000; \
 	alias curl='function _curl() { \
-		command curl -s \"$@\" | awk \"NR==1{p=\\$0}NR>1{print p;p=\\$0}END{ORS = p ~ /\\\n$/ ? \\\"\\\" : \\\"\\\n\\\";print p}\"; \
+	command curl -s \"$@\" | awk \"NR==1{p=\\$0}NR>1{print p;p=\\$0}END{ORS = p ~ /\\\n$/ ? \\\"\\\" : \\\"\\\n\\\";print p}\"; \
 	}; _curl'; \
-	enable -n exit enable; \
-	exec 2>&1;";
+	enable -n exit enable;";
 
-#[derive(Debug)]
-enum Event {
-	Key(textmode::Result<Option<textmode::Key>>),
-	Stdout(std::io::Result<Vec<u8>>),
-	Write(std::io::Result<Vec<u8>>),
-	Error(anyhow::Error),
-	Replay(String, oneshot::Sender<()>),
-	Quit,
-}
 
 #[tokio::main]
 async fn async_main(opt: Opt) -> anyhow::Result<()> {
-	let Opt { input_file, output_file, mut prompts, delay } = opt;
-	prompts.push(SHELL_PROMPT.to_string());
-	let mut stdout = tokio::io::stdout();
+	let start_time = Instant::now();
+	let Opt { input_file, output_file, delay } = opt;
 
-	let mut pty = pty_process::Pty::new()?;
-	let pts = pty.pts()?;
-	let mut process = pty_process::Command::new(SHELL_CMD);
-	process.arg("-i")
+	let mut binding = Command::new(SHELL_CMD);
+	let process = binding
+		.arg("-i")
 		.arg(format!("PS1={}", SHELL_PROMPT))
 		.arg("bash")
 		.arg("--noprofile")
 		.arg("--rcfile")
 		.arg(get_bash_rcfile().await.unwrap())
-		// .stdout(std::process::Stdio::piped())
+		.stdin(Stdio::piped())
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
 	;
 
-	let is_replay = input_file.is_some();
-	let mut child = process.spawn(&pts)?;
+	let mut child = process.spawn()?;
+	let mut child_stdin = child.stdin.take().expect("Failed to get stdin");
+	let child_stdout = child.stdout.take().expect("Failed to get stdout");
+	let mut child_stderr = child.stderr.take().expect("Failed to get stderr");
 
-	let mut input = textmode::blocking::Input::new()?;
-	let _input_guard = input.take_raw_guard();
+	let child_arc = Arc::new(Mutex::new(child));
 
-	let (event_w, mut event_r) = tokio::sync::mpsc::unbounded_channel();
-	let (input_w, mut input_r) = tokio::sync::mpsc::unbounded_channel();
 
 	// We use this buffer to gather all inputs we type
 	let mut output_fh = tokio::fs::File::create(output_file.clone()).await?;
+
+	let mut stdin_handle = None;
+	let mut stdout_handle = None;
+	let mut stderr_handle = None;
+	let mut signal_handle = None;
 
 	// If we have input file passed, we replay, otherwise – record
 	// Replay the input_file and save results in output_file
@@ -132,8 +120,6 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 		let lines: Vec<&str> = input_content.split('\n').collect();
 
 		let mut commands = Vec::new();
-		// We need to send empty command to block thread till we get forked and get clt> prompt
-		commands.push(String::from(""));
 
 		// Extract all commands
 		let mut command_lines = Vec::new();
@@ -157,298 +143,234 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 		}
 
 		// Trap the signals and exit process in case we receive it for replay only
-		{
-			tokio::spawn(async move {
-				let mut sigterm = signal(SignalKind::terminate()).unwrap();
-				let mut sigint = signal(SignalKind::interrupt()).unwrap();
-				loop {
-					tokio::select! {
-						_ = sigterm.recv() => {
-							println!("Received SIGINT");
-							std::process::exit(130);
-						}
-						_ = sigint.recv() => {
-							println!("Received SIGTERM");
-							std::process::exit(143);
-						}
-					};
-				}
-			});
-		}
+		let child_clone = child_arc.clone();
+		signal_handle = Some(tokio::spawn(async move {
+			handle_signals(&child_clone).await;
+		}));
 
-		{
-			let event_w = event_w.clone();
-			tokio::spawn(async move {
-				for command in commands {
-					let (tx, rx) = oneshot::channel();
-					event_w.send(Event::Replay(command.to_string(), tx)).unwrap();
-					// Block until the command has finished executing.
-					rx.await.unwrap();
+		// Make sure to update your handle_signals function signature to:
+		// Your signal handling logic here
 
-					// Sleep for delay before process next command
-					if delay > 0 {
-						tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-					}
-				}
+		let mut stdout_reader = BufReader::new(child_stdout);
+		let mut stderr_reader = BufReader::new(child_stderr);
+		for command in commands {
+			let command = format!("{}\n", command);
+			let command_with_marker = format!("{}echo '–––[END]–––' | tee /dev/stderr\n", command);
+			child_stdin.write_all(command_with_marker.as_bytes()).await.unwrap();
+			child_stdin.flush().await.unwrap();
 
-				// Exit with ^D because we do not write it
-				// We should not send ^D here because it probably will go to replay,
-				// but we do not handle it now
-				event_w.send(Event::Quit).unwrap();
+			let input_line = parser::get_statement_line(parser::Statement::Input, None);
+			let output_line = parser::get_statement_line(parser::Statement::Output, None);
 
-			});
-		}
+			// Read until marker
+			let command_start = Instant::now();
+			let mut output = String::new();
 
-	} else {
-		{
-			let event_w = event_w.clone();
-			std::thread::spawn(move || {
-				loop {
-					event_w
-						.send(Event::Key(input.read_key()))
-						// event_w is never closed, so this can never fail
-						.unwrap();
-				}
-			});
-		}
-	}
-
-	{
-		let event_w = event_w.clone();
-		tokio::task::spawn(async move {
 			loop {
-				let mut buf = [0_u8; 4096];
-				tokio::select! {
-					res = pty.read(&mut buf) => {
-						match res {
-							Ok(n) => {
-								let bytes = buf[..n].to_vec();
-								// println!("[{}]", String::from_utf8_lossy(&bytes));
-								// We need this write only for non replay action
-								let filtered = filter_stdout_buf(bytes);
-								if !is_replay {
-									event_w.send(Event::Write(Ok(filtered.clone()))).unwrap();
-								}
-								event_w
-									.send(Event::Stdout(Ok(filtered)))
-									// event_w is never closed, so this can never fail
-									.unwrap();
-							},
-							Err(err) => {
-								eprintln!("pty read failed: {}", err);
+				let mut line = String::new();
+				stderr_reader.read_line(&mut line).await.unwrap();
+				if line.trim() == "–––[END]–––" {
+					break;
+				}
+				output.push_str(&line);
+			}
+
+			loop {
+				let mut line = String::new();
+				stdout_reader.read_line(&mut line).await.unwrap();
+				if line.trim() == "–––[END]–––" {
+					break;
+				}
+				output.push_str(&line);
+			}
+
+			let command_end = Instant::now();
+			let duration = parser::Duration {
+				duration: command_end.duration_since(command_start).as_millis(),
+				percentage: 0.0,
+			};
+			let duration_line = get_duration_line(duration);
+			let content = format!("\n{}\n{}\n{}\n{}\n{}\n", input_line, command, output_line, output, duration_line);
+			output_fh.write_all(&content.as_bytes()).await?;
+
+			// Sleep for delay before process next command
+			if delay > 0 {
+				tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+			}
+		}
+
+		// Emulate Ctrl+D
+		drop(child_stdin);
+	} else {
+		// At the beginning of the else block where you handle recording
+		let command_buffer = Arc::new(Mutex::new(String::new()));
+		let command_buffer_stdin = command_buffer.clone();
+		let command_buffer_stdout = command_buffer.clone();
+
+		// In the stdin handler
+		let output_file_clone = output_file.clone();
+		stdin_handle = Some(tokio::spawn(async move {
+			let mut user_input = String::new();
+			let mut stdin = BufReader::new(tokio::io::stdin());
+			loop {
+				user_input.clear();
+				match stdin.read_line(&mut user_input).await {
+					Ok(0) => {
+						flush_output_file(output_file_clone, start_time).await;
+
+						// Ctrl+D (EOF) detected
+						drop(child_stdin);
+						break;
+					}
+					Ok(_) => {
+						if !user_input.trim().is_empty() {
+							let command = user_input.clone();
+							let command_with_marker = format!("{}echo '–––[END]–––'\n", command);
+
+							// Write to shell
+							if let Err(e) = child_stdin.write_all(command_with_marker.as_bytes()).await {
+								eprintln!("Failed to write to shell: {}", e);
 								break;
 							}
+
+							// Store command for later writing to file
+							let mut buffer = command_buffer_stdin.lock().await;
+							buffer.push_str(&command);
 						}
 					}
-					res = input_r.recv() => {
-						if res.is_none() {
-							return;
-						}
-
-						let bytes: Vec<u8> = res.unwrap();
-
-						if let Err(e) = pty.write(&bytes).await {
-							event_w
-								.send(Event::Error(anyhow::anyhow!(e)))
-								// event_w is never closed, so this can never
-								// fail
-								.unwrap();
-						}
-					}
-					_ = child.wait() => {
-						event_w.send(Event::Quit).unwrap();
+					Err(e) => {
+						eprintln!("Failed to read from stdin: {}", e);
 						break;
 					}
 				}
 			}
-		});
-	}
+		}));
 
-	let mut input_pos: usize = 0;
-	let mut input: Vec<u8> = Vec::new();
-	let mut is_typing = false;
-	let mut total_duration: u128 = 0;
-	loop {
-		match event_r.recv().await.unwrap() {
-			Event::Key(key) => {
-				let key = key?;
-				if let Some(ref key) = key {
-					let bytes = key.clone().into_bytes();
-					match *key {
-						textmode::Key::Char(c) => {
-							input.insert(input_pos, c as u8);
-							input_pos += 1;
-						}
-						textmode::Key::Backspace => {
-							if input_pos > 0 {
-								input.remove(input_pos - 1);
-								input_pos -= 1;
-							}
-						}
-						textmode::Key::Delete => {
-							if input_pos < input.len() {
-								input.remove(input_pos);
-							}
-						}
-						textmode::Key::Left => {
-							if input_pos > 0 {
-								input_pos -= 1;
-							}
-						}
-						textmode::Key::Right => {
-							if input_pos < input.len() {
-								input_pos += 1;
-							}
-						}
-						textmode::Key::Ctrl(b'a') => {
-							input_pos = 0;
-						}
-						textmode::Key::Ctrl(b'e') => {
-							input_pos = input.len();
-						}
-						_ => {}
-					}
+		// In the stdout handler
+		let mut stdout = tokio::io::stdout();
+		stdout.write_all(SHELL_PROMPT.as_bytes()).await.unwrap();
+		stdout.flush().await.unwrap();
 
-					// And when we hit enter – send it
-					is_typing = true;
-					if bytes == [13] || bytes == [04] {
-						let mut command = if bytes == [04] {
-							"^D".to_string()
-						} else {
-							String::from_utf8_lossy(&input).to_string()
-						};
-						is_typing = false;
+		stdout_handle = Some(tokio::spawn(async move {
+			let mut reader = BufReader::new(child_stdout);
+			let mut output_buffer = String::new();
+			let mut line = String::new();
+			let mut command_start = Instant::now();
 
-						// Do not write empty commands and ^D to the end of file because we are just exiting
-						if !command.is_empty() && command != String::from("^D") {
+			loop {
+				line.clear();
+				match reader.read_line(&mut line).await {
+					Ok(0) => break, // EOF
+					Ok(_) => {
+						if line.trim() == "–––[END]–––" {
+							// Command completed, write to file
+							let command_end = Instant::now();
+							let duration = parser::Duration {
+								duration: command_end.duration_since(command_start).as_millis(),
+								percentage: 0.0,
+							};
+							let duration_line = get_duration_line(duration);
+
 							let input_line = parser::get_statement_line(parser::Statement::Input, None);
 							let output_line = parser::get_statement_line(parser::Statement::Output, None);
-							command = format!("\n{}\n{}\n{}\n", input_line, command, output_line);
-							event_w.send(Event::Write(Ok(command.as_bytes().to_vec()))).unwrap();
-						}
 
-						input.clear();
-						input_pos = 0;
-					}
-					input_w.send(bytes).unwrap();
-				} else {
-					break;
-				}
-			}
-			Event::Stdout(bytes) => match bytes {
-				Ok(bytes) => {
-					if !is_replay {
-						stdout.write_all(&bytes).await?;
-						stdout.flush().await?;
-					}
-				}
-				Err(e) => {
-					anyhow::bail!("failed to read from child process: {}", e);
-				}
-			}
-			Event::Write(bytes) => match bytes {
-				Ok(bytes) => {
-					let output = std::str::from_utf8(&bytes)?;
-					// We write only when the output is not the same as input
-					// This solves problem with readline usage in interactive mysql shell
-					// That duplicates output to stdout from user input
-					let input = std::str::from_utf8(&input)?;
-					if !is_typing && !input.ends_with(output) {
-						output_fh.write_all(&output.as_bytes()).await?;
-					}
-				}
-				Err(e) => {
-					anyhow::bail!("failed to read from child process: {}", e);
-				}
-			}
-			Event::Error(e) => {
-				return Err(e);
-			}
-			Event::Replay(command, tx) => {
-				let start = Instant::now();
-				let mut command_output: String = String::new();
-				let mut command_size = 0;
-				let mut result: Vec<u8> = Vec::new();
-				if !command.is_empty() {
-					let mut bytes: Vec<u8>;
-					bytes = command.as_bytes().to_vec();
-					bytes.push(13u8); // Add enter keystroke
+							let command = {
+								let mut buffer = command_buffer_stdout.lock().await;
+								let command = buffer.clone();
+								buffer.clear();
+								command
+							};
 
-					let input_line = parser::get_statement_line(parser::Statement::Input, None);
-					let output_line = parser::get_statement_line(parser::Statement::Output, None);
-					let input_cmd = format!("\n{}\n{}\n{}\n", input_line, command, output_line);
-					result.extend_from_slice(input_cmd.as_bytes());				// Send the command to the pty
-					command_size = bytes.len();
-					input_w.send(bytes).unwrap();
-				}
+							let content = format!(
+								"\n{}\n{}\n{}\n{}\n{}\n",
+								input_line,
+								command,
+								output_line,
+								output_buffer,
+								duration_line
+							);
 
-
-				// Wait for the shell prompt to appear in the output, indicating that
-				// the command has finished executing. You may need to adjust the
-				// prompt detection logic depending on the shell being used.
-				let mut ignored_size = 0;
-				loop {
-					if let Event::Stdout(Ok(bytes)) = event_r.recv().await.unwrap() {
-						let mut pos = 0;
-						let payload_size = bytes.len();
-						if ignored_size < command_size {
-							if payload_size > (command_size - ignored_size) {
-								pos = command_size - ignored_size;
-								ignored_size = command_size;
-							} else {
-								ignored_size += payload_size;
-								continue;
+							if let Err(e) = output_fh.write_all(content.as_bytes()).await {
+								eprintln!("Failed to write to output file: {}", e);
+								break;
 							}
-						}
 
-						if pos < payload_size {
-							let output = format!("{}", String::from_utf8_lossy(&bytes[pos..payload_size]));
-							command_output.push_str(&output);
-						}
+							// Clear output buffer for next command
+							output_buffer.clear();
 
-						let pattern_str = get_pattern_string(String::from(""), &prompts);
-						let re = Regex::new(&pattern_str).unwrap();
-						let is_done = if re.is_match(&command_output) && is_prompting(&command_output, &prompts) {
-							true
+							// Update command start time for next command
+							command_start = Instant::now();
+
+							stdout.write_all(SHELL_PROMPT.as_bytes()).await.unwrap();
+							stdout.flush().await.unwrap();
+
 						} else {
-							false
-						};
-
-						if is_done {
-							let filtered_output = filter_prompt(command_output.as_str(), &prompts);
-							if !command.is_empty() {
-								result.extend_from_slice(filtered_output.as_bytes());
-								// Add duration line
-								let duration = parser::Duration {
-									duration: start.elapsed().as_millis(),
-									percentage: 0.0
-								};
-								total_duration += duration.duration;
-
-								let duration_line = get_duration_line(duration);
-								result.extend_from_slice(duration_line.as_bytes());
+							// Write to stdout and store in buffer
+							if let Err(e) = stdout.write_all(line.as_bytes()).await {
+								eprintln!("Failed to write to stdout: {}", e);
+								break;
 							}
+							if let Err(e) = stdout.flush().await {
+								eprintln!("Failed to flush stdout: {}", e);
+								break;
+							}
+							output_buffer.push_str(&line);
+						}
+					}
+					Err(e) => {
+						eprintln!("Failed to read from shell stdout: {}", e);
+						break;
+					}
+				}
+			}
+		}));
 
-							let content = filter_stdout_buf(result);
-							event_w.send(Event::Write(Ok(content))).unwrap();
-
-							// Signal that the command has finished executing.
-							tx.send(()).unwrap();
+		// Handle stderr
+		stderr_handle = Some(tokio::spawn(async move {
+			let mut buffer = [0u8; 1024];
+			let mut stderr = tokio::io::stderr();
+			loop {
+				match child_stderr.read(&mut buffer).await {
+					Ok(n) if n == 0 => break, // EOF
+					Ok(n) => {
+						if let Err(e) = stderr.write_all(&buffer[..n]).await {
+							eprintln!("Failed to write to stderr: {}", e);
+							break;
+						}
+						if let Err(e) = stderr.flush().await {
+							eprintln!("Failed to flush stderr: {}", e);
 							break;
 						}
 					}
+					Err(e) => {
+						eprintln!("Failed to read from shell stderr: {}", e);
+						break;
+					}
 				}
 			}
-			Event::Quit => {
-				// Do a file clean up to remove spaces and make consistent output
-				let file_path = output_file.clone().into_string().unwrap();
-				cleanup_file(file_path, total_duration).await.unwrap();
-
-				println!("");
-				break
-			}
-		};
+		}));
 	}
+
+	// Wait for the shell process to complete
+	let mut child_guard = child_arc.lock().await;
+	child_guard.wait().await?;
+
+	// Cancel the I/O handlers
+	if stdin_handle.is_some() {
+		stdin_handle.unwrap().abort();
+	}
+	if stdout_handle.is_some() {
+		stdout_handle.unwrap().abort();
+	}
+	if stderr_handle.is_some() {
+		stderr_handle.unwrap().abort();
+	}
+	if signal_handle.is_some() {
+		signal_handle.unwrap().abort();
+	}
+
+	flush_output_file(output_file, start_time).await;
+	println!("");
 
 	Ok(())
 }
@@ -464,68 +386,6 @@ fn main(opt: Opt) {
 	};
 }
 
-fn filter_stdout_buf(buf: Vec<u8>) -> Vec<u8> {
-	// Create new bytes vector and filter from buf zero bytes
-	// and also replace \n to \r int it due to we need return caret in terminal
-	let mut prev_byte = &0;
-	let mut bytes: Vec<u8> = Vec::new();
-	for byte in buf.iter() {
-		if *byte == b'\0' || *byte == 7u8 {
-			continue;
-		}
-
-		if *prev_byte != b'\r' && *byte == b'\n' {
-			bytes.push(b'\r');
-		}
-
-		bytes.push(*byte);
-		prev_byte = byte;
-	}
-	let bytes = clean_escape_sequences(bytes);
-	bytes
-}
-
-fn filter_prompt(prompt: &str, prompts: &[String]) -> String {
-	let pattern_str = get_pattern_string(String::from(".*"), prompts);
-	let re = regex::Regex::new(&pattern_str).unwrap();
-	re.replace_all(prompt, "").to_string()
-}
-
-fn clean_escape_sequences(input: Vec<u8>) -> Vec<u8> {
-	let mut result = Vec::with_capacity(input.len());
-	let mut inside_escape = false;
-	let mut bytes = input.into_iter().peekable();
-
-	while let Some(byte) = bytes.next() {
-		if byte == 0x1B && bytes.peek() == Some(&b'[') {
-			inside_escape = true;
-			bytes.next(); // Skip the '[' byte
-		} else if inside_escape {
-			if byte.is_ascii_alphabetic() {
-				inside_escape = false;
-			}
-		} else {
-			result.push(byte);
-		}
-	}
-
-	result
-}
-
-fn is_prompting(output: &str, prompts: &[String]) -> bool {
-	let pattern_str: String = get_pattern_string(String::from(""), prompts);
-	let re = regex::Regex::new(&pattern_str).unwrap();
-	let last_line = output.lines().last().unwrap_or("");
-	re.is_match(last_line)
-}
-
-fn get_pattern_string(suffix: String, prompts: &[String]) -> String {
-	prompts.iter()
-		.map(|prompt| format!(r"(?m)^{}{}\r?$", regex::escape(prompt), suffix))
-		.collect::<Vec<_>>()
-		.join("|")
-}
-
 /// This function cleans up all empty lines and removes the last line containing "exit" to make the consistent output
 async fn cleanup_file(file_path: String, total_duration: u128) -> Result<(), Box<dyn std::error::Error>> {
 	let file = File::open(&file_path).await?;
@@ -534,7 +394,7 @@ async fn cleanup_file(file_path: String, total_duration: u128) -> Result<(), Box
 		.write(true)
 		.create(true)
 		.open(&temp_output_file)
-		.await?;
+	.await?;
 	let reader = BufReader::new(file);
 	let mut writer = BufWriter::new(temp_file);
 
@@ -590,7 +450,7 @@ async fn get_bash_rcfile() -> Result<String, Box<dyn std::error::Error>> {
 		.create(true)
 		.truncate(true)
 		.open(&file_path)
-		.await?;
+	.await?;
 	let mut writer = BufWriter::new(file);
 	writer.write_all(INIT_CMD).await?;
 	writer.flush().await?;
@@ -602,4 +462,38 @@ fn get_duration_line(duration: parser::Duration) -> String {
 	let duration_arg = Some(format!("{}ms ({:.2}%)", duration.duration, duration.percentage));
 	let duration_line = parser::get_statement_line(parser::Statement::Duration, duration_arg);
 	duration_line
+}
+
+/// Handle signals
+async fn handle_signals(child: &Arc<Mutex<Child>>) {
+	let mut sigterm = signal(SignalKind::terminate()).unwrap();
+	let mut sigint = signal(SignalKind::interrupt()).unwrap();
+	let mut sighup = signal(SignalKind::hangup()).unwrap();
+
+	tokio::select! {
+	_ = sigterm.recv() => {
+		println!("\nReceived SIGTERM");
+		let mut child = child.lock().await;
+		let _ = child.kill().await;
+		std::process::exit(143);
+	}
+		_ = sigint.recv() => {
+			println!("\nReceived SIGINT");
+			let mut child = child.lock().await;
+			let _ = child.kill().await;
+			std::process::exit(130);
+		}
+		_ = sighup.recv() => {
+			println!("\nReceived SIGHUP");
+			let mut child = child.lock().await;
+			let _ = child.kill().await;
+			std::process::exit(129);
+		}
+	}
+}
+
+async fn flush_output_file(output_file: std::ffi::OsString, start_time: Instant) {
+	let file_path = output_file.into_string().unwrap();
+	let total_duration = Instant::now() - start_time;
+	cleanup_file(file_path, total_duration.as_millis()).await.unwrap();
 }
