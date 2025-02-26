@@ -15,7 +15,7 @@
 // limitations under the License.
 
 use tokio::fs::{OpenOptions, File};
-use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader, BufWriter};
+use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader, BufWriter};
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::Mutex;
 use tokio::time::Instant;
@@ -70,7 +70,9 @@ const INIT_CMD: &[u8] = b"export PS1='clt> ' \
 	alias curl='function _curl() { \
 	command curl -s \"$@\" | awk \"NR==1{p=\\$0}NR>1{print p;p=\\$0}END{ORS = p ~ /\\\n$/ ? \\\"\\\" : \\\"\\\n\\\";print p}\"; \
 	}; _curl'; \
-	enable -n exit enable;";
+	enable -n exit enable;
+	exec 2>&1;
+";
 
 
 #[tokio::main]
@@ -81,30 +83,26 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	let mut binding = Command::new(SHELL_CMD);
 	let process = binding
 		.arg("-i")
-		.arg(format!("PS1={}", SHELL_PROMPT))
 		.arg("bash")
 		.arg("--noprofile")
-		.arg("--rcfile")
-		.arg(get_bash_rcfile().await.unwrap())
 		.stdin(Stdio::piped())
 		.stdout(Stdio::piped())
-		.stderr(Stdio::piped())
+		.stderr(Stdio::null())
 	;
 
 	let mut child = process.spawn()?;
 	let mut child_stdin = child.stdin.take().expect("Failed to get stdin");
 	let child_stdout = child.stdout.take().expect("Failed to get stdout");
-	let mut child_stderr = child.stderr.take().expect("Failed to get stderr");
+
+	child_stdin.write_all(INIT_CMD).await.unwrap();
 
 	let child_arc = Arc::new(Mutex::new(child));
-
 
 	// We use this buffer to gather all inputs we type
 	let mut output_fh = tokio::fs::File::create(output_file.clone()).await?;
 
 	let mut stdin_handle = None;
 	let mut stdout_handle = None;
-	let mut stderr_handle = None;
 	let mut signal_handle = None;
 
 	// If we have input file passed, we replay, otherwise – record
@@ -148,14 +146,11 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 			handle_signals(&child_clone).await;
 		}));
 
-		// Make sure to update your handle_signals function signature to:
-		// Your signal handling logic here
-
+		// Read output now from stdout that is already merged with stderr
 		let mut stdout_reader = BufReader::new(child_stdout);
-		let mut stderr_reader = BufReader::new(child_stderr);
 		for command in commands {
 			let command = format!("{}\n", command);
-			let command_with_marker = format!("{}echo '–––[END]–––' | tee /dev/stderr\n", command);
+			let command_with_marker = format!("{}echo $'\n''–––[END]–––'\n", command);
 			child_stdin.write_all(command_with_marker.as_bytes()).await.unwrap();
 			child_stdin.flush().await.unwrap();
 
@@ -165,15 +160,6 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 			// Read until marker
 			let command_start = Instant::now();
 			let mut output = String::new();
-
-			loop {
-				let mut line = String::new();
-				stderr_reader.read_line(&mut line).await.unwrap();
-				if line.trim() == "–––[END]–––" {
-					break;
-				}
-				output.push_str(&line);
-			}
 
 			loop {
 				let mut line = String::new();
@@ -325,30 +311,6 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 			}
 		}));
 
-		// Handle stderr
-		stderr_handle = Some(tokio::spawn(async move {
-			let mut buffer = [0u8; 1024];
-			let mut stderr = tokio::io::stderr();
-			loop {
-				match child_stderr.read(&mut buffer).await {
-					Ok(n) if n == 0 => break, // EOF
-					Ok(n) => {
-						if let Err(e) = stderr.write_all(&buffer[..n]).await {
-							eprintln!("Failed to write to stderr: {}", e);
-							break;
-						}
-						if let Err(e) = stderr.flush().await {
-							eprintln!("Failed to flush stderr: {}", e);
-							break;
-						}
-					}
-					Err(e) => {
-						eprintln!("Failed to read from shell stderr: {}", e);
-						break;
-					}
-				}
-			}
-		}));
 	}
 
 	// Wait for the shell process to complete
@@ -361,9 +323,6 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	}
 	if stdout_handle.is_some() {
 		stdout_handle.unwrap().abort();
-	}
-	if stderr_handle.is_some() {
-		stderr_handle.unwrap().abort();
 	}
 	if signal_handle.is_some() {
 		signal_handle.unwrap().abort();
@@ -438,24 +397,6 @@ async fn cleanup_file(file_path: String, total_duration: u128) -> Result<(), Box
 	tokio::fs::rename(temp_output_file, file_path).await?;
 
 	Ok(())
-}
-
-async fn get_bash_rcfile() -> Result<String, Box<dyn std::error::Error>> {
-	let file_name = ".rec-bashrc";
-	let temp_dir = std::env::temp_dir();
-	let file_path = temp_dir.join(file_name);
-
-	let file = OpenOptions::new()
-		.write(true)
-		.create(true)
-		.truncate(true)
-		.open(&file_path)
-	.await?;
-	let mut writer = BufWriter::new(file);
-	writer.write_all(INIT_CMD).await?;
-	writer.flush().await?;
-
-	Ok(file_path.to_string_lossy().to_string())
 }
 
 fn get_duration_line(duration: parser::Duration) -> String {
