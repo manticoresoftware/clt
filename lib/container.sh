@@ -51,6 +51,7 @@ container_exec() {
 		-v \"$bin_path/rec:/usr/bin/clt-rec\" \
 		-v \"$bin_path/cmp:/usr/bin/clt-cmp\" \
 		-v \"$PWD/$directory:$DOCKER_PROJECT_DIR/$directory\" \
+		-v \"$PWD/checkers:$DOCKER_PROJECT_DIR/checkers\" \
 		-v \"$temp_file:$DOCKER_PROJECT_DIR/.patterns\" \
 		-w \"$DOCKER_PROJECT_DIR\" \
 		$RUN_ARGS \
