@@ -15,14 +15,13 @@
 // limitations under the License.
 
 use tokio::fs::{OpenOptions, File};
-use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader, BufWriter};
+use tokio::io::{AsyncReadExt as _, AsyncBufReadExt as _, AsyncWriteExt as _, BufReader, BufWriter};
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tokio::process::{Child, Command};
 use std::process::Stdio;
 use std::sync::Arc;
-
 #[derive(Debug, structopt::StructOpt)]
 #[structopt(
 	name = "rec",
@@ -58,7 +57,7 @@ struct Opt {
 }
 
 const OUTPUT_HEADER: &str = "You can use regex in the output sections.\nMore info here: https://github.com/manticoresoftware/clt#refine\n";
-const SHELL_CMD: &str = "/usr/bin/env";
+const END_MARKER: &str = "–––[END]–––";
 const SHELL_PROMPT: &str = "clt> ";
 const INIT_CMD: &[u8] = b"export PS1='clt> ' \
 	PS2='' \
@@ -80,10 +79,8 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	let start_time = Instant::now();
 	let Opt { input_file, output_file, delay } = opt;
 
-	let mut binding = Command::new(SHELL_CMD);
+	let mut binding = Command::new("bash");
 	let process = binding
-		.arg("-i")
-		.arg("bash")
 		.arg("--noprofile")
 		.stdin(Stdio::piped())
 		.stdout(Stdio::piped())
@@ -149,8 +146,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 		// Read output now from stdout that is already merged with stderr
 		let mut stdout_reader = BufReader::new(child_stdout);
 		for command in commands {
-			let command = format!("{}\n", command);
-			let command_with_marker = format!("{}echo $'\n''–––[END]–––'\n", command);
+			let command_with_marker = format!("{}\necho '{}'\n", command, END_MARKER);
 			child_stdin.write_all(command_with_marker.as_bytes()).await.unwrap();
 			child_stdin.flush().await.unwrap();
 
@@ -160,14 +156,29 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 			// Read until marker
 			let command_start = Instant::now();
 			let mut output = String::new();
-
 			loop {
-				let mut line = String::new();
-				stdout_reader.read_line(&mut line).await.unwrap();
-				if line.trim() == "–––[END]–––" {
-					break;
+				let mut buffer = [0; 1024];
+				match stdout_reader.read(&mut buffer).await {
+					Ok(0) => break, // EOF
+					Ok(bytes_read) => {
+						let read_data = &buffer[..bytes_read];
+
+						// Check for end marker
+						let read_str = String::from_utf8_lossy(read_data);
+						if read_str.contains(END_MARKER) {
+							let end_pos = read_str.find(END_MARKER).unwrap();
+							output.push_str(&read_str[..end_pos]);
+							break;
+						}
+
+						// Append the raw bytes to output
+						output.push_str(&read_str);
+					},
+					Err(e) => {
+						eprintln!("Failed to read from shell stdout: {}", e);
+						break;
+					}
 				}
-				output.push_str(&line);
 			}
 
 			let command_end = Instant::now();
@@ -211,7 +222,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 					Ok(_) => {
 						if !user_input.trim().is_empty() {
 							let command = user_input.clone();
-							let command_with_marker = format!("{}echo '–––[END]–––'\n", command);
+							let command_with_marker = format!("{}echo '{}'\n", command, END_MARKER);
 
 							// Write to shell
 							if let Err(e) = child_stdin.write_all(command_with_marker.as_bytes()).await {
@@ -248,7 +259,7 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 				match reader.read_line(&mut line).await {
 					Ok(0) => break, // EOF
 					Ok(_) => {
-						if line.trim() == "–––[END]–––" {
+						if line.trim() == END_MARKER {
 							// Command completed, write to file
 							let command_end = Instant::now();
 							let duration = parser::Duration {
