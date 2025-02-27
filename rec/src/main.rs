@@ -70,7 +70,9 @@ const INIT_CMD: &[u8] = b"export PS1='clt> ' \
 	command curl -s \"$@\" | awk \"NR==1{p=\\$0}NR>1{print p;p=\\$0}END{ORS = p ~ /\\\n$/ ? \\\"\\\" : \\\"\\\n\\\";print p}\"; \
 	}; _curl'; \
 	enable -n exit enable;
+	set +m;
 	exec 2>&1;
+	detach() { \"$@\" > /dev/null 2>&1 & }
 ";
 
 
