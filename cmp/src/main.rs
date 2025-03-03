@@ -44,7 +44,7 @@ fn main() {
 		std::process::exit(1);
 	}
 
-	let file_name: String = String::from(".patterns");
+	let file_name: String = String::from(".clt/patterns");
 	let file_path = Path::new(&file_name);
 
 	let pattern_matcher = PatternMatcher::new(match file_path.exists() {
@@ -65,6 +65,10 @@ fn main() {
 	let mut files_have_diff = false;
 	// Our new loop no longer assumes every block is output. We “peek” for section markers:
 	while !reader_at_end(&mut file1_reader) {
+    // Make sure both readers are aligned by skipping extra non-command blocks.
+    skip_non_command_blocks(&mut file1_reader).unwrap();
+    skip_non_command_blocks(&mut file2_reader).unwrap();
+
 		// Get the marker from file1 (this is our expected statement)
 		let stmt1_opt = peek_statement(&mut file1_reader).unwrap();
 		if stmt1_opt.is_none() {
@@ -84,25 +88,9 @@ fn main() {
 				break;
 			} else {
 				// Skip the block in file2 that does not match file1’s marker.
-				match stmt2 {
-					parser::Statement::Input => {
-						// Skip the extra input block in file2
-						let _ = buffer_block(&mut file2_reader)
-							.expect("Error skipping extra file2 input block");
-					},
-					parser::Statement::Output => {
-						// Skip the extra output block in file2
-						let _ = buffer_block(&mut file2_reader)
-							.expect("Error skipping extra file2 output block");
-					},
-					_ => {
-						// In case other types of statements have been marked,
-						// simply read and discard one line.
-						let mut dummy = String::new();
-						file2_reader.read_line(&mut dummy)
-							.expect("Error skipping extra line in file2");
-					}
-				}
+        let mut dummy = String::new();
+        file2_reader.read_line(&mut dummy)
+          .expect("Error skipping extra line in file2");
 			}
 		}
 		match stmt1 {
@@ -147,7 +135,7 @@ fn main() {
 					std::fs::write(&file2_path, lines2.join("\n")).unwrap();
 
 					// Run the checker
-					let checker_path = std::path::Path::new("./checkers/").join(checker);
+					let checker_path = Path::new(".clt/checkers").join(checker);
 					if !checker_path.exists() {
 						panic!("Checker binary not found at: {:?}", checker_path);
 					}
@@ -541,4 +529,24 @@ fn block_has_differences(lines1: &[String], lines2: &[String], pattern_matcher: 
 		}
 	}
 	false
+}
+
+// A helper to skip non-Input/Output blocks in the reader.
+fn skip_non_command_blocks<R: BufRead + Seek>(reader: &mut R) -> io::Result<()> {
+    loop {
+        let pos = reader.seek(SeekFrom::Current(0))?;
+        if let Some(stmt) = peek_statement(reader)? {
+            if stmt == parser::Statement::Input || stmt == parser::Statement::Output {
+                // Found a valid command block, so rewind and exit.
+                reader.seek(SeekFrom::Start(pos))?;
+                break;
+            }
+        } else {
+            // End of file reached.
+            break;
+        }
+        // Skip the block.
+        let _ = buffer_block(reader)?;
+    }
+    Ok(())
 }
