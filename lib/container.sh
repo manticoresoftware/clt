@@ -36,11 +36,11 @@ container_exec() {
 
 	# Merge base of patterns
 	temp_file=$(mktemp)
-	cat "$PROJECT_DIR/.patterns" > "$temp_file"
+	cat "$PROJECT_DIR/.clt/patterns" > "$temp_file"
 
 	# Merge project .patterns to extend original
-	if [ -f ".patterns" ]; then
-		cat .patterns >> "$temp_file"
+	if [ -f ".clt/patterns" ]; then
+		cat .clt/patterns >> "$temp_file"
 	fi
 
 	flag=
@@ -51,8 +51,8 @@ container_exec() {
 		-v \"$bin_path/rec:/usr/bin/clt-rec\" \
 		-v \"$bin_path/cmp:/usr/bin/clt-cmp\" \
 		-v \"$PWD/$directory:$DOCKER_PROJECT_DIR/$directory\" \
-		-v \"$PWD/checkers:$DOCKER_PROJECT_DIR/checkers\" \
-		-v \"$temp_file:$DOCKER_PROJECT_DIR/.patterns\" \
+		-v \"$PWD/.clt/checkers:$DOCKER_PROJECT_DIR/checkers\" \
+		-v \"$temp_file:$DOCKER_PROJECT_DIR/patterns\" \
 		-w \"$DOCKER_PROJECT_DIR\" \
 		$RUN_ARGS \
 		--entrypoint /bin/bash \
