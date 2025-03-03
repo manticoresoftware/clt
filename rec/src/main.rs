@@ -127,8 +127,10 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 			if input_check == parser::StatementCheck::No {
 				let command = command_lines.join("\n");
 				command_lines.clear();
-				commands.push(command);
-				is_input_command = false;
+				if is_input_command {
+					commands.push(command);
+					is_input_command = false;
+				}
 			}
 
 			if is_input_command {
