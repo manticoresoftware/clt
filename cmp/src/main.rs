@@ -44,7 +44,7 @@ fn main() {
 		std::process::exit(1);
 	}
 
-	let file_name: String = String::from(".clt/patterns");
+	let file_name: String = String::from("./.clt/patterns");
 	let file_path = Path::new(&file_name);
 
 	let pattern_matcher = PatternMatcher::new(match file_path.exists() {
