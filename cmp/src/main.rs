@@ -163,10 +163,12 @@ fn main() {
 						}
 
 						stdout.reset().unwrap();
-						if std::env::var("CLT_DEBUG").is_ok() {
-							// Print original replay output
-							for line in lines2 {
-								writeln!(stdout, "{}", line).unwrap();
+						if let Ok(value) = std::env::var("CLT_DEBUG") {
+							if !value.is_empty() {
+								// Print original replay output
+								for line in lines2 {
+									writeln!(stdout, "{}", line).unwrap();
+								}
 							}
 						}
 					}
