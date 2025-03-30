@@ -49,6 +49,7 @@ container_exec() {
 	fi
 	process=$(echo docker run \
 		-e CLT_DEBUG="$CLT_DEBUG" \
+		-e CLT_DIFF_INLINE="$CLT_DIFF_INLINE" \
 		-v \"$bin_path/rec:/usr/bin/clt-rec\" \
 		-v \"$bin_path/cmp:/usr/bin/clt-cmp\" \
 		-v \"$PWD/$directory:$DOCKER_PROJECT_DIR/$directory\" \
