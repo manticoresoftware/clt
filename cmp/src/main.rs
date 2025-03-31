@@ -62,6 +62,15 @@ fn main() {
 	let mut file2_reader = BufReader::new(file2);
 	move_cursor_to_line(&mut file2_reader, &input_line).unwrap();
 
+	let debug_mode = match std::env::var("CLT_DEBUG") {
+		Ok(value) => value == "1",
+		Err(_) => false,
+	};
+
+	let use_inline_diff = match std::env::var("CLT_DIFF_INLINE") {
+		Ok(value) => value == "1",
+		Err(_) => false,
+	};
 	let mut files_have_diff = false;
 	// Our new loop no longer assumes every block is output. We “peek” for section markers:
 	while !reader_at_end(&mut file1_reader) {
@@ -163,17 +172,14 @@ fn main() {
 						}
 
 						stdout.reset().unwrap();
-						if let Ok(value) = std::env::var("CLT_DEBUG") {
-							if !value.is_empty() {
-								// Print original replay output
-								for line in lines2 {
-									writeln!(stdout, "{}", line).unwrap();
-								}
+						if debug_mode {
+							// Print original replay output
+							for line in lines2 {
+								writeln!(stdout, "{}", line).unwrap();
 							}
 						}
 					}
 				} else {
-					let debug_mode = std::env::var("CLT_DEBUG").is_ok();
 					let has_diff = block_has_differences(&lines1, &lines2, &pattern_matcher);
 
 					if has_diff {
@@ -188,8 +194,9 @@ fn main() {
 									print_diff(&mut stdout, line, Diff::Minus);
 								},
 								(Some(l1), Some(l2)) => {
+
 									if pattern_matcher.has_diff(l1.to_string(), l2.to_string()) {
-										if stdout.supports_color() {
+										if use_inline_diff && stdout.supports_color() {
 											print_inline_diff(&mut stdout, l1, l2);
 										} else {
 											print_diff(&mut stdout, l1, Diff::Minus);
