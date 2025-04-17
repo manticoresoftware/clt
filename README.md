@@ -1,10 +1,19 @@
-# Command Line Tester
+# Command Line Tester (CLT)
 
-This testing tool allows you to execute and record any commands inside a docker containr, replay them, and validate whether your results are accurate.
+A powerful testing tool that allows you to execute and record commands inside a Docker container, replay them, and validate whether your results match expected outputs. CLT helps automate testing of command-line applications with consistent environments.
+
+## Features
+
+- Record interactive command sessions in reproducible test files
+- Replay recorded sessions to verify consistent behavior
+- Intelligent output comparison with regex pattern matching
+- Reusable test blocks for modular testing
+- GitHub Action support for CI/CD integration
+- Cross-platform compatibility via Docker containers
 
 ## Installation
 
-The installation of the tool is very simple. All you need to do is clone the repository and start using it!
+Installation is straightforward. Simply clone the repository and start using it:
 
 ```bash
 git clone https://github.com/manticoresoftware/clt.git
@@ -12,46 +21,216 @@ cd clt
 ./clt help
 ```
 
-We have prebuilt binaries for use in a Linux environment, for both amd64 and arm64. It's automatically detected based on the platform you're using. Binaries for macOS and Windows are currently not available, but you can build them for your purpose if required. Remember, all tests run in a container environment using Docker, so your machine should have Docker installed.
+### Prebuilt Binaries
+
+CLT provides prebuilt binaries for Linux environments (both amd64 and arm64), which are automatically detected based on your platform. While binaries for macOS and Windows are not currently available, they can be built if required.
+
+NOTE: CLT requires Docker to be installed on your machine as all tests run in a container environment.
 
 ## Usage
 
-1. Begin by recording your test in interactive mode by executing the `record` command as follows:
+### Recording Tests
 
-  ```bash
-  ./clt record centos:7
-  ```
+1. Start recording a test session with the `record` command:
 
-  Here, centos:7 is the docker image that you want to use for tests. You can incorporate the `--no-refine` option if you wish to omit the refine step and execute the test later.
+   ```bash
+   ./clt record centos:7
+   ```
 
-  You can see the file which is used to write your recording as a first string, it looks like this:
+   This starts a recording session using the specified Docker image. You'll see the path to the recording file displayed:
 
-  ```bash
-  Recording data to file: ./tests/centos:7_20230714_161043.rec
-  ```
+   ```bash
+   Recording data to file: ./tests/centos:7_20230714_161043.rec
+   ```
 
-2. Next, perform various commands in interactive mode. Once you're done, press `^D` to stop and record your test results.
+2. Perform your commands in the interactive shell. All inputs and outputs will be recorded.
 
-3. To validate and replay it, execute the following command:
+3. When finished, press `^D` (Ctrl+D) once to stop recording and save your test.
 
-  ```bash
-  ./clt test -t ./tests/centos:7_20230714_161043.rec -d centos:7
-  echo $?
-  ```
+### Replaying and Validating Tests
 
-  `./tests/centos:7_20230714_161043.rec` is your actual pass to the file you recroded on the step 1.
+To validate and replay a recorded test:
 
-  This will display the exit code and print the diff (if outputs vary while you replay it). If the exit code equals 1, everything is fine. Otherwise, you should examine the diff created by the cmp tool and introduce the necessary changes to the file, provided you executed it with the `--no-refine` option.
+```bash
+./clt test -t ./tests/centos:7_20230714_161043.rec -d centos:7
+echo $?
+```
 
-  The `-d` flag is used for debug output and displays the diff, not just the exit code.
+- `-t` specifies the test file to replay
+- `-d` enables debug output that shows diff information if results don't match
 
-  You can locate the complete output replayed in the same file name but with a .rep extension. In this case, it's test.rep.
+The exit code will be 0 if the test passed (outputs match) or 1 if there are differences.
 
-We utilize bash to initiate an interactive environment when you record a test. It's important to note that we reset the environment to ensure maximum compatibility with various operating systems. As of now, there is no option to pass environment variables from outside into the test environment.
+### Refining Tests
 
-## GitHub Workflow example
+After recording, you can refine your test to handle dynamic outputs:
 
-CLT provides a ready-to-use GitHub action to run all tests located in your `tests` folder, or any that you specify. Here is an example of how to use it:
+```bash
+./clt refine -t ./tests/centos:7_20230714_161043.rec centos:7
+```
+
+This will open your configured editor to modify test outputs and add patterns where needed.
+
+## Test File Syntax
+
+CLT test files (`.rec`) use a special syntax to differentiate between commands, outputs, and other sections.
+
+### Supported Sections
+
+**Note:** CLT uses en dashes (`–`) in its section markers, not regular hyphens (`-`). The code samples below show the correct syntax with en dashes.
+
+| Section | Syntax | Description |
+|---------|--------|-------------|
+| `Input` | `––– input –––` | Marks the beginning of a command input section |
+| `Output` | `––– output –––` | Marks the beginning of a command output section |
+| `Output with Checker` | `––– output: checker-name –––` | Like output but uses a custom checker program |
+| `Block` | `––– block: path/to/block –––` | Includes a reusable test block from a `.recb` file |
+| `Comment` | `––– comment –––` | Marks a comment section (ignored during test execution) |
+
+**Note:** The `duration` section (`––– duration: 123ms (45.67%) –––`) is automatically generated by the test system and should not be added manually to `.rec` files. It appears in the resulting `.rep` files after test execution.
+
+### Basic Structure
+
+A test file typically consists of repeating input and output sections:
+
+```
+––– input –––
+echo "Hello, world!"
+––– output –––
+Hello, world!
+```
+
+Each input section contains commands exactly as they were typed, and each output section contains the expected output that should be matched during test replay.
+
+## Pattern Matching
+
+For outputs that change between runs (timestamps, PIDs, etc.), CLT supports regex pattern matching.
+
+### Using Regular Expressions
+
+Place regex patterns between `#!/` and `/!#` markers in your test output:
+
+```
+#!/[0-9]+/!#  # Matches any number
+```
+
+
+### Using Named Patterns
+
+CLT provides predefined patterns in the `.clt/patterns` file. Use them with the syntax `%{PATTERN_NAME}`:
+
+```
+%{SEMVER}  # Matches semantic version numbers
+```
+
+You can define custom patterns by adding them to your project's `.clt/patterns` file using the format:
+
+```
+PATTERN_NAME REGEX_PATTERN
+```
+
+Example `.clt/patterns` file:
+
+```
+SEMVER [0-9]+\.[0-9]+\.[0-9]+
+YEAR [0-9]{4}
+IPADDR [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+
+COMMITDATE [a-z0-9]{7}@[0-9]{6}
+```
+
+**Note:** CLT first loads the global patterns from `$PROJECT_DIR/.clt/patterns` and then appends your project-specific patterns from `.clt/patterns` for extended functionality.
+
+## Reusable Blocks
+
+Create modular test components by extracting flows into `.recb` files placed in the same directory as your test files:
+
+```
+––– block: login-sequence –––
+```
+
+This will include the contents of the `login-sequence.recb` file located in the same directory as your test. You can also organize blocks in subdirectories using relative paths:
+
+```
+––– block: auth/admin-login –––
+```
+
+The path is always relative to the location of the `.rec` file that's including the block. Blocks can be nested, allowing you to compose complex test scenarios from reusable components.
+
+## Custom Output Checkers
+
+For advanced output validation beyond regex patterns, CLT supports custom checker programs. These are specified in the output statement:
+
+```
+––– output: custom-checker –––
+```
+
+### How Custom Checkers Work
+
+1. Place your checker executable in the `.clt/checkers/` directory
+2. The checker will receive two arguments:
+   - First argument: Path to a temp file containing expected output (from .rec file)
+   - Second argument: Path to a temp file containing actual output (from replay)
+3. The checker should return:
+   - Exit code 0 if outputs match (test passes)
+   - Non-zero exit code if there are differences (test fails)
+4. Any stdout/stderr output from the checker will be displayed when there are differences
+
+### Creating Custom Checkers
+
+Checkers can be written in any language, but must be executable. Here's an example of a simple bash checker that verifies if a specific string exists in the output:
+
+```bash
+#!/bin/bash
+# simple-contains-checker.sh - A checker that verifies if output contains a specific string
+
+EXPECTED_FILE="$1"  # Path to expected output from .rec file
+ACTUAL_FILE="$2"    # Path to actual output from test run
+
+# Get the string to search for from the first line of expected file
+SEARCH_STRING=$(head -n 1 "$EXPECTED_FILE")
+
+# Check if the actual output contains this string
+if grep -q "$SEARCH_STRING" "$ACTUAL_FILE"; then
+  echo "✓ Found expected string: $SEARCH_STRING"
+  exit 0  # Success
+else
+  echo "✗ Missing expected string: $SEARCH_STRING"
+  exit 1  # Failure
+fi
+```
+
+This provides great flexibility for validating complex outputs without needing regex patterns.
+
+## Environment Variables
+
+CLT's behavior can be customized through several environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CLT_DEBUG` | Enable debug mode to show detailed output | `0` |
+| `CLT_DIFF_INLINE` | Display differences in-line instead of side-by-side | `0` |
+| `CLT_EDITOR` | Custom editor for refining tests | Auto-detected (`nano` or `vim`) |
+| `CLT_PROMPTS` | Array of additional prompts to detect (e.g., `CLT_PROMPTS=("mysql> ")`) | `("clt> ")` |
+| `CLT_NO_COLOR` | Disable colored output | Not set |
+| `DEFAULT_DELAY` | Default delay in ms between each command in the test | `5` |
+| `RUN_ARGS` | Additional arguments to pass to `docker run` | Not set |
+
+## GitHub Actions Integration
+
+CLT provides a ready-to-use GitHub action to run tests in your CI/CD pipeline. You can customize the action with several parameters:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `image` | Docker image to run the tests in | Required |
+| `test_prefix` | Filter tests by prefix in tests folder | `tests/` |
+| `run_args` | Additional arguments to pass to `docker run` | `''` |
+| `init_code` | Code to execute before running tests | `''` |
+| `timeout` | Allowed timeout in minutes for tests | `5` |
+| `artifact` | Artifact to download for local built docker image | Not set |
+| `repository` | Repository to checkout | Not set |
+| `ref` | Branch name or ref to checkout | Default branch |
+
+### Example Workflow
 
 ```yaml
 name: CLT tests
@@ -71,94 +250,86 @@ jobs:
         image: [ "ubuntu:bionic", "ubuntu:focal", "ubuntu:jammy", "debian:buster", "debian:bullseye", "debian:bookworm" ]
     runs-on: ubuntu-22.04
     steps:
-      - uses: manticoresoftware/clt@0.1.17
+      - uses: manticoresoftware/clt@v3
         with:
           image: ${{ matrix.image }}
           test_prefix: test/clt-tests/
           run_args: -e TELEMETRY=0
+          timeout: 10
+          init_code: |
+            apt-get update
+            apt-get install -y curl
 ```
 
-The code is self-explanatory and covers almost everything that the current template offers.
+## Project Structure
 
-## Refine
+CLT uses a specific directory structure for its key files:
 
-Once you've successfully captured your commands in interactive mode and stored them into a `.rec` file, the next step is to refine the test (if required). This is achieved by running the comparator which highlights the disparities between the initial output and replayed output.
-
-For creating dynamic content that effortlessly passes tests, you can utilize regular expressions (regex). Position the appropriate regex within the command output section, enclosed between `#!/` and `/!#` marks. To illustrate, the regex `#!/[0-9]+/!#` can be utilized to match any numerical value composed of digits 0 through 9, irrespective of its length.
-
-To streamline this process, we've introduced patterns. We already offer several predefined patterns within the `.patterns` file. However, you possess the capability to define your own by appending your definitions to the `.patterns` file located at the root of your project. The format must comply with the `VARIABLE NAME[space]RAW REGEX` rule. A typical `.patterns` file may resemble:
-
-```text
-SEMVER [0-9]+\.[0-9]+\.[0-9]+
-YEAR [0-9]{4}
-IPADDR [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+
-COMMITDATE [a-z0-9]{7}@[0-9]{6}
+```
+.clt/
+├── checkers/     # Custom output checker executables
+└── patterns      # Pattern definitions for regex matching
+tests/
+├── *.rec         # Test recording files
+└── *.recb        # Reusable test blocks
 ```
 
-Upon defining, you can use `%{IPADDR}` as a substitute for `#!/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/!#` to match any IP address occurring in outputs.
+The `.clt/` directory contains CLT configuration and special-purpose files, while the actual test files and reusable blocks are stored in the tests directory or other directories specified for your tests.
 
-We've also integrated an additional feature known as "Reusable blocks". Simply extract your flow comprising inputs and outputs into a file bearing a `.recb` extension and incorporate it within the main `.rec` file by inserting the following code:
+## File Extensions
 
-```text
-––– block: block/my-block –––
-```
+CLT uses several file extensions:
 
-This command will seek the `block/my-block.recb` file within the directory relative to the `.rec` file where it's positioned.
+| Extension | Description |
+|-----------|--------------|
+| `.rec` | Original record of inputs and outputs, may include links to block files |
+| `.recb` | Reusable block file that can be included in `.rec` files |
+| `.rep` | Replay file containing results of replaying a `.rec` file |
 
-## Customization
+## Current Limitations
 
-By default, we attempt to locate the `nano` or `vim` editors during the refine stage. To customize this, you can set the `CLT_EDITOR` environment variable to any editor of your choosing. For instance, to run with vscode, simply input `export CLT_EDITOR=vscode`, save it to your `.bashrc`, and everything will open in your preferred editor.
+- Use `^D` (Ctrl+D) only once to close the CLT environment; for other exits, use the `exit` command
+- Avoid using `^C`, `^V`, `^Z`, and other control characters as they may not function correctly
+- Reverse search (`^R`) is currently unsupported
+- Complete tests in the `clt> ` shell and press `^D` to terminate the session
+- Use a simple terminal like iTerm; VS Code terminal may cause unusual behavior
+- Each command in the `.rec` test must have an output that contains a newline
 
-You can use `RUN_ARGS` to pass extra parameters to the `docker run` command.
+### Supported Keystrokes
 
-## Developers section
+Only the following keystrokes are fully supported:
 
-### How to build rec and cmp tools
+- Standard input characters
+- Left and right arrow keys
+- Backspace and delete keys
+- CTRL+a (beginning of line) and CTRL+e (end of line)
 
-Build aarch and amd64 static cross for Linux:
+## Developers Section
+
+### Building Tools
+
+To build the `rec` and `cmp` tools for both aarch64 and amd64 Linux:
 
 ```bash
 ./bin/cross-build
 git add .
-git commit -m '...'
+git commit -m 'Update binaries'
 ```
 
-### Current limitations
+### The Replay Flow
 
-- Use `^D` only once when closing your `clt` environment; for other exits, use `exit`.
-- Avoid using `^C`, `^V`, `^Z`, and other magic controls as they might not function correctly.
-- Reverse search (`^R`) is currently unsupported, so do not use it to record.
-- Complete your tests in the `clt> ` shell and press `^D` to terminate the session and finish recordings.
-- Use a simple default terminal, like iTerm. Using the VS Code terminal may lead to unusual behavior due to various settings.
-- Currently, there is a limitation that requires entering commands only when the prompt is available. This can lead to inaccurate result validation due to the TTY workflow.
-- Each command from the `.rec` test in the `---input---` block should have an output that contains a **NEW LINE**, otherwise replaying will get stuck due to the inability to parse the prompt in the TTY raw output.
+During test execution, CLT:
 
+1. Finds `.rec` files and compiles them into a ready-to-use version on the fly
+2. Executes each command in sequence, generating a `.rep` file
+3. Uses the `cmp` tool to compare the results with the compiled version of the `.rec` files
 
-Not all keyboard and Bash controls are supported. Here is the list of supported keystrokes:
+### Using Custom Prompts
 
-- Input characters from the keyboard.
-- Left and right arrows.
-- Backspace and delete.
-- CTRL+a and CTRL+e.
-
-### The replay flow
-
-To re-run and confirm that tests are successful, we look for .rec files and compile them into a ready-to-use version on the fly. We then utilize these compiled versions to execute each command in sequence, generating a .rep file. Subsequently, we use the cmp tool to compare the results with the compiled version of the .rec files.
-
-Please take a notice that due to we read the pty output on the low level you need to configure additional prompts if
-you need it. Let's think that you run cli tests and have mysql session, so that means the default `cli> ` prompt is not enough
-because you will also have `mysql> ` prompt. To fix it, just define a variable that contains a list of these prompts like
-follows:
+If you need to work with additional command prompts (e.g., `mysql>` prompt), configure them as follows:
 
 ```bash
 CLT_PROMPTS=("mysql> ")
 ```
-### File Extension Description
 
-There are several types of files:
-| Extension | Description |
-|-|-|
-| .rec | Original record of the input commands and their outputs. It may contain links to block files. |
-| .recb | Record block file, contains reusable blocks that can be included in .rec files. |
-| .rep | Replay file that contains the results of replaying the .rec file. |
-
+This helps CLT correctly detect command completion in different interactive shells.
