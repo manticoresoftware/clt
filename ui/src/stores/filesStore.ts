@@ -276,6 +276,7 @@ function createFilesStore() {
       });
     } catch (error) {
       console.error('Failed to run test:', error);
+      // Make sure we clear the running flag even if there's an error
       update(state => ({ ...state, running: false }));
     }
   };
@@ -310,6 +311,7 @@ function createFilesStore() {
         initializing: true
       }));
       
+      // Update store first with the file data
       update(state => ({
         ...state,
         currentFile: {
@@ -320,8 +322,15 @@ function createFilesStore() {
         }
       }));
       
-      // Run test immediately after loading
-      await runCurrentTest();
+      // Use a small delay to make sure the store update is complete
+      // before running the test
+      setTimeout(async () => {
+        try {
+          await runCurrentTest();
+        } catch (error) {
+          console.error('Error running test after file load:', error);
+        }
+      }, 100);
     },
     addCommand: (index: number, command: string) => update(state => {
       if (!state.currentFile) return state;
@@ -349,60 +358,86 @@ function createFilesStore() {
         currentFile: updatedFile
       };
     }),
-    updateCommand: (index: number, command: string) => update(state => {
-      if (!state.currentFile) return state;
-      
-      const newCommands = [...state.currentFile.commands];
-      
-      // Always mark as changed - this will force debouncedSave to trigger
-      newCommands[index] = { 
-        ...newCommands[index], 
-        command, 
-        status: 'pending',
-        changed: true 
-      };
-      
-      const updatedFile = {
-        ...state.currentFile,
-        commands: newCommands,
-        dirty: true 
-      };
-      
-      // Always trigger autosave
-      debouncedSave(updatedFile);
-      
-      return {
-        ...state,
-        currentFile: updatedFile
-      };
-    }),
-    updateExpectedOutput: (index: number, expectedOutput: string) => update(state => {
-      if (!state.currentFile) return state;
-      
-      const newCommands = [...state.currentFile.commands];
-      
-      // Always mark as changed - this will force debouncedSave to trigger 
-      newCommands[index] = { 
-        ...newCommands[index], 
-        expectedOutput, 
-        status: 'pending',
-        changed: true 
-      };
-      
-      const updatedFile = {
-        ...state.currentFile,
-        commands: newCommands,
-        dirty: true 
-      };
-      
-      // Always trigger autosave
-      debouncedSave(updatedFile);
-      
-      return {
-        ...state,
-        currentFile: updatedFile
-      };
-    }),
+    updateCommand: (index: number, command: string) => {
+      try {
+        update(state => {
+          if (!state.currentFile) return state;
+          
+          // Create a fresh copy of commands to avoid any reference issues
+          const newCommands = state.currentFile.commands.map(cmd => ({...cmd}));
+          
+          // Only update if the index is valid
+          if (index < 0 || index >= newCommands.length) {
+            console.error('Invalid command index:', index);
+            return state;
+          }
+          
+          // Always mark as changed - this will force debouncedSave to trigger
+          newCommands[index] = { 
+            ...newCommands[index], 
+            command, 
+            status: 'pending',
+            changed: true 
+          };
+          
+          const updatedFile = {
+            ...state.currentFile,
+            commands: newCommands,
+            dirty: true 
+          };
+          
+          // Always trigger autosave
+          debouncedSave(updatedFile);
+          
+          return {
+            ...state,
+            currentFile: updatedFile
+          };
+        });
+      } catch (error) {
+        console.error('Error in updateCommand:', error);
+      }
+    },
+    updateExpectedOutput: (index: number, expectedOutput: string) => {
+      try {
+        update(state => {
+          if (!state.currentFile) return state;
+          
+          // Create a fresh copy of commands to avoid any reference issues
+          const newCommands = state.currentFile.commands.map(cmd => ({...cmd}));
+          
+          // Only update if the index is valid
+          if (index < 0 || index >= newCommands.length) {
+            console.error('Invalid command index:', index);
+            return state;
+          }
+          
+          // Update the specific command
+          newCommands[index] = { 
+            ...newCommands[index], 
+            expectedOutput, 
+            status: 'pending',
+            changed: true 
+          };
+          
+          const updatedFile = {
+            ...state.currentFile,
+            commands: newCommands,
+            dirty: true 
+          };
+          
+          // Trigger autosave with the updated file
+          debouncedSave(updatedFile);
+          
+          return {
+            ...state,
+            currentFile: updatedFile
+          };
+        });
+      } catch (error) {
+        console.error('Error in updateExpectedOutput:', error);
+      }
+    },
     deleteCommand: (index: number) => update(state => {
       if (!state.currentFile) return state;
       

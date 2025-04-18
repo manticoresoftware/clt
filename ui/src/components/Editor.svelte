@@ -140,7 +140,6 @@
       if (!diffResult.has_diff) {
         return escapeHtml(actual); // No differences found; return escaped plain text.
       }
-			console.log('diffResult', diffResult);
 
       let resultHtml = '';
 
@@ -286,9 +285,13 @@
             type="checkbox"
             checked={autoSaveEnabled}
             on:click={() => {
-              autoSaveEnabled = !autoSaveEnabled;
-              localStorage.setItem('autoSaveEnabled', String(autoSaveEnabled));
-              console.log('Auto-save toggled to:', autoSaveEnabled);
+              try {
+                autoSaveEnabled = !autoSaveEnabled;
+                localStorage.setItem('autoSaveEnabled', String(autoSaveEnabled));
+                console.log('Auto-save toggled to:', autoSaveEnabled);
+              } catch (err) {
+                console.error('Error toggling auto-save:', err);
+              }
             }}
             id="auto-save-checkbox"
           />
@@ -330,13 +333,18 @@
     {:else}
       <div class="command-list">
         {#each commands as command, i}
-          <div class="command-card {command.status === 'failed' ? 'failed-command' : ''}">
+          <div class="command-card {command.status === 'failed' && !command.initializing ? 'failed-command' : ''}">
             <!-- Command header -->
             <div class="command-header">
               <div class="command-title">
                 <span class="command-number">{i + 1}</span>
                 <span>Command</span>
-                {#if command.status && command.status !== 'pending'}
+                {#if command.initializing}
+                  <span class="command-status pending-status">
+                    {@html getStatusIcon('pending')}
+                    <span>Pending</span>
+                  </span>
+                {:else if command.status && command.status !== 'pending'}
                   <span class="command-status {command.status}-status">
                     {@html getStatusIcon(command.status)}
                     <span>{command.status.charAt(0).toUpperCase() + command.status.slice(1)}</span>
@@ -369,14 +377,21 @@
                 rows="1"
                 bind:value={command.command}
                 on:input={(e) => {
-                  // Auto-resize textarea based on content
-                  e.target.style.height = 'auto';
-                  e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
+                  try {
+                    // Auto-resize textarea based on content
+                    e.target.style.height = 'auto';
+                    e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
 
-                  // Always mark as dirty regardless of previous state
-                  $filesStore.currentFile.dirty = true;
-                  command.changed = true;
-                  filesStore.updateCommand(i, e.target.value);
+                    // Create a local copy of the value to avoid direct store manipulation
+                    const newValue = e.target.value;
+
+                    // Use a timeout to avoid reactive update cycles
+                    setTimeout(() => {
+                      filesStore.updateCommand(i, newValue);
+                    }, 0);
+                  } catch (err) {
+                    console.error('Error updating command:', err);
+                  }
                 }}
                 use:initTextArea
               ></textarea>
@@ -396,14 +411,21 @@
                     rows="1"
                     bind:value={command.expectedOutput}
                     on:input={(e) => {
-                      // Auto-resize textarea based on content
-                      e.target.style.height = 'auto';
-                      e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
+                      try {
+                        // Auto-resize textarea based on content
+                        e.target.style.height = 'auto';
+                        e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
 
-                      // Always mark as dirty regardless of previous state
-                      $filesStore.currentFile.dirty = true;
-                      command.changed = true;
-                      filesStore.updateExpectedOutput(i, e.target.value || '');
+                        // Use a local copy of the value to avoid direct store manipulation
+                        const newValue = e.target.value || '';
+
+                        // Use a timeout to avoid reactive update cycles
+                        setTimeout(() => {
+                          filesStore.updateExpectedOutput(i, newValue);
+                        }, 0);
+                      } catch (err) {
+                        console.error('Error updating expected output:', err);
+                      }
                     }}
                     use:initTextArea
                   ></textarea>

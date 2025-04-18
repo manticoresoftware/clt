@@ -585,8 +585,9 @@ body {
 
 /* Status indicators */
 .pending-status {
-  background-color: var(--color-bg-tertiary);
-  color: var(--color-text-tertiary);
+  background-color: #f3f4f6; /* Light gray background */
+  color: #6b7280; /* Medium gray text */
+  border: 1px solid #e5e7eb;
 }
 
 .matched-status {
@@ -698,8 +699,9 @@ body {
   }
 
   .pending-status {
-    background-color: rgba(51, 65, 85, 0.4);
-    color: #cbd5e1;
+    background-color: rgba(75, 85, 99, 0.2);
+    color: #d1d5db; /* Light gray text in dark mode */
+    border: 1px solid rgba(107, 114, 128, 0.3);
   }
   
   .command-card.failed-command {

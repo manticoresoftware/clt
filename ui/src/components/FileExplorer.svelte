@@ -130,6 +130,7 @@
           command,
           expectedOutput,
           status: 'pending', // Initialize as pending, not failed
+          initializing: true, // Mark as initializing until first run
           actualOutput: '' // Initialize with empty actual output
         });
       }
