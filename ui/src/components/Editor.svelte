@@ -129,6 +129,30 @@
     // If no duration marker found, return the whole output
     return actualOutput.trim();
   }
+
+  // Function to copy current URL with file hash to clipboard
+  function copyShareUrl() {
+    if (!$filesStore.currentFile) return;
+    
+    // Create URL with file hash
+    const url = new URL(window.location.href);
+    // Remove existing query parameters
+    url.search = '';
+    // Set hash to file-{path}
+    url.hash = `file-${encodeURIComponent($filesStore.currentFile.path)}`;
+    
+    // Copy to clipboard
+    navigator.clipboard.writeText(url.toString())
+      .then(() => {
+        // Show temporary toast or notification
+        alert('Shareable link copied to clipboard!');
+      })
+      .catch(err => {
+        console.error('Could not copy text: ', err);
+        // Fallback: show the URL and ask user to copy manually
+        prompt('Copy this shareable link:', url.toString());
+      });
+  }
 </script>
 
 <div class="editor">
@@ -167,6 +191,18 @@
           </svg>
           Running test...
         </span>
+      {/if}
+      {#if $filesStore.currentFile}
+        <button class="share-button" on:click={copyShareUrl} title="Copy shareable link">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3"></circle>
+            <circle cx="6" cy="12" r="3"></circle>
+            <circle cx="18" cy="19" r="3"></circle>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+          </svg>
+          Share
+        </button>
       {/if}
       <div class="auto-save-toggle">
         <label class="auto-save-label">
@@ -399,7 +435,7 @@
     gap: 8px;
   }
 
-  .save-button, .run-button {
+  .save-button, .run-button, .share-button {
     padding: 6px 12px;
     font-size: 14px;
     border-radius: 4px;
@@ -407,6 +443,9 @@
     font-weight: 500;
     border: none;
     transition: background-color 0.2s ease-in-out;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
 
   .save-button {
@@ -418,13 +457,18 @@
     background-color: var(--color-bg-accent);
     color: white;
   }
+  
+  .share-button {
+    background-color: var(--color-bg-secondary);
+    color: var(--color-text-primary);
+  }
 
   .save-button:disabled, .run-button:disabled {
     opacity: 0.6;
     cursor: not-allowed;
   }
 
-  .save-button:not(:disabled):hover {
+  .save-button:not(:disabled):hover, .share-button:hover {
     background-color: var(--color-bg-secondary-hover);
   }
 

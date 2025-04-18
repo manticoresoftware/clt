@@ -29,9 +29,25 @@
   function selectFile(node: FileNode, event: MouseEvent) {
     event.stopPropagation();
     if (!node.isDirectory && (node.path.endsWith('.rec') || node.path.endsWith('.recb'))) {
+      // Update URL with the file path
+      updateUrlWithFilePath(node.path);
+      
       // Load the file from the backend
       fetchFileContent(node.path);
     }
+  }
+  
+  // Update URL with file path without page reload
+  function updateUrlWithFilePath(path: string) {
+    // Create URL with hash fragment for file path
+    const url = new URL(window.location.href);
+    // Remove existing query parameters
+    url.search = '';
+    // Set hash to file-{path}
+    url.hash = `file-${encodeURIComponent(path)}`;
+    
+    // Update the URL without reloading the page
+    window.history.pushState({}, '', url);
   }
 
   async function fetchFileContent(path: string) {
@@ -140,8 +156,9 @@
       // Create directory
       createDirectory(path);
     } else {
-      // Create file
+      // Create file and update URL
       filesStore.createNewFile(path);
+      updateUrlWithFilePath(path);
     }
 
     newFileName = '';
@@ -179,6 +196,15 @@
     // Set the default config directory to point to the tests folder
     filesStore.setConfigDirectory('tests');
 
+    // Check URL hash for file path
+    const hash = window.location.hash;
+    let filePath = null;
+    
+    if (hash && hash.startsWith('#file-')) {
+      // Extract the file path from the hash
+      filePath = decodeURIComponent(hash.substring(6)); // Remove '#file-' prefix
+    }
+
     // Fetch the file tree from the backend
     await fetchFileTree();
 
@@ -192,7 +218,40 @@
 
       expandedFolders = expandedFolders;
     }
+
+    // If file path is specified in URL hash, open it
+    if (filePath) {
+      // Expand all parent folders to the file
+      const pathParts = filePath.split('/');
+      let currentPath = '';
+      for (let i = 0; i < pathParts.length - 1; i++) {
+        if (i > 0) currentPath += '/';
+        currentPath += pathParts[i];
+        expandedFolders.add(currentPath);
+      }
+      expandedFolders = expandedFolders; // Trigger reactivity
+
+      // Load the file
+      fetchFileContent(filePath);
+    }
+    
+    // Listen for hash changes to load files when URL changes
+    window.addEventListener('hashchange', handleHashChange);
   });
+  
+  // Handle URL hash changes
+  function handleHashChange() {
+    const hash = window.location.hash;
+    if (hash && hash.startsWith('#file-')) {
+      // Extract the file path from the hash
+      const filePath = decodeURIComponent(hash.substring(6)); // Remove '#file-' prefix
+      
+      // Load the file if it's different from the current file
+      if (!$filesStore.currentFile || $filesStore.currentFile.path !== filePath) {
+        fetchFileContent(filePath);
+      }
+    }
+  }
 
   // Fetch file tree from backend
   async function fetchFileTree() {
