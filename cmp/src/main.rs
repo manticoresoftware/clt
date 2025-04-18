@@ -202,7 +202,7 @@ fn main() {
 											print_diff(&mut stdout, l1, Diff::Minus);
 											print_diff(&mut stdout, l2, Diff::Plus);
 										}
-									} else if debug_mode {
+									} else {
 										writeln!(stdout, "{}", l1).unwrap();
 									}
 								},
