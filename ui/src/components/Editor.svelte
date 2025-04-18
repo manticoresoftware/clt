@@ -1,6 +1,28 @@
 <script lang="ts">
   import { filesStore, type RecordingCommand } from '../stores/filesStore';
   import { onMount } from 'svelte';
+  import { PatternMatcher } from '../../pkg/wasm_diff';
+
+  let wasmLoaded = false;
+  let patternMatcher: any = null;
+
+  // Initialize WASM module
+  async function initWasm() {
+    try {
+      console.log('Initializing WASM diff module...');
+      const module = await import('../../pkg/wasm_diff');
+      await module.default();
+      patternMatcher = new PatternMatcher(JSON.stringify({
+        // Define any patterns you want to use for variable matching
+        // For example: "ID": "[0-9a-f]+"
+      }));
+      window.patternMatcher = patternMatcher;
+      wasmLoaded = true;
+      console.log('WASM diff module initialized successfully');
+    } catch (err) {
+      console.error('Failed to initialize WASM diff module:', err);
+    }
+  }
 
   let commands: RecordingCommand[] = [];
   let autoSaveEnabled = true;
@@ -30,6 +52,9 @@
     // Default to enabled if not set
     const storedValue = localStorage.getItem('autoSaveEnabled');
     autoSaveEnabled = storedValue === null ? true : storedValue === 'true';
+
+    // Initialize WASM module for highlighting differences in the output
+    initWasm();
   });
 
   // Update localStorage when checkbox changes
@@ -86,70 +111,121 @@
     </svg>`;
   }
 
-  function getDiffHighlight(actual: string, expected: string): string {
-    if (!actual || !expected) return actual || '';
-
-    // Simple diff highlighting for now
-    const actualLines = actual.split('\n');
-    const expectedLines = expected.split('\n');
-
-    // Find different lines
-    let result = '';
-    const maxLines = Math.max(actualLines.length, expectedLines.length);
-
-    for (let i = 0; i < maxLines; i++) {
-      const actualLine = actualLines[i] || '';
-      const expectedLine = expectedLines[i] || '';
-
-      if (actualLine === expectedLine) {
-        result += actualLine + '\n';
-      } else {
-        result += `<span class="diff-highlight">${actualLine}</span>\n`;
-      }
-    }
-
-    return result;
+  // Escape HTML special characters
+  function escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
   }
 
-	function formatDuration(ms: number | null): string {
-		if (ms === null) return '';
-		return `${ms}ms`;
-	}
+  // Highlight differences using the WASM module.
+  // Now we iterate over diffResult.diff_lines directly so that each line is rendered:
+  //   • unchanged lines are rendered as plain text
+  //   • added lines are prefixed with a "+", styled with diff-added-line
+  //   • removed lines are prefixed with a "−", styled with diff-removed-line
+  //   • changed lines include character-level highlight spans if available.
+  function highlightDifferences(actual: string, expected: string): string {
+    try {
+      if (!wasmLoaded || !patternMatcher) {
+        console.log('WASM module not loaded yet, showing plain text');
+        return escapeHtml(actual); // Return plain text if WASM isn't ready
+      }
+
+      // Get the diff result from the WASM module (returns a JSON string)
+      const diffResult = JSON.parse(patternMatcher.diff_text(expected, actual));
+
+      if (!diffResult.has_diff) {
+        return escapeHtml(actual); // No differences found; return escaped plain text.
+      }
+			console.log('diffResult', diffResult);
+
+      let resultHtml = '';
+
+      // Iterate over each diff line. (Assumes diffResult.diff_lines is in sequential order.)
+      for (let i = 0; i < diffResult.diff_lines.length; i++) {
+        const diffLine = diffResult.diff_lines[i];
+        if (diffLine.line_type === "same") {
+          resultHtml += `${escapeHtml(diffLine.content)}`;
+          // Add a newline between content lines unless it's the last line
+          if (i < diffResult.diff_lines.length - 1) {
+            resultHtml += '<br>';
+          }
+        } else if (diffLine.line_type === "added") {
+          // Render added lines with a plus sign.
+          resultHtml += `<span class="diff-added-line">+ ${escapeHtml(diffLine.content)}</span>`;
+        } else if (diffLine.line_type === "removed") {
+          // Render removed lines with a minus sign.
+          resultHtml += `<span class="diff-removed-line">− ${escapeHtml(diffLine.content)}</span>`;
+        } else if (diffLine.line_type === "changed") {
+          // For changed lines, show a "~" marker.
+          if (diffLine.highlight_ranges && diffLine.highlight_ranges.length > 0) {
+            let lineHtml = '<span class="highlight-line">~ ';
+            let lastPos = 0;
+            for (const range of diffLine.highlight_ranges) {
+              // Append unchanged text
+              lineHtml += escapeHtml(diffLine.content.substring(lastPos, range.start));
+              // Append highlighted text
+              lineHtml += `<span class="highlight-diff">${escapeHtml(diffLine.content.substring(range.start, range.end))}</span>`;
+              lastPos = range.end;
+            }
+            // Append any remainder of the text.
+            lineHtml += escapeHtml(diffLine.content.substring(lastPos));
+            lineHtml += '</span>';
+            resultHtml += lineHtml;
+          } else {
+            resultHtml += `<span class="highlight-line">~ ${escapeHtml(diffLine.content)}</span>`;
+          }
+        }
+      }
+      return resultHtml;
+    } catch (err) {
+      console.error('Error highlighting differences:', err);
+      return escapeHtml(actual); // On error, return plain escaped text.
+    }
+  }
+
+  function formatDuration(ms: number | null): string {
+    if (ms === null) return '';
+    return `${ms}ms`;
+  }
 
   function parseActualOutputContent(actualOutput: string | undefined): string {
     if (!actualOutput) return '';
 
-    // Handle the case when there's a duration section in the output
+    // Handle the case when there's a duration section in the output.
     const durationMatch = actualOutput.match(/–––\s*duration/);
     if (durationMatch) {
-      // Return everything before the duration marker
+      // Return everything before the duration marker.
       return actualOutput.substring(0, durationMatch.index).trim();
     }
-    
-    // If no duration marker found, return the whole output
+
+    // If no duration marker found, return the whole output.
     return actualOutput.trim();
   }
 
-  // Function to copy current URL with file hash to clipboard
+  // Function to copy current URL with file hash to clipboard.
   function copyShareUrl() {
     if (!$filesStore.currentFile) return;
-    
-    // Create URL with file hash
+
+    // Create URL with file hash.
     const url = new URL(window.location.href);
-    // Remove existing query parameters
+    // Remove existing query parameters.
     url.search = '';
-    // Set hash to file-{path}
+    // Set hash to file-{path}.
     url.hash = `file-${encodeURIComponent($filesStore.currentFile.path)}`;
-    
-    // Copy to clipboard
+
+    // Copy to clipboard.
     navigator.clipboard.writeText(url.toString())
       .then(() => {
-        // Show temporary toast or notification
+        // Show temporary notification.
         alert('Shareable link copied to clipboard!');
       })
       .catch(err => {
         console.error('Could not copy text: ', err);
-        // Fallback: show the URL and ask user to copy manually
+        // Fallback: show the URL and ask user to copy manually.
         prompt('Copy this shareable link:', url.toString());
       });
   }
@@ -254,22 +330,22 @@
     {:else}
       <div class="command-list">
         {#each commands as command, i}
-          <div class="command-card">
+          <div class="command-card {command.status === 'failed' ? 'failed-command' : ''}">
             <!-- Command header -->
             <div class="command-header">
-							<div class="command-title">
-								<span class="command-number">{i + 1}</span>
-								<span>Command</span>
-								{#if command.status && command.status !== 'pending'}
-									<span class="command-status {command.status}-status">
-										{@html getStatusIcon(command.status)}
-										<span>{command.status.charAt(0).toUpperCase() + command.status.slice(1)}</span>
-									</span>
-								{/if}
-								{#if command.duration}
-									<span class="command-duration">{formatDuration(command.duration)}</span>
-								{/if}
-							</div>
+              <div class="command-title">
+                <span class="command-number">{i + 1}</span>
+                <span>Command</span>
+                {#if command.status && command.status !== 'pending'}
+                  <span class="command-status {command.status}-status">
+                    {@html getStatusIcon(command.status)}
+                    <span>{command.status.charAt(0).toUpperCase() + command.status.slice(1)}</span>
+                  </span>
+                {/if}
+                {#if command.duration}
+                  <span class="command-duration">{formatDuration(command.duration)}</span>
+                {/if}
+              </div>
               <button
                 class="delete-button"
                 on:click={() => deleteCommand(i)}
@@ -296,7 +372,7 @@
                   // Auto-resize textarea based on content
                   e.target.style.height = 'auto';
                   e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
-                  
+
                   // Always mark as dirty regardless of previous state
                   $filesStore.currentFile.dirty = true;
                   command.changed = true;
@@ -313,24 +389,24 @@
                     <span class="output-indicator expected-indicator"></span>
                     <label for={`expected-output-${i}`}>Expected Output</label>
                   </div>
-                <textarea
-                  id={`expected-output-${i}`}
-                  class="expected-output"
-                  placeholder="Expected output..."
-                  rows="1"
-                  bind:value={command.expectedOutput}
-                  on:input={(e) => {
-                    // Auto-resize textarea based on content
-                    e.target.style.height = 'auto';
-                    e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
-                    
-                    // Always mark as dirty regardless of previous state
-                    $filesStore.currentFile.dirty = true;
-                    command.changed = true;
-                    filesStore.updateExpectedOutput(i, e.target.value || '');
-                  }}
-                  use:initTextArea
-                ></textarea>
+                  <textarea
+                    id={`expected-output-${i}`}
+                    class="expected-output"
+                    placeholder="Expected output..."
+                    rows="1"
+                    bind:value={command.expectedOutput}
+                    on:input={(e) => {
+                      // Auto-resize textarea based on content
+                      e.target.style.height = 'auto';
+                      e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
+
+                      // Always mark as dirty regardless of previous state
+                      $filesStore.currentFile.dirty = true;
+                      command.changed = true;
+                      filesStore.updateExpectedOutput(i, e.target.value || '');
+                    }}
+                    use:initTextArea
+                  ></textarea>
                 </div>
                 <div class="output-column">
                   <div class="output-header">
@@ -346,11 +422,13 @@
                         e.target.classList.toggle('expanded');
                       }
                     }}
+                    role="region"
+                    aria-label="Actual Output"
                   >
-                    {#if command.status === 'failed' && command.actualOutput}
-                      {@html getDiffHighlight(parseActualOutputContent(command.actualOutput), command.expectedOutput || '')}
+                    {#if command.status === 'failed'}
+                      <div class="wasm-diff">{@html wasmLoaded ? highlightDifferences(parseActualOutputContent(command.actualOutput), command.expectedOutput || '') : parseActualOutputContent(command.actualOutput)}</div>
                     {:else if command.actualOutput}
-                      {parseActualOutputContent(command.actualOutput)}
+                      <pre class="plain-output">{parseActualOutputContent(command.actualOutput)}</pre>
                     {:else}
                       <span class="no-output-message">No actual output yet. Run validation to see results.</span>
                     {/if}
@@ -457,7 +535,7 @@
     background-color: var(--color-bg-accent);
     color: white;
   }
-  
+
   .share-button {
     background-color: var(--color-bg-secondary);
     color: var(--color-text-primary);
@@ -585,41 +663,114 @@
     font-weight: normal;
   }
 
+  /* Command card with failed status */
+  .command-card.failed-command {
+    border: 2px solid var(--color-text-error, #dc2626);
+    box-shadow: 0 0 8px rgba(220, 38, 38, 0.3);
+  }
+
+  /* Output styling */
   .failed-output {
     white-space: pre-wrap;
   }
 
-  .diff-highlight {
-    display: inline-block;
+  /* WASM Diff specific styles */
+  .wasm-diff {
+    font-family: monospace;
+    white-space: pre-wrap;
+    line-height: 1.5;
+  }
+
+  /* Git-style diff highlighting */
+  .highlight-diff {
+    background-color: #fecaca; /* light red background */
+    color: #991b1b; /* dark red text */
+    padding: 1px 0;
+    font-weight: bold;
+    border-bottom: 1px dashed #dc2626;
+  }
+
+  .highlight-line {
+    background-color: #fef2f2; /* very light red */
+    display: block;
     width: 100%;
-    background-color: #fee2e2;
-    color: #b91c1c;
+    border-left: 3px solid #ef4444;
+    padding-left: 4px;
+    margin-left: -7px;
   }
 
-  .no-output-message {
-    color: var(--color-text-tertiary);
-    font-style: italic;
-    font-size: 0.9em;
+  .diff-added-line {
+    background-color: #ecfdf5; /* green-50 */
+    display: block;
+    width: 100%;
+    border-left: 3px solid #10b981;
+    padding-left: 4px;
+    margin-left: -7px;
   }
 
-  .duration-footer {
+  .diff-removed-line {
+    background-color: #fee2e2; /* light red background */
+    display: block;
+    width: 100%;
+    border-left: 3px solid #dc2626;
+    padding-left: 4px;
+    margin-left: -7px;
+    color: #b91c1e;
+  }
+
+  .plain-output {
+    font-family: monospace;
+    white-space: pre-wrap;
+    line-height: 1.5;
+  }
+
+  /* Fallback diff note if needed */
+  .diff-note {
     display: block;
     margin-top: 8px;
-    padding-top: 4px;
-    font-size: 12px;
-    color: var(--color-text-tertiary);
-    border-top: 1px solid var(--color-border-light);
-    text-align: center;
+    padding: 4px 8px;
+    background-color: #f3f4f6; /* gray-100 */
+    border-left: 3px solid #6b7280;
+    color: #4b5563;
+    font-style: italic;
+    border-radius: 0 4px 4px 0;
   }
 
   @media (prefers-color-scheme: dark) {
-    .diff-highlight {
-      background-color: rgba(185, 28, 28, 0.2);
+    .command-card.failed-command {
+      border: 2px solid var(--color-text-error, #ef4444);
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.3);
+    }
+
+    .diff-note {
+      background-color: rgba(75, 85, 99, 0.2);
+      border-left: 3px solid #6b7280;
+      color: #d1d5db;
+    }
+
+    .diff-added-line {
+      background-color: rgba(16, 185, 129, 0.1);
+      border-left: 3px solid #10b981;
+    }
+
+    .diff-removed-line {
+      background-color: rgba(220, 38, 38, 0.1);
+      border-left: 3px solid #dc2626;
+    }
+
+    .highlight-diff {
+      background-color: rgba(239, 68, 68, 0.25);
       color: #fca5a5;
+      border-bottom: 1px dashed #ef4444;
+    }
+
+    .highlight-line {
+      background-color: rgba(239, 68, 68, 0.1);
+      border-left: 3px solid #ef4444;
     }
   }
 
-  /* Simple auto-resize styles that preserve original appearance */
+  /* Simple auto-resize styles preserving original appearance */
   .command-input, .expected-output {
     width: 100%;
     resize: vertical;
@@ -631,7 +782,7 @@
     color: var(--color-text-primary);
     transition: border-color 0.2s ease-in-out;
     line-height: 1.5;
-    overflow-y: hidden; /* For auto-resize */
+    overflow-y: hidden;
   }
 
   .command-input:focus, .expected-output:focus {
@@ -651,10 +802,61 @@
     line-height: 1.5;
     max-height: 200px;
     overflow-y: auto;
-    cursor: pointer; /* Keep this for expanding functionality */
+    cursor: pointer;
   }
-  
+
   .actual-output.expanded {
     max-height: none;
+  }
+
+  .output-grid {
+    display: flex;
+    width: 100%;
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  .output-column {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .output-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .output-indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  .expected-indicator {
+    background-color: var(--color-bg-pending, #e2e8f0);
+  }
+
+  .actual-indicator {
+    background-color: var(--color-bg-accent, #5046e4);
+  }
+
+  .no-output-message {
+    color: var(--color-text-tertiary);
+    font-style: italic;
+    font-size: 0.9em;
+  }
+
+  .duration-footer {
+    display: block;
+    margin-top: 8px;
+    padding-top: 4px;
+    font-size: 12px;
+    color: var(--color-text-tertiary);
+    border-top: 1px solid var(--color-border-light);
+    text-align: center;
   }
 </style>

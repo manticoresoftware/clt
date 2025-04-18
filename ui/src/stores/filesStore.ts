@@ -303,11 +303,18 @@ function createFilesStore() {
       fileTree: tree
     })),
     loadFile: async (path: string, commands: RecordingCommand[]) => {
+      // Set initializing flag for all commands to hide output sections until test is run
+      const commandsWithInitFlag = commands.map(cmd => ({
+        ...cmd,
+        status: cmd.status || 'pending', // Set default status to pending, not failed
+        initializing: true
+      }));
+      
       update(state => ({
         ...state,
         currentFile: {
           path,
-          commands,
+          commands: commandsWithInitFlag,
           dirty: false,
           status: 'pending'
         }

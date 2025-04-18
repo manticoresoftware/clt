@@ -604,6 +604,70 @@ body {
   color: #166534;
 }
 
+/* WASM Diff Highlighting Styles - Added at Global Level */
+.wasm-diff {
+  font-family: var(--font-mono) !important;
+  white-space: pre-wrap !important;
+  line-height: 1.5 !important;
+  display: block !important;
+}
+
+.wasm-diff * {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.highlight-diff {
+  background-color: #fecaca !important; /* light red background */
+  color: #991b1b !important; /* dark red text */
+  padding: 1px 0 !important;
+  font-weight: bold !important;
+  border-bottom: 1px dashed #dc2626 !important;
+  display: inline !important;
+}
+
+.highlight-line {
+  background-color: #fef2f2 !important; /* very light red */
+  display: block !important;
+  width: 100% !important;
+  border-left: 3px solid #ef4444 !important;
+  padding-left: 4px !important;
+  margin-left: -7px !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+.diff-added-line {
+  background-color: #ecfdf5 !important; /* green-50 */
+  display: block !important;
+  width: 100% !important;
+  border-left: 3px solid #10b981 !important;
+  padding-left: 4px !important;
+  margin-left: -7px !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  line-height: 1.5 !important;
+}
+
+.diff-removed-line {
+  background-color: #fee2e2 !important; /* light red background */
+  display: block !important;
+  width: 100% !important;
+  border-left: 3px solid #dc2626 !important;
+  padding-left: 4px !important;
+  margin-left: -7px !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  color: #b91c1c !important;
+  line-height: 1.5 !important;
+}
+
+/* Command card with failed status */
+.command-card.failed-command {
+  border: 2px solid #dc2626 !important;
+  box-shadow: 0 0 8px rgba(220, 38, 38, 0.3) !important;
+}
+
 /* Dark mode specific adjustments */
 @media (prefers-color-scheme: dark) {
   .expected-output {
@@ -636,5 +700,34 @@ body {
   .pending-status {
     background-color: rgba(51, 65, 85, 0.4);
     color: #cbd5e1;
+  }
+  
+  .command-card.failed-command {
+    border: 2px solid #ef4444 !important;
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.3) !important;
+  }
+  
+  .highlight-diff {
+    background-color: rgba(239, 68, 68, 0.25) !important;
+    color: #fca5a5 !important;
+    border-bottom: 1px dashed #ef4444 !important;
+  }
+
+  .highlight-line {
+    background-color: rgba(239, 68, 68, 0.1) !important;
+    border-left: 3px solid #ef4444 !important;
+    color: #fca5a5 !important;
+  }
+  
+  .diff-added-line {
+    background-color: rgba(16, 185, 129, 0.1) !important;
+    border-left: 3px solid #10b981 !important;
+    color: #d1fae5 !important;
+  }
+
+  .diff-removed-line {
+    background-color: rgba(220, 38, 38, 0.1) !important;
+    border-left: 3px solid #dc2626 !important;
+    color: #fecaca !important;
   }
 }
