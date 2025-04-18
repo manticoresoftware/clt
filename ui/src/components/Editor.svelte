@@ -29,7 +29,17 @@
   }
 
   function saveFile() {
-    filesStore.forceSave();
+    filesStore.saveOnly();
+  }
+
+  function runTest() {
+    if ($filesStore.currentFile && $filesStore.currentFile.dirty) {
+      // If there are unsaved changes, save first then run
+      filesStore.saveAndRun();
+    } else {
+      // If everything is already saved, just run
+      filesStore.runTest();
+    }
   }
 
   function formatTime(date: Date): string {
@@ -145,16 +155,25 @@
             }}
             id="auto-save-checkbox"
           />
-          <span>Auto-Save & Run</span>
+          <span>Auto-Save</span>
         </label>
       </div>
-      <button
-        class="save-button"
-        on:click={saveFile}
-        disabled={!$filesStore.currentFile || !$filesStore.currentFile.dirty || $filesStore.saving}
-      >
-        Save & Run
-      </button>
+      <div class="action-buttons">
+        <button
+          class="save-button"
+          on:click={saveFile}
+          disabled={!$filesStore.currentFile || !$filesStore.currentFile.dirty || $filesStore.saving}
+        >
+          Save
+        </button>
+        <button
+          class="run-button"
+          on:click={runTest}
+          disabled={!$filesStore.currentFile || $filesStore.running}
+        >
+          Run
+        </button>
+      </div>
     </div>
   </div>
 
@@ -212,7 +231,12 @@
                 placeholder="Enter command..."
                 rows="2"
                 bind:value={command.command}
-                on:input={() => filesStore.updateCommand(i, command.command)}
+                on:input={(e) => {
+                  // Always mark as dirty regardless of previous state
+                  $filesStore.currentFile.dirty = true;
+                  command.changed = true;
+                  filesStore.updateCommand(i, e.target.value);
+                }}
               ></textarea>
 
               <!-- Output section -->
@@ -227,7 +251,12 @@
                     class="expected-output"
                     placeholder="Expected output..."
                     bind:value={command.expectedOutput}
-                    on:input={() => filesStore.updateExpectedOutput(i, command.expectedOutput || '')}
+                    on:input={(e) => {
+                      // Always mark as dirty regardless of previous state
+                      $filesStore.currentFile.dirty = true;
+                      command.changed = true;
+                      filesStore.updateExpectedOutput(i, e.target.value || '');
+                    }}
                   ></textarea>
                 </div>
                 <div class="output-column">
@@ -319,6 +348,44 @@
     display: flex;
     align-items: center;
     gap: 12px;
+  }
+
+  .action-buttons {
+    display: flex;
+    gap: 8px;
+  }
+
+  .save-button, .run-button {
+    padding: 6px 12px;
+    font-size: 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+    border: none;
+    transition: background-color 0.2s ease-in-out;
+  }
+
+  .save-button {
+    background-color: var(--color-bg-secondary);
+    color: var(--color-text-primary);
+  }
+
+  .run-button {
+    background-color: var(--color-bg-accent);
+    color: white;
+  }
+
+  .save-button:disabled, .run-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .save-button:not(:disabled):hover {
+    background-color: var(--color-bg-secondary-hover);
+  }
+
+  .run-button:not(:disabled):hover {
+    background-color: var(--color-bg-accent-hover);
   }
 
   .auto-save-toggle {

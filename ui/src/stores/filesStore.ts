@@ -43,6 +43,7 @@ const defaultState: FilesState = {
 
 function createFilesStore() {
   const { subscribe, set, update } = writable<FilesState>(defaultState);
+  let runModule: any; // Reference to the module itself for self-referencing
 
   const saveFileToBackend = async (file: RecordingFile) => {
     // Format the file content according to the .rec format
@@ -156,84 +157,65 @@ function createFilesStore() {
 
   // Debounce function for autosave
   let saveTimeout: number | null = null;
-  const debouncedSave = (file: RecordingFile, forceRun: boolean = false) => {
+  const debouncedSave = (file: RecordingFile, shouldRunAfterSave: boolean = false) => {
     // Cancel any pending saves
     if (saveTimeout) {
       clearTimeout(saveTimeout);
       saveTimeout = null;
     }
     
-    // Check if any commands have actually changed
-    const hasChanges = file.commands.some(cmd => cmd.changed);
+    // Always mark as dirty when there are changes
+    update(state => ({
+      ...state,
+      currentFile: state.currentFile ? {
+        ...state.currentFile,
+        dirty: true
+      } : null
+    }));
     
-    // Check if auto-save is enabled (default to true if not set)
+    // Check if auto-save is enabled
     const storedValue = localStorage.getItem('autoSaveEnabled');
     const autoSaveEnabled = storedValue === null ? true : storedValue === 'true';
     
-    // If nothing has changed and this isn't a forced save, just exit
-    if (!hasChanges && !forceRun) {
-      console.log('No changes detected, skipping save');
+    // If auto-save is disabled and this isn't an explicit save request, don't proceed with save
+    if (!autoSaveEnabled && !shouldRunAfterSave) {
       return;
     }
     
-    // If auto-save is disabled and this is not a forced save, just mark as dirty
-    if (!autoSaveEnabled && !forceRun) {
-      update(state => ({
-        ...state,
-        currentFile: state.currentFile ? {
-          ...state.currentFile,
-          dirty: true
-        } : null
-      }));
-      return;
-    }
+    // Use shorter debounce (500ms) for better responsiveness
+    const debounceTime = 500;
     
-    // Set a reasonable debounce to avoid too many saves
     saveTimeout = setTimeout(async () => {
-      console.log('Saving file...', hasChanges ? 'Changes detected' : 'No changes but forced');
       update(state => ({ ...state, saving: true }));
       
       try {
         await saveFileToBackend(file);
-        
-        // After save completes, clear changed flags
-        const resetCommands = file.commands.map(cmd => ({
-          ...cmd,
-          changed: false // Reset the changed flag after saving
-        }));
         
         update(state => ({
           ...state,
           saving: false,
           currentFile: state.currentFile ? {
             ...state.currentFile,
-            commands: resetCommands,
+            // Maintain the command structure - don't reset change flags!
             dirty: false,
             lastSaved: new Date()
           } : null
         }));
         
-        // After saving, run the test if auto-save is enabled or force run is requested
-        if ((autoSaveEnabled || forceRun) && hasChanges) {
+        // Run the test only if explicitly requested
+        if (shouldRunAfterSave) {
           await runCurrentTest();
         }
       } catch (error) {
         update(state => ({ ...state, saving: false }));
         console.error('Failed to save file:', error);
       }
-    }, 500); // Shorter debounce time
+    }, debounceTime);
   };
   
   const runCurrentTest = async () => {
     const state = getState();
     if (!state.currentFile || state.running) return;
-    
-    // Check if auto-save is enabled (default to true if not set)
-    const storedValue = localStorage.getItem('autoSaveEnabled');
-    const autoSaveEnabled = storedValue === null ? true : storedValue === 'true';
-    
-    // If auto-save is disabled, don't automatically run tests
-    if (!autoSaveEnabled && !state.currentFile.dirty) return;
     
     update(state => ({ ...state, running: true }));
     
@@ -263,16 +245,12 @@ function createFilesStore() {
           
         const anyRun = commands.some(cmd => cmd.status !== 'pending');
         
-        // Create updated file with commands and mark as dirty to ensure it gets saved
+        // Create updated file with commands
         const updatedFile = {
           ...state.currentFile,
           commands,
           status: anyRun ? (allPassed ? 'passed' : 'failed') : 'pending',
-          dirty: true
         };
-        
-        // Trigger autosave to ensure outputs are saved to file
-        debouncedSave(updatedFile);
         
         // Show any test execution errors as console warnings (not fatal errors)
         if (result.error) {
@@ -303,7 +281,8 @@ function createFilesStore() {
     return currentState;
   };
 
-  return {
+  // Create store instance
+  const storeModule = {
     subscribe,
     setConfigDirectory: (directory: string) => update(state => ({
       ...state,
@@ -348,7 +327,7 @@ function createFilesStore() {
         dirty: true
       };
       
-      // Trigger autosave with forceRun=false
+      // Trigger autosave
       debouncedSave(updatedFile, false);
       
       return {
@@ -360,24 +339,23 @@ function createFilesStore() {
       if (!state.currentFile) return state;
       
       const newCommands = [...state.currentFile.commands];
-      // Check if the command has actually changed
-      if (newCommands[index].command === command) return state;
       
+      // Always mark as changed - this will force debouncedSave to trigger
       newCommands[index] = { 
         ...newCommands[index], 
         command, 
         status: 'pending',
-        changed: true // Mark as changed
+        changed: true 
       };
       
       const updatedFile = {
         ...state.currentFile,
         commands: newCommands,
-        dirty: true
+        dirty: true 
       };
       
-      // Trigger autosave with forceRun=false
-      debouncedSave(updatedFile, false);
+      // Always trigger autosave
+      debouncedSave(updatedFile);
       
       return {
         ...state,
@@ -388,24 +366,23 @@ function createFilesStore() {
       if (!state.currentFile) return state;
       
       const newCommands = [...state.currentFile.commands];
-      // Check if the expected output has actually changed
-      if (newCommands[index].expectedOutput === expectedOutput) return state;
       
+      // Always mark as changed - this will force debouncedSave to trigger 
       newCommands[index] = { 
         ...newCommands[index], 
         expectedOutput, 
         status: 'pending',
-        changed: true // Mark as changed
+        changed: true 
       };
       
       const updatedFile = {
         ...state.currentFile,
         commands: newCommands,
-        dirty: true
+        dirty: true 
       };
       
-      // Trigger autosave with forceRun=false
-      debouncedSave(updatedFile, false);
+      // Always trigger autosave
+      debouncedSave(updatedFile);
       
       return {
         ...state,
@@ -422,60 +399,73 @@ function createFilesStore() {
       const updatedFile = {
         ...state.currentFile,
         commands: newCommands,
-        dirty: true,
-        changed: true // Mark entire file as changed when deleting commands
+        dirty: true
       };
       
-      // Trigger autosave with forceRun=false
-      debouncedSave(updatedFile, true); // Force run since this is a significant change
+      // Immediately trigger autosave
+      debouncedSave(updatedFile, false);
       
       return {
         ...state,
         currentFile: updatedFile
       };
     }),
-    forceSave: async () => {
+    saveOnly: async () => {
       const state = getState();
       if (!state.currentFile) return;
       
-      // Always force run when using the Save & Run button
       update(state => ({ ...state, saving: true }));
       
       try {
-        // Mark all commands as changed
-        const commandsWithChanged = state.currentFile.commands.map(cmd => ({
-          ...cmd,
-          changed: true
-        }));
-        
-        const updatedFile = {
-          ...state.currentFile,
-          commands: commandsWithChanged,
-          dirty: true
-        };
-        
-        await saveFileToBackend(updatedFile);
+        await saveFileToBackend(state.currentFile);
         
         update(state => ({
           ...state,
           saving: false,
           currentFile: state.currentFile ? {
-            ...state.currentFile,
-            commands: state.currentFile.commands.map(cmd => ({
-              ...cmd,
-              changed: false // Reset changed flag
-            })),
+            ...state.currentFile, // Keep existing commands with their flags
+            dirty: false,
+            lastSaved: new Date()
+          } : null
+        }));
+      } catch (error) {
+        update(state => ({ ...state, saving: false }));
+        console.error('Failed to save file:', error);
+      }
+    },
+    saveAndRun: async () => {
+      const state = getState();
+      if (!state.currentFile) return;
+      
+      update(state => ({ ...state, saving: true }));
+      
+      try {
+        await saveFileToBackend(state.currentFile);
+        
+        update(state => ({
+          ...state,
+          saving: false,
+          currentFile: state.currentFile ? {
+            ...state.currentFile, // Keep existing commands with their flags
             dirty: false,
             lastSaved: new Date()
           } : null
         }));
         
-        // Always run test after manual save
+        // Run test after saving
         await runCurrentTest();
       } catch (error) {
         update(state => ({ ...state, saving: false }));
         console.error('Failed to save file:', error);
       }
+    },
+    forceSave: async () => {
+      // Keep for backward compatibility
+      const state = getState();
+      if (!state.currentFile) return;
+      
+      // Redirect to saveAndRun
+      await storeModule.saveAndRun();
     },
     createNewFile: (path: string) => {
       const newFile = {
@@ -491,13 +481,18 @@ function createFilesStore() {
         currentFile: newFile
       }));
       
-      // Force save since this is a new file
+      // Immediately save the new file
       setTimeout(() => {
-        debouncedSave(newFile, true);
+        debouncedSave(newFile, false);
       }, 0);
     },
     runTest: runCurrentTest
   };
+
+  // Set the self-reference to allow calling other methods
+  runModule = storeModule;
+  
+  return storeModule;
 }
 
 export const filesStore = createFilesStore();
