@@ -263,9 +263,17 @@ app.post('/api/run-test', async (req, res) => {
 							const sectionContent = repSections[i];
 							cmd.duration = extractDuration(sectionContent);
 
-							// Get the expected output from the .rep file
-							const expectedOutput = repParts[1].trim().split(/–––\s+.*?\s+–––/)[0].trim();
-							cmd.expectedOutput = expectedOutput;
+							// Get the output from the .rep file
+							const outputSection = repParts[1].trim();
+							const actualOutput = outputSection.split(/–––\s+.*?\s+–––/)[0].trim();
+							
+							// Always set the actual output from the rep file
+							cmd.actualOutput = actualOutput;
+
+							// If this is a new command without expected output, set it
+							if (!cmd.expectedOutput) {
+								cmd.expectedOutput = actualOutput;
+							}
 						}
 					}
 				} catch (repError) {
@@ -288,10 +296,10 @@ app.post('/api/run-test', async (req, res) => {
 						// Check if the output contains "OK" which means the test passed for this command
 						if (commandOutput === 'OK' || commandOutput.startsWith('OK\n')) {
 							cmd.status = 'matched';
-							cmd.actualOutput = cmd.expectedOutput; // Use expected output as actual when they match
+							// Don't modify actualOutput here, it comes from rep file
 						} else {
 							cmd.status = 'failed';
-							cmd.actualOutput = commandOutput; // Store the actual output for failed commands
+							// Don't modify actualOutput here, it comes from rep file
 							allCommandsPassed = false;
 						}
 					} else {

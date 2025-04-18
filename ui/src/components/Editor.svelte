@@ -6,6 +6,25 @@
   let autoSaveEnabled = true;
   $: commands = $filesStore.currentFile ? $filesStore.currentFile.commands : [];
 
+  // Auto-resize action for textareas
+  function initTextArea(node: HTMLTextAreaElement) {
+    // Initial auto-resize
+    setTimeout(() => {
+      if (node.value) {
+        node.style.height = 'auto';
+        node.style.height = Math.max(24, node.scrollHeight) + 'px';
+      }
+    }, 0);
+
+    return {
+      update() {
+        // Update height when value changes externally
+        node.style.height = 'auto';
+        node.style.height = Math.max(24, node.scrollHeight) + 'px';
+      }
+    };
+  }
+
   // Initialize autoSaveEnabled from localStorage
   onMount(() => {
     // Default to enabled if not set
@@ -100,9 +119,15 @@
   function parseActualOutputContent(actualOutput: string | undefined): string {
     if (!actualOutput) return '';
 
-    // Remove the duration line from the output
-    // This handles both cases where the duration appears at the end or on a separate line
-    return actualOutput.replace(/––– duration: \d+ms \(\d+\.\d+%\) –––.*$/gm, '').trim();
+    // Handle the case when there's a duration section in the output
+    const durationMatch = actualOutput.match(/–––\s*duration/);
+    if (durationMatch) {
+      // Return everything before the duration marker
+      return actualOutput.substring(0, durationMatch.index).trim();
+    }
+    
+    // If no duration marker found, return the whole output
+    return actualOutput.trim();
   }
 </script>
 
@@ -229,35 +254,47 @@
               <textarea
                 class="command-input"
                 placeholder="Enter command..."
-                rows="2"
+                rows="1"
                 bind:value={command.command}
                 on:input={(e) => {
+                  // Auto-resize textarea based on content
+                  e.target.style.height = 'auto';
+                  e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
+                  
                   // Always mark as dirty regardless of previous state
                   $filesStore.currentFile.dirty = true;
                   command.changed = true;
                   filesStore.updateCommand(i, e.target.value);
                 }}
+                use:initTextArea
               ></textarea>
 
               <!-- Output section -->
+              {#if !command.initializing}
               <div class="output-grid">
                 <div class="output-column">
                   <div class="output-header">
                     <span class="output-indicator expected-indicator"></span>
                     <label for={`expected-output-${i}`}>Expected Output</label>
                   </div>
-                  <textarea
-                    id={`expected-output-${i}`}
-                    class="expected-output"
-                    placeholder="Expected output..."
-                    bind:value={command.expectedOutput}
-                    on:input={(e) => {
-                      // Always mark as dirty regardless of previous state
-                      $filesStore.currentFile.dirty = true;
-                      command.changed = true;
-                      filesStore.updateExpectedOutput(i, e.target.value || '');
-                    }}
-                  ></textarea>
+                <textarea
+                  id={`expected-output-${i}`}
+                  class="expected-output"
+                  placeholder="Expected output..."
+                  rows="1"
+                  bind:value={command.expectedOutput}
+                  on:input={(e) => {
+                    // Auto-resize textarea based on content
+                    e.target.style.height = 'auto';
+                    e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
+                    
+                    // Always mark as dirty regardless of previous state
+                    $filesStore.currentFile.dirty = true;
+                    command.changed = true;
+                    filesStore.updateExpectedOutput(i, e.target.value || '');
+                  }}
+                  use:initTextArea
+                ></textarea>
                 </div>
                 <div class="output-column">
                   <div class="output-header">
@@ -267,6 +304,12 @@
                   <div
                     id={`actual-output-${i}`}
                     class="actual-output {command.status === 'failed' ? 'failed-output' : ''}"
+                    on:click={(e) => {
+                      // Toggle expanded class on click
+                      if (e.target.scrollHeight > e.target.clientHeight) {
+                        e.target.classList.toggle('expanded');
+                      }
+                    }}
                   >
                     {#if command.status === 'failed' && command.actualOutput}
                       {@html getDiffHighlight(parseActualOutputContent(command.actualOutput), command.expectedOutput || '')}
@@ -278,6 +321,7 @@
                   </div>
                 </div>
               </div>
+              {/if}
             </div>
           </div>
 
@@ -529,5 +573,44 @@
       background-color: rgba(185, 28, 28, 0.2);
       color: #fca5a5;
     }
+  }
+
+  /* Simple auto-resize styles that preserve original appearance */
+  .command-input, .expected-output {
+    width: 100%;
+    resize: vertical;
+    font-family: monospace;
+    padding: 8px;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    background-color: var(--color-bg-textarea);
+    color: var(--color-text-primary);
+    transition: border-color 0.2s ease-in-out;
+    line-height: 1.5;
+    overflow-y: hidden; /* For auto-resize */
+  }
+
+  .command-input:focus, .expected-output:focus {
+    outline: none;
+    border-color: var(--color-bg-accent);
+    box-shadow: 0 0 0 2px rgba(var(--color-accent-rgb), 0.2);
+  }
+
+  .actual-output {
+    width: 100%;
+    white-space: pre-wrap;
+    font-family: monospace;
+    padding: 8px;
+    background-color: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    line-height: 1.5;
+    max-height: 200px;
+    overflow-y: auto;
+    cursor: pointer; /* Keep this for expanding functionality */
+  }
+  
+  .actual-output.expanded {
+    max-height: none;
   }
 </style>

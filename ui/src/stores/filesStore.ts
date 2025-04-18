@@ -13,6 +13,8 @@ interface RecordingCommand {
   actualOutput?: string;
   status?: 'pending' | 'matched' | 'failed';
   changed?: boolean; // Track whether this command has been changed
+  initializing?: boolean; // Flag to hide output sections until test is run
+  duration?: number; // Command execution duration
 }
 
 interface RecordingFile {
@@ -225,41 +227,46 @@ function createFilesStore() {
       update(state => {
         if (!state.currentFile) return state;
         
-        // If we have commands from the result, use them directly
-        // They already have status and actual outputs from backend
-        const commands = result.commands || [];
+        // Get the result commands
+        const resultCommands = result.commands || [];
         
-        // Determine overall file status - prioritize exit code success over command status
+        // Preserve expected outputs by merging with current commands
+        const mergedCommands = state.currentFile.commands.map((cmd, index) => {
+          // Find matching command in results
+          const matchingResultCmd = resultCommands.find(resultCmd => 
+            resultCmd.command === cmd.command);
+          
+          if (!matchingResultCmd) {
+            // If no matching command found, preserve original
+            return cmd;
+          }
+          
+          // Preserve expected output if it already exists
+          return {
+            ...cmd,
+            actualOutput: matchingResultCmd.actualOutput, // This comes from the replay file
+            status: matchingResultCmd.status,
+            duration: matchingResultCmd.duration,
+            initializing: false // Clear initializing flag once test is run
+          };
+        });
+        
+        // Determine overall file status
         const exitCodeSuccess = result.exitCodeSuccess === true;
         const allPassed = exitCodeSuccess || (
           typeof result.success !== 'undefined' 
           ? result.success 
-          : commands.every(cmd => cmd.status !== 'failed')
+          : mergedCommands.every(cmd => cmd.status !== 'failed')
         );
         
-        console.log('File status determination:', { 
-          exitCodeSuccess, 
-          resultSuccess: result.success, 
-          commandsAllPassed: commands.every(cmd => cmd.status !== 'failed')
-        });
-          
-        const anyRun = commands.some(cmd => cmd.status !== 'pending');
+        const anyRun = mergedCommands.some(cmd => cmd.status !== 'pending');
         
         // Create updated file with commands
         const updatedFile = {
           ...state.currentFile,
-          commands,
+          commands: mergedCommands,
           status: anyRun ? (allPassed ? 'passed' : 'failed') : 'pending',
         };
-        
-        // Show any test execution errors as console warnings (not fatal errors)
-        if (result.error) {
-          console.warn('Test completed with differences:', result.error);
-        }
-        
-        if (result.stderr) {
-          console.warn('Test stderr:', result.stderr);
-        }
         
         return {
           ...state,
@@ -270,7 +277,6 @@ function createFilesStore() {
     } catch (error) {
       console.error('Failed to run test:', error);
       update(state => ({ ...state, running: false }));
-      // Even if the API call fails, we shouldn't block the UI
     }
   };
   
@@ -318,7 +324,8 @@ function createFilesStore() {
         command, 
         expectedOutput: '', 
         status: 'pending',
-        changed: true // Mark as changed
+        changed: true,
+        initializing: true // Mark as initializing to hide output sections until test is run
       });
       
       const updatedFile = {
