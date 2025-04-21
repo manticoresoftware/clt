@@ -575,6 +575,7 @@
   }
 
   .run-button:not(:disabled):hover {
+    color: var(--color-text-primary);
     background-color: var(--color-bg-accent-hover);
   }
 

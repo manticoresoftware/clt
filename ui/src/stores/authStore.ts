@@ -33,6 +33,26 @@ export const authStore = writable<AuthState>(initialState);
 // Function to fetch the current authentication state
 export async function fetchAuthState() {
   try {
+    // First check if we have data in localStorage
+    const storedAuthState = localStorage.getItem('auth_state');
+    if (storedAuthState) {
+      try {
+        const parsedState = JSON.parse(storedAuthState);
+        // Only update the store with stored state if it indicates authenticated
+        if (parsedState.isAuthenticated && parsedState.user) {
+          authStore.update(state => ({
+            ...state,
+            ...parsedState,
+            isLoading: true, // Still set loading to true as we fetch fresh data
+          }));
+        }
+      } catch (e) {
+        console.error('Error parsing stored auth state:', e);
+        // Invalid stored state, remove it
+        localStorage.removeItem('auth_state');
+      }
+    }
+
     authStore.update(state => ({ ...state, isLoading: true, error: null }));
     
     const response = await fetch(AUTH_CURRENT_USER_URL, {
@@ -43,12 +63,26 @@ export async function fetchAuthState() {
     });
     
     if (!response.ok) {
-      // Don't automatically redirect - just report the error
+      // If the request fails but we had previously stored auth, keep using it
+      if (storedAuthState) {
+        const parsedState = JSON.parse(storedAuthState);
+        if (parsedState.isAuthenticated && parsedState.user) {
+          authStore.update(state => ({
+            ...state,
+            ...parsedState,
+            isLoading: false
+          }));
+          return parsedState;
+        }
+      }
+      
+      // Otherwise report the error
       throw new Error('Failed to fetch authentication state');
     }
     
     const data = await response.json();
     
+    // Update auth store with the fresh data
     authStore.update(state => ({
       ...state,
       isAuthenticated: data.isAuthenticated, 
@@ -56,6 +90,18 @@ export async function fetchAuthState() {
       skipAuth: data.skipAuth || false,
       isLoading: false
     }));
+
+    // If authenticated, store the auth state in localStorage for persistence
+    if (data.isAuthenticated && data.user) {
+      localStorage.setItem('auth_state', JSON.stringify({
+        isAuthenticated: data.isAuthenticated,
+        user: data.user,
+        skipAuth: data.skipAuth || false
+      }));
+    } else {
+      // If not authenticated, clear any previously stored state
+      localStorage.removeItem('auth_state');
+    }
 
     return data;
   } catch (error) {
@@ -65,24 +111,50 @@ export async function fetchAuthState() {
       isLoading: false,
       error: error instanceof Error ? error.message : 'An unknown error occurred'
     }));
+    
+    // Clear localStorage on authentication error
+    localStorage.removeItem('auth_state');
   }
 }
 
 // Function to logout
 export async function logout() {
   try {
-    await fetch(AUTH_LOGOUT_URL, {
+    // First update the local store to prevent UI flicker
+    authStore.set({
+      ...initialState,
+      isLoading: true
+    });
+    
+    // Send the logout request to the server
+    const response = await fetch(AUTH_LOGOUT_URL, {
       method: 'GET',
       credentials: 'include'
     });
-    // Clear the auth store
+    
+    if (!response.ok) {
+      console.error('Logout response not OK:', response.status);
+    }
+    
+    // Clear the auth store completely
     authStore.set({
       ...initialState,
       isLoading: false
     });
-    // Reload the current page instead of redirecting
-    window.location.reload();
+    
+    // Clear any auth-related localStorage/sessionStorage
+    localStorage.removeItem('auth_state');
+    sessionStorage.removeItem('auth_state');
+    
+    // Force a hard reload of the page to clear any cached state
+    window.location.href = window.location.origin + window.location.pathname;
   } catch (error) {
     console.error('Logout failed:', error);
+    // Even if the server request fails, reset the local state
+    authStore.set({
+      ...initialState,
+      isLoading: false,
+      error: 'Logout failed. Please try again.'
+    });
   }
 }

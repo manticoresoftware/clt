@@ -601,6 +601,11 @@ body {
   transition: background-color var(--transition-fast);
 }
 
+.add-first-command-button svg {
+	margin: 0;
+	color: white;
+}
+
 .add-first-command-button:hover {
   background-color: #2c5282;
 }
@@ -725,12 +730,12 @@ body {
     color: #d1d5db; /* Light gray text in dark mode */
     border: 1px solid rgba(107, 114, 128, 0.3);
   }
-  
+
   .command-card.failed-command {
     border: 2px solid #ef4444 !important;
     box-shadow: 0 0 8px rgba(239, 68, 68, 0.3) !important;
   }
-  
+
   .highlight-diff {
     background-color: rgba(239, 68, 68, 0.25) !important;
     color: #fca5a5 !important;
@@ -742,7 +747,7 @@ body {
     border-left: 3px solid #ef4444 !important;
     color: #fca5a5 !important;
   }
-  
+
   .diff-added-line {
     background-color: rgba(16, 185, 129, 0.1) !important;
     border-left: 3px solid #10b981 !important;
