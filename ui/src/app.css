@@ -478,17 +478,25 @@ body {
   background-color: #805ad5;
 }
 
-.expected-output {
+/* Output fields with synchronized expansion */
+.expected-output,
+.actual-output {
   width: 100%;
   padding: var(--spacing-sm);
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   font-size: 13px;
+  height: 100px !important;  /* Default height */
+  max-height: 100px !important;
+  overflow-y: auto;
+  transition: all 0.2s ease;
+}
+
+.expected-output {
   resize: none;
   background-color: #f0fff4;
   color: var(--color-text-primary);
-  height: 100px;
 }
 
 .expected-output:focus {
@@ -498,16 +506,30 @@ body {
 }
 
 .actual-output {
-  width: 100%;
-  padding: var(--spacing-sm);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 13px;
   background-color: #f8f4ff;
   color: var(--color-text-secondary);
-  height: 100px;
-  overflow-y: auto;
+  cursor: pointer;
+}
+
+.expected-output.expanded,
+.actual-output.expanded {
+  height: 400px !important;
+  max-height: 400px !important;
+}
+
+/* Adjust output grid for expanded items */
+.output-grid.has-expanded-outputs {
+  align-items: stretch;
+}
+
+.output-grid.has-expanded-outputs .output-column {
+  display: flex;
+  flex-direction: column;
+}
+
+.output-grid.has-expanded-outputs .expected-output,
+.output-grid.has-expanded-outputs .actual-output {
+  flex: 1;
 }
 
 .add-command-button {
@@ -732,4 +754,42 @@ body {
     border-left: 3px solid #dc2626 !important;
     color: #fecaca !important;
   }
+}
+
+/* Output fields with synchronized expansion */
+.expected-output,
+.actual-output {
+  width: 100%;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  min-height: 100px !important; /* Minimum height, not fixed height */
+  height: 100px !important;
+  max-height: 100px !important;
+  overflow-y: auto;
+  transition: all 0.2s ease;
+}
+
+.expected-output.expanded,
+.actual-output.expanded {
+  min-height: 100px !important;
+  height: 400px !important;
+  max-height: 400px !important;
+}
+
+/* Adjust output grid for expanded items */
+.output-grid.has-expanded-outputs {
+  align-items: stretch;
+}
+
+.output-grid.has-expanded-outputs .output-column {
+  display: flex;
+  flex-direction: column;
+}
+
+.output-grid.has-expanded-outputs .expected-output,
+.output-grid.has-expanded-outputs .actual-output {
+  flex: 1;
 }

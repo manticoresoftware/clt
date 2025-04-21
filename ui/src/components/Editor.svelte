@@ -398,7 +398,7 @@
 
               <!-- Output section -->
               {#if !command.initializing}
-              <div class="output-grid">
+              <div class="output-grid {command.isOutputExpanded ? 'has-expanded-outputs' : ''}">
                 <div class="output-column">
                   <div class="output-header">
                     <span class="output-indicator expected-indicator"></span>
@@ -406,7 +406,7 @@
                   </div>
                   <textarea
                     id={`expected-output-${i}`}
-                    class="expected-output"
+                    class="expected-output {command.isOutputExpanded ? 'expanded' : ''}"
                     placeholder="Expected output..."
                     rows="1"
                     bind:value={command.expectedOutput}
@@ -427,6 +427,14 @@
                         console.error('Error updating expected output:', err);
                       }
                     }}
+                    on:focus={() => {
+                      // Expand both outputs when focusing on the expected output
+                      filesStore.toggleOutputExpansion(i, true);
+                    }}
+                    on:blur={() => {
+                      // Collapse both outputs when focus leaves
+                      filesStore.toggleOutputExpansion(i, false);
+                    }}
                     use:initTextArea
                   ></textarea>
                 </div>
@@ -437,13 +445,7 @@
                   </div>
                   <div
                     id={`actual-output-${i}`}
-                    class="actual-output {command.status === 'failed' ? 'failed-output' : ''}"
-                    on:click={(e) => {
-                      // Toggle expanded class on click
-                      if (e.target.scrollHeight > e.target.clientHeight) {
-                        e.target.classList.toggle('expanded');
-                      }
-                    }}
+                    class="actual-output {command.status === 'failed' ? 'failed-output' : ''} {command.isOutputExpanded ? 'expanded' : ''}"
                     role="region"
                     aria-label="Actual Output"
                   >

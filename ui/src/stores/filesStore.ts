@@ -15,6 +15,7 @@ interface RecordingCommand {
   changed?: boolean; // Track whether this command has been changed
   initializing?: boolean; // Flag to hide output sections until test is run
   duration?: number; // Command execution duration
+  isOutputExpanded?: boolean; // Track whether outputs are expanded
 }
 
 interface RecordingFile {
@@ -481,6 +482,34 @@ function createFilesStore() {
         update(state => ({ ...state, saving: false }));
         console.error('Failed to save file:', error);
       }
+    },
+    toggleOutputExpansion: (index: number, isExpanded: boolean) => {
+      update(state => {
+        if (!state.currentFile) return state;
+        
+        // Create a fresh copy of commands to avoid any reference issues
+        const newCommands = state.currentFile.commands.map(cmd => ({...cmd}));
+        
+        // Only update if the index is valid
+        if (index < 0 || index >= newCommands.length) {
+          console.error('Invalid command index:', index);
+          return state;
+        }
+        
+        // Update the specific command's expansion state
+        newCommands[index] = { 
+          ...newCommands[index], 
+          isOutputExpanded: isExpanded 
+        };
+        
+        return {
+          ...state,
+          currentFile: {
+            ...state.currentFile,
+            commands: newCommands
+          }
+        };
+      });
     },
     saveAndRun: async () => {
       const state = getState();
