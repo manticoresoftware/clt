@@ -3,9 +3,15 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import { createReadStream } from 'fs';
+import session from 'express-session';
+import dotenv from 'dotenv';
+import { setupPassport, isAuthenticated, addAuthRoutes } from './auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Load environment variables from .env file
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -13,15 +19,40 @@ const PORT = process.env.PORT || 3000;
 // Root directory of the project (the current directory where server.js is running)
 const ROOT_DIR = process.cwd();
 
-// Serve static files from the dist directory
-app.use(express.static(path.join(__dirname, 'dist')));
+// Initialize session middleware
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'clt-ui-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { 
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
 
-// Parse JSON bodies
-app.use(express.json());
+// Initialize passport and authentication
+const passport = setupPassport();
+app.use(passport.initialize());
+app.use(passport.session());
 
 // Enable CORS for development
 app.use((req, res, next) => {
-	res.header('Access-Control-Allow-Origin', '*');
+	// Always allow the frontend URL
+	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+	const origin = req.headers.origin;
+	
+	// If request comes from frontend URL or another known origin
+	if (origin === frontendUrl) {
+		res.header('Access-Control-Allow-Origin', origin);
+		res.header('Access-Control-Allow-Credentials', 'true');
+	} else if (origin) { 
+		// For other origins we still send CORS headers
+		res.header('Access-Control-Allow-Origin', origin);
+		res.header('Access-Control-Allow-Credentials', 'true');
+	} else {
+		// For requests without origin (like API tools)
+		res.header('Access-Control-Allow-Origin', '*');
+	}
 	res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
 	res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 	if (req.method === 'OPTIONS') {
@@ -29,6 +60,18 @@ app.use((req, res, next) => {
 	}
 	next();
 });
+
+// Parse JSON bodies
+app.use(express.json());
+
+// Add authentication routes
+addAuthRoutes(app);
+
+// Serve static files from the dist directory
+app.use(express.static(path.join(__dirname, 'dist')));
+
+// Serve public content (for login page and other public resources)
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Helper function to get a file tree
 async function buildFileTree(dir, basePath = '') {
@@ -67,7 +110,7 @@ async function buildFileTree(dir, basePath = '') {
 }
 
 // API endpoint to get the file tree
-app.get('/api/get-file-tree', async (req, res) => {
+app.get('/api/get-file-tree', isAuthenticated, async (req, res) => {
 	try {
 		const fileTree = await buildFileTree(ROOT_DIR);
 		res.json({ fileTree });
@@ -78,7 +121,7 @@ app.get('/api/get-file-tree', async (req, res) => {
 });
 
 // API endpoint to get file content
-app.get('/api/get-file', async (req, res) => {
+app.get('/api/get-file', isAuthenticated, async (req, res) => {
 	try {
 		const { path: filePath } = req.query;
 
@@ -102,7 +145,7 @@ app.get('/api/get-file', async (req, res) => {
 });
 
 // API endpoint to save file content
-app.post('/api/save-file', async (req, res) => {
+app.post('/api/save-file', isAuthenticated, async (req, res) => {
 	try {
 		const { path: filePath, content } = req.body;
 
@@ -132,7 +175,7 @@ app.post('/api/save-file', async (req, res) => {
 });
 
 // API endpoint to create directory
-app.post('/api/create-directory', async (req, res) => {
+app.post('/api/create-directory', isAuthenticated, async (req, res) => {
 	try {
 		const { path: dirPath } = req.body;
 
@@ -164,7 +207,7 @@ function extractDuration(content) {
 }
 
 // API endpoint to run a test
-app.post('/api/run-test', async (req, res) => {
+app.post('/api/run-test', isAuthenticated, async (req, res) => {
 	try {
 		const { filePath, dockerImage } = req.body;
 
@@ -342,7 +385,8 @@ app.post('/api/run-test', async (req, res) => {
 });
 
 // Handle SPA routes - serve index.html for any other request
-app.get('*', (req, res) => {
+// Apply light authentication check - client side will show login UI when needed
+app.get('*', isAuthenticated, (req, res) => {
 	res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
