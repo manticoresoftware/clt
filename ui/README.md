@@ -52,6 +52,16 @@ GITHUB_CLIENT_SECRET=your_client_secret
 ALLOWED_GITHUB_USERS=username1,username2,username3
 ```
 
+### Server Configuration
+
+You can configure the server to listen on different ports and hosts:
+
+```
+HOST=localhost       # Set to '0.0.0.0' to listen on all interfaces
+FRONTEND_PORT=5173   # Default frontend port (Vite)
+BACKEND_PORT=3000    # Default backend port (Express)
+```
+
 ### Development Mode
 
 For development without authentication, you can set:

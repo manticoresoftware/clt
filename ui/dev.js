@@ -7,22 +7,35 @@ import { config } from 'dotenv';
 // Load environment variables from .env file
 config();
 
+// Define port and host constants
+const FRONTEND_PORT = process.env.FRONTEND_PORT || 5173;
+const BACKEND_PORT = process.env.BACKEND_PORT || 3000;
+const HOST = process.env.HOST || 'localhost';
+
+// Important: Set process.env.BACKEND_PORT and FRONTEND_PORT for child processes
+process.env.BACKEND_PORT = BACKEND_PORT;
+process.env.FRONTEND_PORT = FRONTEND_PORT;
+process.env.HOST = HOST;
+
 // Log important environment variables for debugging (without secrets)
 console.log('Environment Configuration:');
+console.log('- HOST:', HOST);
+console.log('- FRONTEND_PORT:', FRONTEND_PORT);
+console.log('- BACKEND_PORT:', BACKEND_PORT);
 console.log('- GITHUB_CALLBACK_URL:', process.env.GITHUB_CALLBACK_URL);
 console.log('- SKIP_AUTH:', process.env.SKIP_AUTH);
 console.log('- ALLOWED_GITHUB_USERS:', process.env.ALLOWED_GITHUB_USERS ? 'Configured' : 'Not configured');
 
-// Override callback URL to localhost if not set or using dev2.manticoresearch.com
+// Override callback URL to use the specified host/port if not set or using dev2.manticoresearch.com
 if (!process.env.GITHUB_CALLBACK_URL || process.env.GITHUB_CALLBACK_URL.includes('dev2.manticoresearch.com')) {
-  console.log('⚠️  Warning: Using localhost:3000 for GitHub callback URL');
-  process.env.GITHUB_CALLBACK_URL = 'http://localhost:3000/auth/github/callback';
+  console.log(`⚠️  Warning: Using ${HOST}:${BACKEND_PORT} for GitHub callback URL`);
+  process.env.GITHUB_CALLBACK_URL = `http://${HOST}:${BACKEND_PORT}/auth/github/callback`;
 }
 
 // Set frontend URL if not already set
 if (!process.env.FRONTEND_URL) {
-  console.log('⚠️  Setting frontend URL to localhost:5173');
-  process.env.FRONTEND_URL = 'http://localhost:5173';
+  console.log(`⚠️  Setting frontend URL to ${HOST}:${FRONTEND_PORT}`);
+  process.env.FRONTEND_URL = `http://${HOST}:${FRONTEND_PORT}`;
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -76,8 +89,8 @@ function runCommand(command, args, name, color) {
   return proc;
 }
 
-// Run Vite development server
-const viteServer = runCommand('npx', ['vite'], 'Frontend', colors.cyan);
+// Run Vite development server with the specified port and host
+const viteServer = runCommand('npx', ['vite', '--port', FRONTEND_PORT, '--host', HOST], 'Frontend', colors.cyan);
 
 // Run Express API server
 const apiServer = runCommand('node', ['--experimental-modules', 'server.js'], 'Backend', colors.magenta);
@@ -91,6 +104,6 @@ process.on('SIGINT', () => {
 });
 
 console.log(`\n${colors.bright}${colors.green}Development servers started:${colors.reset}`);
-console.log(`${colors.cyan}Frontend: ${colors.reset}http://localhost:5173`);
-console.log(`${colors.magenta}Backend API: ${colors.reset}http://localhost:3000/api`);
+console.log(`${colors.cyan}Frontend: ${colors.reset}http://${HOST}:${FRONTEND_PORT}`);
+console.log(`${colors.magenta}Backend API: ${colors.reset}http://${HOST}:${BACKEND_PORT}/api`);
 console.log(`\n${colors.bright}${colors.yellow}Press Ctrl+C to stop${colors.reset}\n`);

@@ -4,7 +4,7 @@ export default {
   github: {
     clientID: process.env.GITHUB_CLIENT_ID || '',
     clientSecret: process.env.GITHUB_CLIENT_SECRET || '',
-    callbackURL: process.env.GITHUB_CALLBACK_URL || 'http://localhost:3000/auth/github/callback',
+    callbackURL: process.env.GITHUB_CALLBACK_URL || `http://${process.env.HOST || 'localhost'}:${process.env.BACKEND_PORT || 3000}/auth/github/callback`,
     scope: ['user:email'],
   },
   // List of allowed GitHub usernames

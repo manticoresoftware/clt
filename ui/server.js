@@ -14,7 +14,8 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.BACKEND_PORT || process.env.PORT || 3000;
+const HOST = process.env.HOST || 'localhost';
 
 // Root directory of the project (the current directory where server.js is running)
 const ROOT_DIR = process.cwd();
@@ -391,6 +392,6 @@ app.get('*', isAuthenticated, (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
-	console.log(`Server is running on port ${PORT}`);
+app.listen(PORT, HOST === 'localhost' ? HOST : '0.0.0.0', () => {
+	console.log(`Server is running on ${HOST}:${PORT}`);
 });
