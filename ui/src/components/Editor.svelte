@@ -191,7 +191,22 @@
       const diffResult = JSON.parse(patternMatcher.diff_text(expected, actual));
 
       if (!diffResult.has_diff) {
-        return escapeHtml(actual); // No differences found; return escaped plain text.
+        // No differences found; return with success styling
+        if (actual && actual.trim() !== '' && expected && expected.trim() !== '') {
+          // Split by newlines to render properly
+          const lines = actual.split('\n');
+          let resultHtml = '';
+          
+          lines.forEach((line, index) => {
+            resultHtml += `<span class="diff-matched-line">${escapeHtml(line)}</span>`;
+            if (index < lines.length - 1) {
+              resultHtml += '<br>';
+            }
+          });
+          
+          return resultHtml;
+        }
+        return escapeHtml(actual); // Simply escape if no meaningful content
       }
 
       let resultHtml = '';
@@ -475,6 +490,22 @@
                         // Use a timeout to avoid reactive update cycles
                         setTimeout(() => {
                           filesStore.updateExpectedOutput(i, newValue);
+                          
+                          // Force a re-render of the diff - a small hack to make 
+                          // sure the diff updates in real-time as we type
+                          if (command.actualOutput) {
+                            const actualOutput = parseActualOutputContent(command.actualOutput);
+                            const actualOutputElement = document.getElementById(`actual-output-${i}`);
+                            if (actualOutputElement) {
+                              highlightDifferences(actualOutput, newValue).then(diffHtml => {
+                                if (actualOutputElement.querySelector('.wasm-diff')) {
+                                  actualOutputElement.querySelector('.wasm-diff').innerHTML = diffHtml;
+                                } else {
+                                  actualOutputElement.innerHTML = `<div class="wasm-diff">${diffHtml}</div>`;
+                                }
+                              });
+                            }
+                          }
                         }, 0);
                       } catch (err) {
                         console.error('Error updating expected output:', err);
@@ -502,14 +533,12 @@
                     role="region"
                     aria-label="Actual Output"
                   >
-                    {#if command.status === 'failed'}
+                    {#if command.actualOutput}
                       {#await highlightDifferences(parseActualOutputContent(command.actualOutput), command.expectedOutput || '')}
                         <pre class="plain-output">{parseActualOutputContent(command.actualOutput)}</pre>
                       {:then diffHtml}
                         <div class="wasm-diff">{@html diffHtml}</div>
                       {/await}
-                    {:else if command.actualOutput}
-                      <pre class="plain-output">{parseActualOutputContent(command.actualOutput)}</pre>
                     {:else}
                       <span class="no-output-message">No actual output yet. Run validation to see results.</span>
                     {/if}
@@ -790,6 +819,16 @@
     margin-left: -7px;
   }
 
+  .diff-matched-line {
+    background-color: #f0fdf4; /* lighter green */
+    display: block;
+    width: 100%;
+    border-left: 3px solid #22c55e;
+    padding-left: 4px;
+    margin-left: -7px;
+    color: #15803d;
+  }
+
   .diff-removed-line {
     background-color: #fee2e2; /* light red background */
     display: block;
@@ -833,6 +872,12 @@
     .diff-added-line {
       background-color: rgba(16, 185, 129, 0.1);
       border-left: 3px solid #10b981;
+    }
+    
+    .diff-matched-line {
+      background-color: rgba(34, 197, 94, 0.1);
+      border-left: 3px solid #22c55e;
+      color: #4ade80;
     }
 
     .diff-removed-line {
