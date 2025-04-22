@@ -54,7 +54,9 @@
   async function fetchFileContent(path: string) {
     try {
       // First fetch the .rec file content
-      const response = await fetch(`${API_URL}/api/get-file?path=${encodeURIComponent(path)}`);
+      const response = await fetch(`${API_URL}/api/get-file?path=${encodeURIComponent(path)}`, {
+        credentials: 'include' // Add credentials for cookie passing
+      });
 
       if (!response.ok) {
         throw new Error(`Failed to fetch file: ${response.statusText}`);
@@ -69,7 +71,9 @@
       try {
         // Replace .rec with .rep in the path
         const repPath = path.replace(/\.rec$/, '.rep');
-        const repResponse = await fetch(`${API_URL}/api/get-file?path=${encodeURIComponent(repPath)}`);
+        const repResponse = await fetch(`${API_URL}/api/get-file?path=${encodeURIComponent(repPath)}`, {
+          credentials: 'include' // Add credentials for cookie passing
+        });
 
         if (repResponse.ok) {
           const repData = await repResponse.json();
@@ -169,11 +173,12 @@
   // Function to create directory
   async function createDirectory(path: string) {
     try {
-      const response = await fetch('/api/create-directory', {
+      const response = await fetch(`${API_URL}/api/create-directory`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
+        credentials: 'include', // Add credentials for cookie passing
         body: JSON.stringify({ path })
       });
 
@@ -258,7 +263,9 @@
   // Fetch file tree from backend
   async function fetchFileTree() {
     try {
-      const response = await fetch(`${API_URL}/api/get-file-tree`);
+      const response = await fetch(`${API_URL}/api/get-file-tree`, {
+        credentials: 'include' // Add credentials for cookie passing
+      });
 
       if (!response.ok) {
         throw new Error(`Failed to fetch file tree: ${response.statusText}`);

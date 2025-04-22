@@ -75,29 +75,40 @@ export function setupPassport() {
 
 // Middleware to check if the user is authenticated
 export function isAuthenticated(req, res, next) {
+  // Debug logging
+  console.log(`[Auth Check] Path: ${req.path}`);
+  console.log(`[Auth Check] Session ID: ${req.sessionID}`);
+  console.log(`[Auth Check] Authenticated: ${req.isAuthenticated()}`);
+  console.log(`[Auth Check] Skip Auth: ${authConfig.skipAuth}`);
+  
   // Skip authentication if SKIP_AUTH is true
   if (authConfig.skipAuth) {
+    console.log('[Auth Check] Skipping auth check - SKIP_AUTH enabled');
     return next();
   }
 
   // Check if the user is authenticated
   if (req.isAuthenticated()) {
+    console.log('[Auth Check] User is authenticated, proceeding');
     return next();
   }
 
   // Handle API requests differently from page requests
   if (req.path.startsWith('/api/')) {
-    return res.status(401).json({ error: 'Unauthorized' });
+    console.log('[Auth Check] API request but not authenticated, returning 401');
+    return res.status(401).json({ error: 'Unauthorized', message: 'You must be logged in to access this resource' });
   }
 
   // For server-rendered pages (not SPA routes handled by client)
   // we'll redirect to login
   if (req.path === '/login' || req.path.startsWith('/auth/') || req.path.startsWith('/public/')) {
+    console.log('[Auth Check] Public path, allowing access');
     return next();
   }
   
   // For SPA routes, we'll just serve the index.html and let the client handle auth
   // The client-side code will show the login button when not authenticated
+  console.log('[Auth Check] Non-API request, serving index.html and letting client handle auth');
   next();
 }
 
@@ -164,6 +175,7 @@ export function addAuthRoutes(app) {
     // For debugging
     console.log('Session ID:', req.sessionID);
     console.log('Session:', req.session);
+    console.log('Session Cookie:', req.headers.cookie);
     console.log('Authenticated:', req.isAuthenticated());
     console.log('User:', req.user);
     
@@ -176,7 +188,10 @@ export function addAuthRoutes(app) {
     }
     
     console.log('User not authenticated');
-    return res.status(401).json({ isAuthenticated: false });
+    return res.status(401).json({ 
+      isAuthenticated: false,
+      message: 'Authentication required. Please log in again.'
+    });
   });
 
   // Debug route

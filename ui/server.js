@@ -27,7 +27,9 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    httpOnly: true,
+    sameSite: 'lax' // Allow cookies in cross-domain context with some security
   }
 }));
 
@@ -38,28 +40,27 @@ app.use(passport.session());
 
 // Enable CORS for development
 app.use((req, res, next) => {
-	// Always allow the frontend URL
-	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-	const origin = req.headers.origin;
+  // Always allow the frontend URL
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const origin = req.headers.origin;
 
-	// If request comes from frontend URL or another known origin
-	if (origin === frontendUrl) {
-		res.header('Access-Control-Allow-Origin', origin);
-		res.header('Access-Control-Allow-Credentials', 'true');
-	} else if (origin) {
-		// For other origins we still send CORS headers
-		res.header('Access-Control-Allow-Origin', origin);
-		res.header('Access-Control-Allow-Credentials', 'true');
-	} else {
-		// For requests without origin (like API tools)
-		res.header('Access-Control-Allow-Origin', '*');
-	}
-	res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-	res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-	if (req.method === 'OPTIONS') {
-		return res.sendStatus(200);
-	}
-	next();
+  // If request comes from frontend URL or another known origin
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  } else {
+    // For requests without origin (like API tools), set a less permissive policy
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  }
+  
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
 });
 
 // Parse JSON bodies
@@ -67,6 +68,15 @@ app.use(express.json());
 
 // Add authentication routes
 addAuthRoutes(app);
+
+// API health check endpoint - can be used to verify authentication
+app.get('/api/health', isAuthenticated, (req, res) => {
+  return res.json({
+    status: 'ok',
+    authenticated: req.isAuthenticated(),
+    user: req.user ? req.user.username : null
+  });
+});
 
 // Serve static files from the dist directory
 app.use(express.static(path.join(__dirname, 'dist')));

@@ -77,6 +77,7 @@ function createFilesStore() {
         headers: {
           'Content-Type': 'application/json'
         },
+        credentials: 'include', // Add credentials for cookie passing
         body: JSON.stringify({
           path: file.path,
           content
@@ -101,6 +102,7 @@ function createFilesStore() {
         headers: {
           'Content-Type': 'application/json'
         },
+        credentials: 'include', // Add credentials for cookie passing
         body: JSON.stringify({
           filePath,
           dockerImage
