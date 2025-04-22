@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { filesStore, type FileNode } from '../stores/filesStore';
+  import { API_URL } from '../config.js';
 
   // Default to tests directory
   let currentDirectory = 'tests';
@@ -31,12 +32,12 @@
     if (!node.isDirectory && (node.path.endsWith('.rec') || node.path.endsWith('.recb'))) {
       // Update URL with the file path
       updateUrlWithFilePath(node.path);
-      
+
       // Load the file from the backend
       fetchFileContent(node.path);
     }
   }
-  
+
   // Update URL with file path without page reload
   function updateUrlWithFilePath(path: string) {
     // Create URL with hash fragment for file path
@@ -45,7 +46,7 @@
     url.search = '';
     // Set hash to file-{path}
     url.hash = `file-${encodeURIComponent(path)}`;
-    
+
     // Update the URL without reloading the page
     window.history.pushState({}, '', url);
   }
@@ -53,7 +54,7 @@
   async function fetchFileContent(path: string) {
     try {
       // First fetch the .rec file content
-      const response = await fetch(`/api/get-file?path=${encodeURIComponent(path)}`);
+      const response = await fetch(`${API_URL}/api/get-file?path=${encodeURIComponent(path)}`);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch file: ${response.statusText}`);
@@ -68,7 +69,7 @@
       try {
         // Replace .rec with .rep in the path
         const repPath = path.replace(/\.rec$/, '.rep');
-        const repResponse = await fetch(`/api/get-file?path=${encodeURIComponent(repPath)}`);
+        const repResponse = await fetch(`${API_URL}/api/get-file?path=${encodeURIComponent(repPath)}`);
 
         if (repResponse.ok) {
           const repData = await repResponse.json();
@@ -200,7 +201,7 @@
     // Check URL hash for file path
     const hash = window.location.hash;
     let filePath = null;
-    
+
     if (hash && hash.startsWith('#file-')) {
       // Extract the file path from the hash
       filePath = decodeURIComponent(hash.substring(6)); // Remove '#file-' prefix
@@ -235,18 +236,18 @@
       // Load the file
       fetchFileContent(filePath);
     }
-    
+
     // Listen for hash changes to load files when URL changes
     window.addEventListener('hashchange', handleHashChange);
   });
-  
+
   // Handle URL hash changes
   function handleHashChange() {
     const hash = window.location.hash;
     if (hash && hash.startsWith('#file-')) {
       // Extract the file path from the hash
       const filePath = decodeURIComponent(hash.substring(6)); // Remove '#file-' prefix
-      
+
       // Load the file if it's different from the current file
       if (!$filesStore.currentFile || $filesStore.currentFile.path !== filePath) {
         fetchFileContent(filePath);
@@ -257,7 +258,7 @@
   // Fetch file tree from backend
   async function fetchFileTree() {
     try {
-      const response = await fetch('/api/get-file-tree');
+      const response = await fetch(`${API_URL}/api/get-file-tree`);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch file tree: ${response.statusText}`);

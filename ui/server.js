@@ -25,7 +25,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'clt-ui-secret-key',
   resave: false,
   saveUninitialized: false,
-  cookie: { 
+  cookie: {
     secure: process.env.NODE_ENV === 'production',
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
@@ -41,12 +41,12 @@ app.use((req, res, next) => {
 	// Always allow the frontend URL
 	const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
 	const origin = req.headers.origin;
-	
+
 	// If request comes from frontend URL or another known origin
 	if (origin === frontendUrl) {
 		res.header('Access-Control-Allow-Origin', origin);
 		res.header('Access-Control-Allow-Credentials', 'true');
-	} else if (origin) { 
+	} else if (origin) {
 		// For other origins we still send CORS headers
 		res.header('Access-Control-Allow-Origin', origin);
 		res.header('Access-Control-Allow-Credentials', 'true');
@@ -228,7 +228,7 @@ app.get('/api/get-patterns', isAuthenticated, async (req, res) => {
     // Parse the patterns file to convert it to JSON format
     const patterns = {};
     const lines = patternsContent.split('\n').filter(line => line.trim() !== '');
-    
+
     for (const line of lines) {
       const parts = line.split(' ');
       if (parts.length >= 2) {
@@ -237,7 +237,7 @@ app.get('/api/get-patterns', isAuthenticated, async (req, res) => {
         patterns[patternName] = patternRegex;
       }
     }
-    
+
     res.json({ patterns });
   } catch (error) {
     console.error('Error reading patterns file:', error);
@@ -348,7 +348,7 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 							// Get the output from the .rep file
 							const outputSection = repParts[1].trim();
 							const actualOutput = outputSection.split(/–––\s+.*?\s+–––/)[0].trim();
-							
+
 							// Always set the actual output from the rep file
 							cmd.actualOutput = actualOutput;
 

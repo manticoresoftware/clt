@@ -2,10 +2,11 @@
   import { filesStore, type RecordingCommand } from '../stores/filesStore';
   import { onMount } from 'svelte';
   import { PatternMatcher } from '../../pkg/wasm_diff';
+  import { API_URL } from '../config.js';
 
   // Add global TypeScript interface for window
   declare global {
-    interface Window { 
+    interface Window {
       patternMatcher: any;
       lastPatternRefresh: number;
     }
@@ -18,10 +19,10 @@
   // Fetch patterns from server
   async function fetchPatterns() {
     try {
-      const response = await fetch('/api/get-patterns', {
+      const response = await fetch(`${API_URL}/api/get-patterns`, {
         credentials: 'include'
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         patterns = data.patterns || {};
@@ -43,10 +44,10 @@
       console.log('Initializing WASM diff module...');
       const module = await import('../../pkg/wasm_diff');
       await module.default();
-      
+
       // Fetch patterns first
       const patternsData = await fetchPatterns();
-      
+
       // Initialize pattern matcher with fetched patterns
       patternMatcher = new PatternMatcher(JSON.stringify(patternsData));
       window.patternMatcher = patternMatcher;
@@ -88,7 +89,7 @@
 
     // Initialize WASM module for highlighting differences in the output
     initWasm();
-    
+
     // Define global window property for pattern refresh tracking
     if (typeof window !== 'undefined') {
       window.lastPatternRefresh = 0;
