@@ -59,62 +59,15 @@
 
   async function fetchFileContent(path: string) {
     try {
-      // First fetch the .rec file content
-      const response = await fetch(`${API_URL}/api/get-file?path=${encodeURIComponent(path)}`, {
-        credentials: 'include' // Add credentials for cookie passing
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch file: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-
-      // Parse the .rec file format into commands
-      const commands = parseRecFile(data.content);
-
-      // Try to fetch the .rep file if it exists
-      try {
-        // Replace .rec with .rep in the path
-        const repPath = path.replace(/\.rec$/, '.rep');
-        const repResponse = await fetch(`${API_URL}/api/get-file?path=${encodeURIComponent(repPath)}`, {
-          credentials: 'include' // Add credentials for cookie passing
-        });
-
-        if (repResponse.ok) {
-          const repData = await repResponse.json();
-
-          // Parse the .rep file to get actual outputs
-          const repContent = repData.content;
-          const repSections = repContent.split('––– input –––').slice(1);
-
-          // Update commands with actual outputs
-          repSections.forEach((section, index) => {
-            if (index < commands.length) {
-              const repParts = section.split('––– output –––');
-              if (repParts.length >= 2) {
-                const actualOutputRaw = repParts[1].trim().split('\n\n')[0].trim();
-
-                // Check if the output is exactly "OK" which means the test passed
-                if (actualOutputRaw === 'OK') {
-                  commands[index].status = 'matched';
-                  commands[index].actualOutput = commands[index].expectedOutput; // Use expected when they match
-                } else {
-                  // If not OK, it's a diff format - use raw output from stdout
-                  commands[index].status = 'failed';
-                  commands[index].actualOutput = actualOutputRaw; // Use the diff output
-                }
-              }
-            }
-          });
+      // Use loadFile method from filesStore which now uses our new parsing function
+      const success = await filesStore.loadFile(path);
+      
+      if (!success) {
+        // If file doesn't exist or couldn't be loaded, create it as a new file
+        if (path.endsWith('.rec') || path.endsWith('.recb')) {
+          filesStore.createNewFile(path);
         }
-      } catch (repError) {
-        // Ignore errors for the .rep file - it might not exist yet
-        console.log('Could not load .rep file (this is normal for new tests)');
       }
-
-      // Load the file into the editor with commands (possibly including actual outputs)
-      filesStore.loadFile(path, commands);
     } catch (error) {
       console.error('Error loading file:', error);
       // If file doesn't exist, create it with empty content
@@ -122,32 +75,6 @@
         filesStore.createNewFile(path);
       }
     }
-  }
-
-  // Parse .rec file format into commands
-  function parseRecFile(content: string) {
-    const commands = [];
-    const sections = content.split('––– input –––').slice(1); // Skip first empty part
-
-    for (const section of sections) {
-      const parts = section.split('––– output –––');
-      if (parts.length >= 2) {
-        const command = parts[0].trim();
-        const outputPart = parts[1].trim();
-        // Extract output until next section or end
-        const expectedOutput = outputPart.split('\n\n')[0].trim();
-
-        commands.push({
-          command,
-          expectedOutput,
-          status: 'pending', // Initialize as pending, not failed
-          initializing: true, // Mark as initializing until first run
-          actualOutput: '' // Initialize with empty actual output
-        });
-      }
-    }
-
-    return commands;
   }
 
   function createNewFile() {

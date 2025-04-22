@@ -19,6 +19,7 @@ interface RecordingCommand {
   initializing?: boolean; // Flag to hide output sections until test is run
   duration?: number; // Command execution duration
   isOutputExpanded?: boolean; // Track whether outputs are expanded
+  type?: 'command' | 'block' | 'comment'; // Type of the command
 }
 
 interface RecordingFile {
@@ -47,6 +48,160 @@ const defaultState: FilesState = {
   running: false
 };
 
+// Helper function to parse commands from the content of a .rec file
+const parseRecFileContent = (content: string): RecordingCommand[] => {
+  const commands: RecordingCommand[] = [];
+  const lines = content.split('\n');
+  let currentSection = '';
+  let currentCommand = '';
+  let currentOutput = '';
+  let commandType: 'command' | 'block' | 'comment' = 'command';
+  
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i].trim();
+    
+    // Detect section markers
+    if (line.startsWith('––– ') || line.startsWith('--- ')) {
+      // Process completed section before starting a new one
+      if (currentSection === 'input' && currentCommand) {
+        // We have a command but no output section yet
+        currentSection = ''; // Reset section
+      } else if (currentSection === 'output') {
+        // We've completed an input/output pair
+        commands.push({
+          command: currentCommand.trim(),
+          expectedOutput: currentOutput.trim(),
+          type: 'command',
+          status: 'pending',
+        });
+        
+        // Reset for next command
+        currentCommand = '';
+        currentOutput = '';
+        currentSection = '';
+      } else if (currentSection === 'comment' && currentCommand) {
+        // We've completed a comment section
+        commands.push({
+          command: currentCommand.trim(),
+          type: 'comment',
+          status: 'pending',
+        });
+        
+        // Reset for next command
+        currentCommand = '';
+        currentSection = '';
+      } else if (currentSection === 'block' && currentCommand) {
+        // We've completed a block reference
+        commands.push({
+          command: currentCommand.trim(),
+          type: 'block',
+          status: 'pending',
+        });
+        
+        // Reset for next command
+        currentCommand = '';
+        currentSection = '';
+      }
+      
+      // Parse the marker to determine what section follows
+      if (line.includes('input')) {
+        currentSection = 'input';
+        commandType = 'command';
+      } else if (line.includes('output')) {
+        currentSection = 'output';
+      } else if (line.includes('comment')) {
+        currentSection = 'comment';
+        commandType = 'comment';
+      } else if (line.includes('block:')) {
+        currentSection = 'block';
+        commandType = 'block';
+        // Extract path from block marker: "--- block: path/to/file ---"
+        const pathMatch = line.match(/block:\s*([^\s-]+)/);
+        if (pathMatch && pathMatch[1]) {
+          currentCommand = pathMatch[1].trim();
+        }
+      }
+      
+      i++;
+      continue;
+    }
+    
+    // Process content based on current section
+    if (currentSection === 'input') {
+      if (currentCommand) currentCommand += '\n';
+      currentCommand += lines[i];
+    } else if (currentSection === 'output') {
+      if (currentOutput) currentOutput += '\n';
+      currentOutput += lines[i];
+    } else if (currentSection === 'comment') {
+      if (currentCommand) currentCommand += '\n';
+      currentCommand += lines[i];
+    } else if (currentSection === 'block' && !currentCommand) {
+      // Only set the command if we haven't extracted it from the marker
+      currentCommand = lines[i];
+    }
+    
+    i++;
+  }
+  
+  // Handle the last section if it wasn't closed properly
+  if (currentSection === 'input' && currentCommand) {
+    commands.push({
+      command: currentCommand.trim(),
+      type: 'command',
+      status: 'pending',
+    });
+  } else if (currentSection === 'output' && currentCommand) {
+    commands.push({
+      command: currentCommand.trim(),
+      expectedOutput: currentOutput.trim(),
+      type: 'command',
+      status: 'pending',
+    });
+  } else if (currentSection === 'comment' && currentCommand) {
+    commands.push({
+      command: currentCommand.trim(),
+      type: 'comment',
+      status: 'pending',
+    });
+  } else if (currentSection === 'block' && currentCommand) {
+    commands.push({
+      command: currentCommand.trim(),
+      type: 'block',
+      status: 'pending',
+    });
+  }
+  
+  return commands;
+};
+
+// Helper function to determine if a file is loaded correctly
+const checkFileLoaded = async (path: string) => {
+  try {
+    // We'll make the API call to get the file content
+    const response = await fetch(`${API_URL}/api/get-file?path=${encodeURIComponent(path)}`, {
+      credentials: 'include'
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      const fileContent = data.content;
+      
+      // Parse the file content into commands
+      const commands = parseRecFileContent(fileContent);
+      
+      // Return the parsed commands
+      return { success: true, commands };
+    } else {
+      return { success: false, error: `Failed to load file: ${response.statusText}` };
+    }
+  } catch (error) {
+    console.error('Error loading file:', error);
+    return { success: false, error: `Failed to load file: ${error}` };
+  }
+};
+
 function createFilesStore() {
   const { subscribe, set, update } = writable<FilesState>(defaultState);
   let runModule: any; // Reference to the module itself for self-referencing
@@ -56,18 +211,28 @@ function createFilesStore() {
     let content = '';
 
     file.commands.forEach((cmd, index) => {
-      // Add newline before input section if not the first command
+      // Add newline before section if not the first command
       if (index > 0) {
         content += '\n';
       }
 
-      content += '––– input –––\n';
-      content += cmd.command + '\n';
-      content += '––– output –––\n';
+      // Handle different command types
+      if (cmd.type === 'block') {
+        // Format as block reference
+        content += `––– block: ${cmd.command} –––\n`;
+      } else if (cmd.type === 'comment') {
+        // Format as comment
+        content += `––– comment –––\n${cmd.command}\n`;
+      } else {
+        // Default - regular command (input/output format)
+        content += '––– input –––\n';
+        content += cmd.command + '\n';
+        content += '––– output –––\n';
 
-      // Use the expected output if provided, otherwise use actual output if available
-      const outputToSave = cmd.expectedOutput || cmd.actualOutput || '';
-      content += outputToSave;
+        // Use the expected output if provided, otherwise use actual output if available
+        const outputToSave = cmd.expectedOutput || cmd.actualOutput || '';
+        content += outputToSave;
+      }
 
       // Do not add extra trailing newlines
       // This ensures exact output matching without extra whitespace
@@ -540,36 +705,51 @@ function createFilesStore() {
         return false;
       }
     },
-    loadFile: async (path: string, commands: RecordingCommand[]) => {
-      // Set initializing flag for all commands to hide output sections until test is run
-      const commandsWithInitFlag = commands.map(cmd => ({
-        ...cmd,
-        status: cmd.status || 'pending', // Set default status to pending, not failed
-        initializing: true
-      }));
+    loadFile: async (path: string) => {
+      try {
+        // Load the file content
+        const result = await checkFileLoaded(path);
+        
+        if (result.success && result.commands) {
+          // Set initializing flag for all commands to hide output sections until test is run
+          const commandsWithInitFlag = result.commands.map(cmd => ({
+            ...cmd,
+            status: cmd.status || 'pending', // Set default status to pending
+            initializing: true
+          }));
 
-      // Update store first with the file data
-      update(state => ({
-        ...state,
-        currentFile: {
-          path,
-          commands: commandsWithInitFlag,
-          dirty: false,
-          status: 'pending'
-        }
-      }));
+          // Update store with the file data
+          update(state => ({
+            ...state,
+            currentFile: {
+              path,
+              commands: commandsWithInitFlag,
+              dirty: false,
+              status: 'pending'
+            }
+          }));
 
-      // Use a small delay to make sure the store update is complete
-      // before running the test
-      setTimeout(async () => {
-        try {
-          await runCurrentTest();
-        } catch (error) {
-          console.error('Error running test after file load:', error);
+          // Use a small delay to make sure the store update is complete
+          // before running the test
+          setTimeout(async () => {
+            try {
+              await runCurrentTest();
+            } catch (error) {
+              console.error('Error running test after file load:', error);
+            }
+          }, 100);
+          
+          return true;
+        } else {
+          console.error('Failed to load file:', result.error);
+          return false;
         }
-      }, 100);
+      } catch (error) {
+        console.error('Error in loadFile:', error);
+        return false;
+      }
     },
-    addCommand: (index: number, command: string) => update(state => {
+    addCommand: (index: number, command: string, commandType: 'command' | 'block' | 'comment' = 'command') => update(state => {
       if (!state.currentFile) return state;
 
       const newCommands = [...state.currentFile.commands];
@@ -578,7 +758,8 @@ function createFilesStore() {
         expectedOutput: '',
         status: 'pending',
         changed: true,
-        initializing: true // Mark as initializing to hide output sections until test is run
+        initializing: true, // Mark as initializing to hide output sections until test is run
+        type: commandType
       });
 
       const updatedFile = {

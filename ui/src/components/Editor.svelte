@@ -103,8 +103,17 @@
     console.log('Auto-save set to:', autoSaveEnabled);
   }
 
-  function addCommand(index: number) {
-    filesStore.addCommand(index, '');
+  function addCommand(index: number, commandType: 'command' | 'block' | 'comment' = 'command') {
+    // Default placeholder text based on type
+    let defaultText = '';
+    
+    if (commandType === 'block') {
+      defaultText = 'path/to/file'; // Default placeholder for block references
+    } else if (commandType === 'comment') {
+      defaultText = 'Add your comment here'; // Default placeholder for comments
+    }
+    
+    filesStore.addCommand(index, defaultText, commandType);
   }
 
   function deleteCommand(index: number) {
@@ -406,7 +415,13 @@
             <div class="command-header">
               <div class="command-title">
                 <span class="command-number">{i + 1}</span>
-                <span>Command</span>
+                {#if command.type === 'block'}
+                  <span>Block Reference</span>
+                {:else if command.type === 'comment'}
+                  <span>Comment</span>
+                {:else}
+                  <span>Command</span>
+                {/if}
                 {#if command.initializing}
                   <span class="command-status pending-status">
                     {@html getStatusIcon('pending')}
@@ -439,128 +454,211 @@
 
             <!-- Command input -->
             <div class="command-body">
-              <textarea
-                class="command-input"
-                placeholder="Enter command..."
-                rows="1"
-                bind:value={command.command}
-                on:input={(e) => {
-                  try {
-                    // Auto-resize textarea based on content
-                    e.target.style.height = 'auto';
-                    e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
+              {#if command.type === 'block'}
+                <!-- Block reference input -->
+                <textarea
+                  class="command-input"
+                  placeholder="Enter path to file (without .recb extension)"
+                  rows="1"
+                  bind:value={command.command}
+                  on:input={(e) => {
+                    try {
+                      // Auto-resize textarea based on content
+                      e.target.style.height = 'auto';
+                      e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
 
-                    // Create a local copy of the value to avoid direct store manipulation
-                    const newValue = e.target.value;
+                      // Create a local copy of the value to avoid direct store manipulation
+                      const newValue = e.target.value;
 
-                    // Use a timeout to avoid reactive update cycles
-                    setTimeout(() => {
-                      filesStore.updateCommand(i, newValue);
-                    }, 0);
-                  } catch (err) {
-                    console.error('Error updating command:', err);
-                  }
-                }}
-                use:initTextArea
-              ></textarea>
+                      // Use a timeout to avoid reactive update cycles
+                      setTimeout(() => {
+                        filesStore.updateCommand(i, newValue);
+                      }, 0);
+                    } catch (err) {
+                      console.error('Error updating block reference:', err);
+                    }
+                  }}
+                  use:initTextArea
+                ></textarea>
+              {:else if command.type === 'comment'}
+                <!-- Comment input -->
+                <textarea
+                  class="command-input"
+                  placeholder="Enter your comment here..."
+                  rows="1"
+                  bind:value={command.command}
+                  on:input={(e) => {
+                    try {
+                      // Auto-resize textarea based on content
+                      e.target.style.height = 'auto';
+                      e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
 
-              <!-- Output section -->
-              {#if !command.initializing}
-              <div class="output-grid {command.isOutputExpanded ? 'has-expanded-outputs' : ''}">
-                <div class="output-column">
-                  <div class="output-header">
-                    <span class="output-indicator expected-indicator"></span>
-                    <label for={`expected-output-${i}`}>Expected Output</label>
-                  </div>
-                  <textarea
-                    id={`expected-output-${i}`}
-                    class="expected-output {command.isOutputExpanded ? 'expanded' : ''}"
-                    placeholder="Expected output..."
-                    rows="1"
-                    bind:value={command.expectedOutput}
-                    on:input={(e) => {
-                      try {
-                        // Auto-resize textarea based on content
-                        e.target.style.height = 'auto';
-                        e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
+                      // Create a local copy of the value to avoid direct store manipulation
+                      const newValue = e.target.value;
 
-                        // Use a local copy of the value to avoid direct store manipulation
-                        const newValue = e.target.value || '';
+                      // Use a timeout to avoid reactive update cycles
+                      setTimeout(() => {
+                        filesStore.updateCommand(i, newValue);
+                      }, 0);
+                    } catch (err) {
+                      console.error('Error updating comment:', err);
+                    }
+                  }}
+                  use:initTextArea
+                ></textarea>
+              {:else}
+                <!-- Standard command input -->
+                <textarea
+                  class="command-input"
+                  placeholder="Enter command..."
+                  rows="1"
+                  bind:value={command.command}
+                  on:input={(e) => {
+                    try {
+                      // Auto-resize textarea based on content
+                      e.target.style.height = 'auto';
+                      e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
 
-                        // Use a timeout to avoid reactive update cycles
-                        setTimeout(() => {
-                          filesStore.updateExpectedOutput(i, newValue);
-                          
-                          // Force a re-render of the diff - a small hack to make 
-                          // sure the diff updates in real-time as we type
-                          if (command.actualOutput) {
-                            const actualOutput = parseActualOutputContent(command.actualOutput);
-                            const actualOutputElement = document.getElementById(`actual-output-${i}`);
-                            if (actualOutputElement) {
-                              highlightDifferences(actualOutput, newValue).then(diffHtml => {
-                                if (actualOutputElement.querySelector('.wasm-diff')) {
-                                  actualOutputElement.querySelector('.wasm-diff').innerHTML = diffHtml;
-                                } else {
-                                  actualOutputElement.innerHTML = `<div class="wasm-diff">${diffHtml}</div>`;
-                                }
-                              });
+                      // Create a local copy of the value to avoid direct store manipulation
+                      const newValue = e.target.value;
+
+                      // Use a timeout to avoid reactive update cycles
+                      setTimeout(() => {
+                        filesStore.updateCommand(i, newValue);
+                      }, 0);
+                    } catch (err) {
+                      console.error('Error updating command:', err);
+                    }
+                  }}
+                  use:initTextArea
+                ></textarea>
+
+                <!-- Output section (only for regular commands) -->
+                {#if !command.initializing}
+                <div class="output-grid {command.isOutputExpanded ? 'has-expanded-outputs' : ''}">
+                  <div class="output-column">
+                    <div class="output-header">
+                      <span class="output-indicator expected-indicator"></span>
+                      <label for={`expected-output-${i}`}>Expected Output</label>
+                    </div>
+                    <textarea
+                      id={`expected-output-${i}`}
+                      class="expected-output {command.isOutputExpanded ? 'expanded' : ''}"
+                      placeholder="Expected output..."
+                      rows="1"
+                      bind:value={command.expectedOutput}
+                      on:input={(e) => {
+                        try {
+                          // Auto-resize textarea based on content
+                          e.target.style.height = 'auto';
+                          e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
+
+                          // Use a local copy of the value to avoid direct store manipulation
+                          const newValue = e.target.value || '';
+
+                          // Use a timeout to avoid reactive update cycles
+                          setTimeout(() => {
+                            filesStore.updateExpectedOutput(i, newValue);
+                            
+                            // Force a re-render of the diff - a small hack to make 
+                            // sure the diff updates in real-time as we type
+                            if (command.actualOutput) {
+                              const actualOutput = parseActualOutputContent(command.actualOutput);
+                              const actualOutputElement = document.getElementById(`actual-output-${i}`);
+                              if (actualOutputElement) {
+                                highlightDifferences(actualOutput, newValue).then(diffHtml => {
+                                  if (actualOutputElement.querySelector('.wasm-diff')) {
+                                    actualOutputElement.querySelector('.wasm-diff').innerHTML = diffHtml;
+                                  } else {
+                                    actualOutputElement.innerHTML = `<div class="wasm-diff">${diffHtml}</div>`;
+                                  }
+                                });
+                              }
                             }
-                          }
-                        }, 0);
-                      } catch (err) {
-                        console.error('Error updating expected output:', err);
-                      }
-                    }}
-                    on:focus={() => {
-                      // Expand both outputs when focusing on the expected output
-                      filesStore.toggleOutputExpansion(i, true);
-                    }}
-                    on:blur={() => {
-                      // Collapse both outputs when focus leaves
-                      filesStore.toggleOutputExpansion(i, false);
-                    }}
-                    use:initTextArea
-                  ></textarea>
-                </div>
-                <div class="output-column">
-                  <div class="output-header">
-                    <span class="output-indicator actual-indicator"></span>
-                    <label for={`actual-output-${i}`}>Actual Output</label>
+                          }, 0);
+                        } catch (err) {
+                          console.error('Error updating expected output:', err);
+                        }
+                      }}
+                      on:focus={() => {
+                        // Expand both outputs when focusing on the expected output
+                        filesStore.toggleOutputExpansion(i, true);
+                      }}
+                      on:blur={() => {
+                        // Collapse both outputs when focus leaves
+                        filesStore.toggleOutputExpansion(i, false);
+                      }}
+                      use:initTextArea
+                    ></textarea>
                   </div>
-                  <div
-                    id={`actual-output-${i}`}
-                    class="actual-output {command.status === 'failed' ? 'failed-output' : ''} {command.isOutputExpanded ? 'expanded' : ''}"
-                    role="region"
-                    aria-label="Actual Output"
-                  >
-                    {#if command.actualOutput}
-                      {#await highlightDifferences(parseActualOutputContent(command.actualOutput), command.expectedOutput || '')}
-                        <pre class="plain-output">{parseActualOutputContent(command.actualOutput)}</pre>
-                      {:then diffHtml}
-                        <div class="wasm-diff">{@html diffHtml}</div>
-                      {/await}
-                    {:else}
-                      <span class="no-output-message">No actual output yet. Run validation to see results.</span>
-                    {/if}
+                  <div class="output-column">
+                    <div class="output-header">
+                      <span class="output-indicator actual-indicator"></span>
+                      <label for={`actual-output-${i}`}>Actual Output</label>
+                    </div>
+                    <div
+                      id={`actual-output-${i}`}
+                      class="actual-output {command.status === 'failed' ? 'failed-output' : ''} {command.isOutputExpanded ? 'expanded' : ''}"
+                      role="region"
+                      aria-label="Actual Output"
+                    >
+                      {#if command.actualOutput}
+                        {#await highlightDifferences(parseActualOutputContent(command.actualOutput), command.expectedOutput || '')}
+                          <pre class="plain-output">{parseActualOutputContent(command.actualOutput)}</pre>
+                        {:then diffHtml}
+                          <div class="wasm-diff">{@html diffHtml}</div>
+                        {/await}
+                      {:else}
+                        <span class="no-output-message">No actual output yet. Run validation to see results.</span>
+                      {/if}
+                    </div>
                   </div>
                 </div>
-              </div>
+                {/if}
               {/if}
             </div>
           </div>
 
           <!-- Add command button between items -->
-          <button
-            class="add-command-button"
-            on:click={() => addCommand(i + 1)}
-            title="Add command"
-            aria-label="Add command"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-          </button>
+          <div class="add-commands-row">
+            <button
+              class="add-command-button"
+              on:click={() => addCommand(i + 1, 'command')}
+              title="Add command"
+              aria-label="Add command"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              <span>Command</span>
+            </button>
+            
+            <button
+              class="add-block-button"
+              on:click={() => addCommand(i + 1, 'block')}
+              title="Add block reference"
+              aria-label="Add block reference"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+              </svg>
+              <span>Block</span>
+            </button>
+            
+            <button
+              class="add-comment-button"
+              on:click={() => addCommand(i + 1, 'comment')}
+              title="Add comment"
+              aria-label="Add comment"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+              </svg>
+              <span>Comment</span>
+            </button>
+          </div>
         {/each}
 
         <!-- Add first command button if no commands -->
@@ -571,18 +669,43 @@
               <line x1="5" y1="12" x2="19" y2="12"></line>
             </svg>
             <h3>No Commands Yet</h3>
-            <p>Add your first command to start building your test</p>
-            <button
-              class="add-first-command-button"
-              on:click={() => addCommand(0)}
-              aria-label="Add first command"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19"></line>
-                <line x1="5" y1="12" x2="19" y2="12"></line>
-              </svg>
-              Add First Command
-            </button>
+            <p>Add your first item to start building your test</p>
+            <div class="first-command-buttons">
+              <button
+                class="add-first-command-button"
+                on:click={() => addCommand(0, 'command')}
+                aria-label="Add first command"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                Add Command
+              </button>
+              
+              <button
+                class="add-first-block-button"
+                on:click={() => addCommand(0, 'block')}
+                aria-label="Add first block reference"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                Add Block
+              </button>
+              
+              <button
+                class="add-first-comment-button"
+                on:click={() => addCommand(0, 'comment')}
+                aria-label="Add first comment"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                </svg>
+                Add Comment
+              </button>
+            </div>
           </div>
         {/if}
       </div>
@@ -986,4 +1109,55 @@
     border-top: 1px solid var(--color-border-light);
     text-align: center;
   }
-</style>
+  .add-command-button, .add-block-button, .add-comment-button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border: 1px solid var(--color-border);
+    background-color: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 12px;
+  }
+
+  .add-commands-row {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin: 8px 0;
+  }
+
+  .add-command-button:hover, .add-block-button:hover, .add-comment-button:hover {
+    background-color: var(--color-bg-accent);
+    color: white;
+    border-color: var(--color-bg-accent);
+  }
+
+  .first-command-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .add-first-command-button, .add-first-block-button, .add-first-comment-button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background-color: var(--color-bg-accent);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.2s ease;
+  }
+
+  .add-first-command-button:hover, .add-first-block-button:hover, .add-first-comment-button:hover {
+    background-color: var(--color-bg-accent-hover);
+  }</style>
