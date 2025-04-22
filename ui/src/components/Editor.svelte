@@ -45,14 +45,37 @@
       const module = await import('../../pkg/wasm_diff');
       await module.default();
 
-      // Fetch patterns first
-      const patternsData = await fetchPatterns();
+      // Default patterns if API fails
+      const defaultPatterns = {
+        "NUMBER": "[0-9]+",
+        "DATE": "[0-9]{4}\\-[0-9]{2}\\-[0-9]{2}",
+        "DATETIME": "[0-9]{4}\\-[0-9]{2}\\-[0-9]{2}\\s[0-9]{2}:[0-9]{2}:[0-9]{2}",
+        "IPADDR": "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+",
+        "PATH": "[A-Za-z0-9\\/\\.\\-\\_]+",
+        "SEMVER": "[0-9]+\\.[0-9]+\\.[0-9]+",
+        "TIME": "[0-9]{2}:[0-9]{2}:[0-9]{2}",
+        "YEAR": "[0-9]{4}"
+      };
 
-      // Initialize pattern matcher with fetched patterns
+      // Fetch patterns first
+      let patternsData;
+      try {
+        patternsData = await fetchPatterns();
+        // If patterns is empty, use default patterns
+        if (Object.keys(patternsData).length === 0) {
+          console.log('No patterns returned from API, using defaults');
+          patternsData = defaultPatterns;
+        }
+      } catch (err) {
+        console.error('Failed to fetch patterns, using defaults:', err);
+        patternsData = defaultPatterns;
+      }
+
+      // Initialize pattern matcher with fetched or default patterns
       patternMatcher = new PatternMatcher(JSON.stringify(patternsData));
       window.patternMatcher = patternMatcher;
       wasmLoaded = true;
-      console.log('WASM diff module initialized successfully with patterns');
+      console.log('WASM diff module initialized successfully with patterns:', patternsData);
     } catch (err) {
       console.error('Failed to initialize WASM diff module:', err);
     }
@@ -106,13 +129,13 @@
   function addCommand(index: number, commandType: 'command' | 'block' | 'comment' = 'command') {
     // Default placeholder text based on type
     let defaultText = '';
-    
+
     if (commandType === 'block') {
       defaultText = 'path/to/file'; // Default placeholder for block references
     } else if (commandType === 'comment') {
       defaultText = 'Add your comment here'; // Default placeholder for comments
     }
-    
+
     filesStore.addCommand(index, defaultText, commandType);
   }
 
@@ -143,6 +166,7 @@
   }
 
   function getStatusIcon(status: string | undefined) {
+    // Create different status indicators for different item types
     if (status === 'matched') {
       return `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
@@ -153,10 +177,21 @@
         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
       </svg>`;
     }
-    // Default pending/unknown status icon
-    return `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-      <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd" />
-    </svg>`;
+    if (status === 'block' || status === 'pending') {
+      // Use a different icon for blocks - file icon is more appropriate for blocks, clock for pending
+      const isBlock = status === 'block';
+      const isPending = status === 'pending';
+
+      if (isBlock) {
+        return `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd" />
+          </svg>`;
+      } else {
+        return `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd" />
+          </svg>`;
+      }
+    }
   }
 
   // Escape HTML special characters
@@ -186,18 +221,72 @@
       try {
         // Only refresh if we've gone more than 5 seconds since last refresh
         if (!window.lastPatternRefresh || (Date.now() - window.lastPatternRefresh > 5000)) {
-          const patternsData = await fetchPatterns();
-          patternMatcher = new PatternMatcher(JSON.stringify(patternsData));
-          window.patternMatcher = patternMatcher;
-          window.lastPatternRefresh = Date.now();
-          console.log('Refreshed patterns for real-time comparison');
+          // Default patterns if API fails
+          const defaultPatterns = {
+            "NUMBER": "[0-9]+",
+            "DATE": "[0-9]{4}\\-[0-9]{2}\\-[0-9]{2}",
+            "DATETIME": "[0-9]{4}\\-[0-9]{2}\\-[0-9]{2}\\s[0-9]{2}:[0-9]{2}:[0-9]{2}",
+            "IPADDR": "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+",
+            "PATH": "[A-Za-z0-9\\/\\.\\-\\_]+",
+            "SEMVER": "[0-9]+\\.[0-9]+\\.[0-9]+",
+            "TIME": "[0-9]{2}:[0-9]{2}:[0-9]{2}",
+            "YEAR": "[0-9]{4}"
+          };
+
+          let patternsData;
+          try {
+            patternsData = await fetchPatterns();
+            // If patterns is empty, use default patterns
+            if (Object.keys(patternsData).length === 0) {
+              console.log('No patterns returned from API for refresh, using defaults');
+              patternsData = defaultPatterns;
+            }
+          } catch (refreshErr) {
+            console.warn('Could not refresh patterns, using defaults:', refreshErr);
+            patternsData = defaultPatterns;
+          }
+
+          try {
+            patternMatcher = new PatternMatcher(JSON.stringify(patternsData));
+            window.patternMatcher = patternMatcher;
+            window.lastPatternRefresh = Date.now();
+            console.log('Refreshed patterns for real-time comparison:', patternsData);
+          } catch (patternErr) {
+            console.warn('Error creating pattern matcher:', patternErr);
+          }
         }
-      } catch (refreshErr) {
-        console.warn('Could not refresh patterns:', refreshErr);
+      } catch (err) {
+        console.warn('Error in pattern refresh logic:', err);
+      }
+
+      // Return simple escaped text if inputs are identical
+      if (actual === expected) {
+        // Style as matched - no need for diff
+        if (actual && actual.trim() !== '') {
+          // Split by newlines to render properly
+          const lines = actual.split('\n');
+          let resultHtml = '';
+
+          lines.forEach((line, index) => {
+            resultHtml += `<span class="diff-matched-line">${escapeHtml(line)}</span>`;
+            if (index < lines.length - 1) {
+              resultHtml += '<br>';
+            }
+          });
+
+          return resultHtml;
+        }
+        return escapeHtml(actual);
       }
 
       // Get the diff result from the WASM module (returns a JSON string)
-      const diffResult = JSON.parse(patternMatcher.diff_text(expected, actual));
+      let diffResult;
+      try {
+        diffResult = JSON.parse(patternMatcher.diff_text(expected, actual));
+      } catch (diffErr) {
+        console.error('Error during diff processing:', diffErr);
+        return escapeHtml(actual);
+      }
 
       if (!diffResult.has_diff) {
         // No differences found; return with success styling
@@ -205,14 +294,14 @@
           // Split by newlines to render properly
           const lines = actual.split('\n');
           let resultHtml = '';
-          
+
           lines.forEach((line, index) => {
             resultHtml += `<span class="diff-matched-line">${escapeHtml(line)}</span>`;
             if (index < lines.length - 1) {
               resultHtml += '<br>';
             }
           });
-          
+
           return resultHtml;
         }
         return escapeHtml(actual); // Simply escape if no meaningful content
@@ -410,7 +499,7 @@
     {:else}
       <div class="command-list">
         {#each commands as command, i}
-          <div class="command-card {command.status === 'failed' && !command.initializing ? 'failed-command' : ''}">
+          <div class="command-card {(command.status === 'failed' && !command.initializing) ? 'failed-command' : ''} {command.type === 'block' ? 'block-command' : ''} {command.isBlockCommand ? 'is-block-command' : ''}">
             <!-- Command header -->
             <div class="command-header">
               <div class="command-title">
@@ -419,6 +508,8 @@
                   <span>Block Reference</span>
                 {:else if command.type === 'comment'}
                   <span>Comment</span>
+                {:else if command.isBlockCommand}
+                  <span>Block Command</span>
                 {:else}
                   <span>Command</span>
                 {/if}
@@ -427,11 +518,29 @@
                     {@html getStatusIcon('pending')}
                     <span>Pending</span>
                   </span>
-                {:else if command.status && command.status !== 'pending'}
+                {:else if command.status === 'matched'}
+                  <span class="command-status matched-status">
+                    {@html getStatusIcon('matched')}
+                    <span>Matched</span>
+                  </span>
+                {:else if command.status === 'failed'}
+                  <span class="command-status failed-status">
+                    {@html getStatusIcon('failed')}
+                    <span>Failed</span>
+                  </span>
+                {:else if command.type === 'block'}
                   <span class="command-status {command.status}-status">
                     {@html getStatusIcon(command.status)}
                     <span>{command.status.charAt(0).toUpperCase() + command.status.slice(1)}</span>
                   </span>
+                {:else if command.status}
+                  <span class="command-status {command.status}-status">
+                    {@html getStatusIcon(command.status)}
+                    <span>{command.status.charAt(0).toUpperCase() + command.status.slice(1)}</span>
+                  </span>
+                {/if}
+                {#if command.blockSource && command.isBlockCommand}
+                  <span class="block-source">From: {command.blockSource.split('/').pop()}</span>
                 {/if}
                 {#if command.duration}
                   <span class="command-duration">{formatDuration(command.duration)}</span>
@@ -559,8 +668,8 @@
                           // Use a timeout to avoid reactive update cycles
                           setTimeout(() => {
                             filesStore.updateExpectedOutput(i, newValue);
-                            
-                            // Force a re-render of the diff - a small hack to make 
+
+                            // Force a re-render of the diff - a small hack to make
                             // sure the diff updates in real-time as we type
                             if (command.actualOutput) {
                               const actualOutput = parseActualOutputContent(command.actualOutput);
@@ -584,9 +693,9 @@
                         // Expand both outputs when focusing on the expected output
                         filesStore.toggleOutputExpansion(i, true);
                       }}
-                      on:blur={() => {
-                        // Collapse both outputs when focus leaves
-                        filesStore.toggleOutputExpansion(i, false);
+                      on:click={() => {
+                        // Also expand on click (helps with touch devices)
+                        filesStore.toggleOutputExpansion(i, true);
                       }}
                       use:initTextArea
                     ></textarea>
@@ -601,6 +710,10 @@
                       class="actual-output {command.status === 'failed' ? 'failed-output' : ''} {command.isOutputExpanded ? 'expanded' : ''}"
                       role="region"
                       aria-label="Actual Output"
+                      on:click={() => {
+                        // Expand both outputs when clicking on actual output
+                        filesStore.toggleOutputExpansion(i, true);
+                      }}
                     >
                       {#if command.actualOutput}
                         {#await highlightDifferences(parseActualOutputContent(command.actualOutput), command.expectedOutput || '')}
@@ -633,7 +746,7 @@
               </svg>
               <span>Command</span>
             </button>
-            
+
             <button
               class="add-block-button"
               on:click={() => addCommand(i + 1, 'block')}
@@ -646,7 +759,7 @@
               </svg>
               <span>Block</span>
             </button>
-            
+
             <button
               class="add-comment-button"
               on:click={() => addCommand(i + 1, 'comment')}
@@ -682,7 +795,7 @@
                 </svg>
                 Add Command
               </button>
-              
+
               <button
                 class="add-first-block-button"
                 on:click={() => addCommand(0, 'block')}
@@ -694,7 +807,7 @@
                 </svg>
                 Add Block
               </button>
-              
+
               <button
                 class="add-first-comment-button"
                 on:click={() => addCommand(0, 'comment')}
@@ -890,6 +1003,20 @@
     color: var(--color-text-success, #16a34a);
   }
 
+  .block-status {
+    background-color: var(--color-bg-info, #e0f2fe);
+    color: var(--color-text-info, #0369a1);
+  }
+
+  /* Block command with its own status */
+  .block-command .command-status.matched-status {
+    border: 1px solid var(--color-text-success, #16a34a);
+  }
+
+  .block-command .command-status.failed-status {
+    border: 1px solid var(--color-text-error, #dc2626);
+  }
+
   .command-duration {
     font-size: 12px;
     color: var(--color-text-tertiary);
@@ -897,10 +1024,54 @@
     font-weight: normal;
   }
 
+  .block-source {
+    font-size: 11px;
+    color: var(--color-text-info, #0369a1);
+    background-color: rgba(186, 230, 253, 0.4); /* Very light blue */
+    padding: 0 6px;
+    border-radius: 4px;
+    margin-left: 8px;
+    display: inline-block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 150px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .block-source {
+      background-color: rgba(186, 230, 253, 0.15); /* Darker very light blue */
+      color: #7dd3fc; /* Lighter blue in dark mode */
+    }
+  }
+
   /* Command card with failed status */
   .command-card.failed-command {
     border: 2px solid var(--color-text-error, #dc2626);
     box-shadow: 0 0 8px rgba(220, 38, 38, 0.3);
+  }
+
+  /* Block command styling */
+  .command-card.block-command {
+    border-left: 5px solid var(--color-bg-info, #0ea5e9);
+    background-color: rgba(224, 242, 254, 0.25); /* Light blue background */
+  }
+
+  /* Block command with failed status should have red border-left */
+  .command-card.block-command.failed-command {
+    border-left: 5px solid var(--color-text-error, #dc2626);
+  }
+
+  /* Command from a block (isBlockCommand) styling */
+  .command-card.is-block-command {
+    border-left: 3px solid var(--color-bg-info, #0ea5e9);
+    margin-left: 12px;
+    width: calc(100% - 12px);
+  }
+
+  /* Failed command from a block */
+  .command-card.is-block-command.failed-command {
+    border-left: 3px solid var(--color-text-error, #dc2626);
   }
 
   /* Output styling */
@@ -996,7 +1167,7 @@
       background-color: rgba(16, 185, 129, 0.1);
       border-left: 3px solid #10b981;
     }
-    
+
     .diff-matched-line {
       background-color: rgba(34, 197, 94, 0.1);
       border-left: 3px solid #22c55e;

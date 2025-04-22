@@ -532,28 +532,6 @@ body {
   flex: 1;
 }
 
-.add-command-button {
-  align-self: center;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  background-color: var(--color-bg-primary);
-  border: 1px solid var(--color-border-medium);
-  border-radius: var(--radius-circle);
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  margin: 2px 0;
-  transition: all var(--transition-fast);
-}
-
-.add-command-button:hover {
-  color: var(--color-bg-accent);
-  border-color: var(--color-bg-accent);
-  background-color: #ebf8ff;
-}
-
 .no-commands {
   display: flex;
   flex-direction: column;

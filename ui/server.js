@@ -56,7 +56,7 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   }
-  
+
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
@@ -104,17 +104,17 @@ async function buildFileTree(dir, basePath = '', followSymlinks = true) {
 			try {
 				// Get the symlink target
 				const linkTarget = await fs.readlink(fullPath);
-				
+
 				// Resolve to absolute path if needed
 				const resolvedTarget = path.isAbsolute(linkTarget)
 					? linkTarget
 					: path.resolve(path.dirname(fullPath), linkTarget);
-				
+
 				// Attempt to get stats of the target
 				const targetStats = await fs.stat(resolvedTarget);
 				isDirectory = targetStats.isDirectory();
 				targetPath = resolvedTarget;
-				
+
 				console.log(`Symlink ${fullPath} -> ${resolvedTarget} (is directory: ${isDirectory})`);
 			} catch (error) {
 				console.error(`Error processing symlink ${fullPath}:`, error);
@@ -186,12 +186,12 @@ app.get('/api/get-file', isAuthenticated, async (req, res) => {
 		// Handle symlinks and resolve to the actual file
 		let actualPath = absolutePath;
 		const pathParts = filePath.split('/');
-		
+
 		// Check if the file is within a potential symlink directory
 		for (let i = 1; i <= pathParts.length; i++) {
 			const partialPath = pathParts.slice(0, i).join('/');
 			const partialAbsolutePath = path.join(ROOT_DIR, partialPath);
-			
+
 			try {
 				const stats = await fs.lstat(partialAbsolutePath);
 				if (stats.isSymbolicLink()) {
@@ -200,7 +200,7 @@ app.get('/api/get-file', isAuthenticated, async (req, res) => {
 					const resolvedTarget = path.isAbsolute(linkTarget)
 						? linkTarget
 						: path.resolve(path.dirname(partialAbsolutePath), linkTarget);
-					
+
 					// Replace the symlink part of the path with its target
 					const remainingPath = pathParts.slice(i).join('/');
 					actualPath = path.join(resolvedTarget, remainingPath);
@@ -241,12 +241,12 @@ app.post('/api/save-file', isAuthenticated, async (req, res) => {
 		// Handle symlinks in the path and save to the actual file location
 		let actualPath = absolutePath;
 		const pathParts = filePath.split('/');
-		
+
 		// Check if the file is within a potential symlink directory
 		for (let i = 1; i <= pathParts.length; i++) {
 			const partialPath = pathParts.slice(0, i).join('/');
 			const partialAbsolutePath = path.join(ROOT_DIR, partialPath);
-			
+
 			try {
 				const stats = await fs.lstat(partialAbsolutePath);
 				if (stats.isSymbolicLink()) {
@@ -255,7 +255,7 @@ app.post('/api/save-file', isAuthenticated, async (req, res) => {
 					const resolvedTarget = path.isAbsolute(linkTarget)
 						? linkTarget
 						: path.resolve(path.dirname(partialAbsolutePath), linkTarget);
-					
+
 					// Replace the symlink part of the path with its target
 					const remainingPath = pathParts.slice(i).join('/');
 					actualPath = path.join(resolvedTarget, remainingPath);
@@ -302,12 +302,12 @@ app.post('/api/move-file', isAuthenticated, async (req, res) => {
 		// Handle symlinks in the source path
 		let actualSourcePath = absoluteSourcePath;
 		const sourcePathParts = sourcePath.split('/');
-		
+
 		// Check if the source file is within a potential symlink directory
 		for (let i = 1; i <= sourcePathParts.length; i++) {
 			const partialPath = sourcePathParts.slice(0, i).join('/');
 			const partialAbsolutePath = path.join(ROOT_DIR, partialPath);
-			
+
 			try {
 				const stats = await fs.lstat(partialAbsolutePath);
 				if (stats.isSymbolicLink()) {
@@ -316,7 +316,7 @@ app.post('/api/move-file', isAuthenticated, async (req, res) => {
 					const resolvedTarget = path.isAbsolute(linkTarget)
 						? linkTarget
 						: path.resolve(path.dirname(partialAbsolutePath), linkTarget);
-					
+
 					// Replace the symlink part of the path with its target
 					const remainingPath = sourcePathParts.slice(i).join('/');
 					actualSourcePath = path.join(resolvedTarget, remainingPath);
@@ -332,12 +332,12 @@ app.post('/api/move-file', isAuthenticated, async (req, res) => {
 		// Handle symlinks in the target path
 		let actualTargetPath = absoluteTargetPath;
 		const targetPathParts = targetPath.split('/');
-		
+
 		// Check if the target file is within a potential symlink directory
 		for (let i = 1; i <= targetPathParts.length; i++) {
 			const partialPath = targetPathParts.slice(0, i).join('/');
 			const partialAbsolutePath = path.join(ROOT_DIR, partialPath);
-			
+
 			try {
 				const stats = await fs.lstat(partialAbsolutePath);
 				if (stats.isSymbolicLink()) {
@@ -346,7 +346,7 @@ app.post('/api/move-file', isAuthenticated, async (req, res) => {
 					const resolvedTarget = path.isAbsolute(linkTarget)
 						? linkTarget
 						: path.resolve(path.dirname(partialAbsolutePath), linkTarget);
-					
+
 					// Replace the symlink part of the path with its target
 					const remainingPath = targetPathParts.slice(i).join('/');
 					actualTargetPath = path.join(resolvedTarget, remainingPath);
@@ -391,7 +391,7 @@ app.delete('/api/delete-file', isAuthenticated, async (req, res) => {
 
 		// Check if it's a file or directory
 		const stats = await fs.stat(absolutePath);
-		
+
 		if (stats.isDirectory()) {
 			// For directories, use recursive removal
 			await fs.rm(absolutePath, { recursive: true });
@@ -439,43 +439,337 @@ function extractDuration(content) {
 	return durationMatch ? parseInt(durationMatch[1], 10) : null;
 }
 
-// API endpoint to get patterns file
-app.get('/api/get-patterns', isAuthenticated, async (req, res) => {
-  try {
-    // Read the patterns file from the .clt/patterns path in UI folder or fall back to the project root
-    let patternsContent;
-    try {
-      // First try to read from UI folder .clt directory
-      patternsContent = await fs.readFile(path.join(__dirname, '.clt', 'patterns'), 'utf8');
-    } catch (err) {
-      // If not found, try to read from project root
-      try {
-        patternsContent = await fs.readFile(path.join(ROOT_DIR, '.clt', 'patterns'), 'utf8');
-      } catch (innerErr) {
-        // If both fail, return an error
-        return res.status(404).json({ error: 'Patterns file not found' });
-      }
-    }
+// Helper function to resolve a block file path
+async function resolveBlockPath(blockPath, basePath) {
+	// If the block path is already absolute, use it directly
+	if (path.isAbsolute(blockPath)) {
+		return blockPath;
+	}
 
-    // Parse the patterns file to convert it to JSON format
-    const patterns = {};
-    const lines = patternsContent.split('\n').filter(line => line.trim() !== '');
+	// If it's a relative path, resolve it relative to the base file's directory
+	const baseDir = path.dirname(basePath);
+	const resolvedPath = path.join(baseDir, blockPath);
 
-    for (const line of lines) {
-      const parts = line.split(' ');
-      if (parts.length >= 2) {
-        const patternName = parts[0].trim();
-        const patternRegex = parts.slice(1).join(' ').trim();
-        patterns[patternName] = patternRegex;
-      }
-    }
+	// First try with the exact path as specified
+	try {
+		await fs.access(resolvedPath);
+		return resolvedPath;
+	} catch (exactPathError) {
+		// If exact path doesn't exist, try with .recb extension
+		const recbPath = `${resolvedPath}.recb`;
+		try {
+			await fs.access(recbPath);
+			return recbPath;
+		} catch (recbError) {
+			// If .recb doesn't exist, try with .rec extension
+			const recPath = `${resolvedPath}.rec`;
+			try {
+				await fs.access(recPath);
+				return recPath;
+			} catch (recError) {
+				// If we still can't find it, log a detailed error and throw
+				console.error(`Block file not found: ${blockPath}`);
+				console.error(`Tried paths: ${resolvedPath}, ${recbPath}, ${recPath}`);
+				throw new Error(`Block file not found: ${blockPath}`);
+			}
+		}
+	}
+}
 
-    res.json({ patterns });
-  } catch (error) {
-    console.error('Error reading patterns file:', error);
-    res.status(500).json({ error: 'Failed to read patterns file' });
-  }
-});
+// Helper function to read and parse a .recb file
+async function loadBlockContent(blockPath) {
+	try {
+		// Read the block file content
+		const content = await fs.readFile(blockPath, 'utf8');
+
+		// Parse the content into commands
+		const commands = [];
+		const sections = content.split('––– input –––').slice(1);
+
+		// If there are no input sections, add a placeholder error command
+		if (sections.length === 0) {
+			console.warn(`Block file ${blockPath} has no input sections`);
+			return [{
+				command: `echo "Warning: Block file ${path.basename(blockPath)} has no input sections"`,
+				expectedOutput: '',
+				blockSource: blockPath,
+			}];
+		}
+
+		for (const section of sections) {
+			const parts = section.split('––– output –––');
+			if (parts.length >= 2) {
+				const command = parts[0].trim();
+
+				// Find the next command separator if any
+				const outputPart = parts[1].trim();
+				let expectedOutput = outputPart;
+
+				// Look for next command delimiter
+				const nextCommandMatch = outputPart.match(/–––\s+.*?\s+–––/);
+				if (nextCommandMatch) {
+					// Split at the next delimiter to get just the output
+					expectedOutput = outputPart.substring(0, nextCommandMatch.index).trim();
+				}
+
+				commands.push({
+					command,
+					expectedOutput,
+					blockSource: blockPath,
+				});
+			} else if (parts.length === 1 && parts[0].trim()) {
+				// There's a command but no output section
+				console.warn(`Block file ${blockPath} has a command without output section: ${parts[0].trim().substring(0, 40)}...`);
+				commands.push({
+					command: parts[0].trim(),
+					expectedOutput: '',
+					blockSource: blockPath,
+				});
+			}
+		}
+
+		// If we couldn't parse any commands, add an error command
+		if (commands.length === 0) {
+			console.warn(`Failed to parse any commands from block file ${blockPath}`);
+			return [{
+				command: `echo "Warning: Failed to parse commands from block file ${path.basename(blockPath)}"`,
+				expectedOutput: '',
+				blockSource: blockPath,
+			}];
+		}
+
+		return commands;
+	} catch (error) {
+		console.error(`Error loading block file ${blockPath}:`, error);
+		// Return a single error command that will display in the UI
+		return [{
+			command: `echo "Error loading block file: ${path.basename(blockPath)} - ${error.message}"`,
+			expectedOutput: '',
+			blockSource: blockPath,
+		}];
+	}
+}
+
+// Recursively expand blocks in a list of commands
+async function expandBlocks(commands, basePath, expandedBlocks = new Set()) {
+	const result = [];
+
+	// Process each command
+	for (const cmd of commands) {
+		// Check if this is a block reference or a regular command
+		if (cmd.type === 'block') {
+			// Get the block path from the command
+			const blockPath = cmd.command;
+
+			try {
+				// Resolve the actual path to the block file
+				const resolvedBlockPath = await resolveBlockPath(blockPath, basePath);
+
+				// Guard against recursive inclusion
+				if (expandedBlocks.has(resolvedBlockPath)) {
+					console.warn(`Circular block reference detected: ${resolvedBlockPath}`);
+					// Add an error command instead
+					result.push({
+						command: `echo "Error: Circular reference detected for block: ${blockPath}"`,
+						expectedOutput: '',
+						type: 'command',
+						parentBlock: cmd,
+						blockSource: resolvedBlockPath,
+						isBlockCommand: true
+					});
+				} else {
+					// Mark this block as being expanded to prevent circular references
+					expandedBlocks.add(resolvedBlockPath);
+
+					// Load the block file content
+					const blockCommands = await loadBlockContent(resolvedBlockPath);
+
+					// Add metadata to each command from the block
+					const processedBlockCommands = blockCommands.map(blockCmd => ({
+						...blockCmd,
+						type: 'command',
+						parentBlock: cmd,
+						blockSource: resolvedBlockPath,
+						isBlockCommand: true
+					}));
+
+					// Recursively expand any nested blocks
+					const expandedBlockCommands = await expandBlocks(
+						processedBlockCommands,
+						resolvedBlockPath,
+						new Set(expandedBlocks)
+					);
+
+					// Add all expanded commands to the result
+					result.push(...expandedBlockCommands);
+
+					// Remove this block from the set of expanded blocks
+					expandedBlocks.delete(resolvedBlockPath);
+				}
+			} catch (error) {
+				console.error(`Error expanding block ${blockPath}:`, error);
+				// Add an error command
+				result.push({
+					command: `echo "Error: Failed to load block: ${blockPath} - ${error.message}"`,
+					expectedOutput: '',
+					type: 'command',
+					parentBlock: cmd,
+					isBlockCommand: true
+				});
+			}
+		} else if (cmd.type !== 'comment') {
+			// Regular command, add directly to the result
+			result.push(cmd);
+		}
+		// Comments are skipped in the expanded result as they don't run
+	}
+
+	return result;
+}
+
+//
+//
+// Function to process test results with proper block handling
+
+// Helper function to parse a .rec file and handle blocks recursively
+async function parseRecFile(absolutePath) {
+	// Read the file content
+	const content = await fs.readFile(absolutePath, 'utf8');
+
+	// Parse initial commands from .rec file
+	const commands = [];
+	const lines = content.split('\n');
+	let currentSection = '';
+	let currentCommand = '';
+	let currentOutput = '';
+	let commandType = 'command';
+
+	let i = 0;
+	while (i < lines.length) {
+		const line = lines[i].trim();
+
+		// Detect section markers
+		if (line.startsWith('––– ') || line.startsWith('--- ')) {
+			// Process completed section before starting a new one
+			if (currentSection === 'input' && currentCommand) {
+				// We have a command but no output section yet
+				currentSection = ''; // Reset section
+			} else if (currentSection === 'output' && currentCommand) {
+				// We've completed an input/output pair
+				commands.push({
+					command: currentCommand.trim(),
+					expectedOutput: currentOutput.trim(),
+					type: 'command',
+					status: 'pending',
+				});
+
+				// Reset for next command
+				currentCommand = '';
+				currentOutput = '';
+				currentSection = '';
+			} else if (currentSection === 'comment' && currentCommand) {
+				// We've completed a comment section
+				commands.push({
+					command: currentCommand.trim(),
+					type: 'comment',
+					status: 'pending',
+				});
+
+				// Reset for next command
+				currentCommand = '';
+				currentSection = '';
+			} else if (currentSection === 'block' && currentCommand) {
+				// We've completed a block reference
+				commands.push({
+					command: currentCommand.trim(),
+					type: 'block',
+					status: 'pending',
+				});
+
+				// Reset for next command
+				currentCommand = '';
+				currentSection = '';
+			}
+
+			// Parse the marker to determine what section follows
+			if (line.includes('input')) {
+				currentSection = 'input';
+				commandType = 'command';
+			} else if (line.includes('output')) {
+				currentSection = 'output';
+			} else if (line.includes('comment')) {
+				currentSection = 'comment';
+				commandType = 'comment';
+			} else if (line.includes('block:')) {
+				currentSection = 'block';
+				commandType = 'block';
+				// Extract path from block marker: "--- block: path/to/file ---"
+				const pathMatch = line.match(/block:\s*([^\s]+)/);
+				if (pathMatch && pathMatch[1]) {
+					currentCommand = pathMatch[1].trim();
+				}
+			}
+
+			i++;
+			continue;
+		}
+
+		// Process content based on current section
+		if (currentSection === 'input') {
+			if (currentCommand) currentCommand += '\n';
+			currentCommand += lines[i];
+		} else if (currentSection === 'output') {
+			if (currentOutput) currentOutput += '\n';
+			currentOutput += lines[i];
+		} else if (currentSection === 'comment') {
+			if (currentCommand) currentCommand += '\n';
+			currentCommand += lines[i];
+		} else if (currentSection === 'block' && !currentCommand) {
+			// Only set the command if we haven't extracted it from the marker
+			currentCommand = lines[i];
+		}
+
+		i++;
+	}
+
+	// Handle the last section if it wasn't closed properly
+	if (currentSection === 'input' && currentCommand) {
+		commands.push({
+			command: currentCommand.trim(),
+			type: 'command',
+			status: 'pending',
+		});
+	} else if (currentSection === 'output' && currentCommand) {
+		commands.push({
+			command: currentCommand.trim(),
+			expectedOutput: currentOutput.trim(),
+			type: 'command',
+			status: 'pending',
+		});
+	} else if (currentSection === 'comment' && currentCommand) {
+		commands.push({
+			command: currentCommand.trim(),
+			type: 'comment',
+			status: 'pending',
+		});
+	} else if (currentSection === 'block' && currentCommand) {
+		commands.push({
+			command: currentCommand.trim(),
+			type: 'block',
+			status: 'pending',
+		});
+	}
+
+	// After parsing the file, recursively expand any blocks
+	try {
+		const expandedCommands = await expandBlocks(commands, absolutePath);
+		return expandedCommands;
+	} catch (error) {
+		console.error(`Error expanding blocks in ${absolutePath}:`, error);
+		// Return the original commands if block expansion fails
+		return commands;
+	}
+}
 
 // API endpoint to run a test
 app.post('/api/run-test', isAuthenticated, async (req, res) => {
@@ -524,121 +818,17 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 			console.log(testReallyFailed ? `Test completed with differences: ${error?.message}` : 'Test passed with no differences');
 
 			try {
-				// First, read the .rec file to get the expected outputs
-				const content = await fs.readFile(absolutePath, 'utf8');
+				// Parse the .rec file and expand blocks
+				const expandedCommands = await parseRecFile(absolutePath);
 
-				// Parse commands from .rec file
-				const commands = [];
-				const sections = content.split('––– input –––').slice(1);
+				// Process the test results with expanded blocks
+				const results = await processTestResults(absolutePath, expandedCommands, stdout, stderr, exitCode, error);
 
-				for (const section of sections) {
-					const parts = section.split('––– output –––');
-					if (parts.length >= 2) {
-						const command = parts[0].trim();
-
-						// Find the next command separator, if any
-						const outputPart = parts[1].trim();
-						let expectedOutput = outputPart;
-
-						// Look for the next command delimiter (––– ... –––)
-						const nextCommandMatch = outputPart.match(/–––\s+.*?\s+–––/);
-						if (nextCommandMatch) {
-							// Split at the next command delimiter to get just the output
-							expectedOutput = outputPart.substring(0, nextCommandMatch.index).trim();
-						}
-
-						commands.push({
-							command,
-							expectedOutput,
-							actualOutput: '', // Initialize with empty actual output
-							status: 'pending', // Always initialize as pending
-							duration: null    // Initialize duration as null
-						});
-					}
-				}
-
-				// Next, try to read the .rep file to get durations and expected outputs
-				const repFilePath = absolutePath.replace(/\.rec$/, '.rep');
-				let success = false; // Default to failure, will update based on command results
-
-				try {
-					const repContent = await fs.readFile(repFilePath, 'utf8');
-					console.log(`Successfully read .rep file: ${repFilePath}`);
-
-					// Parse actual outputs from .rep file
-					const repSections = repContent.split('––– input –––').slice(1);
-
-					for (let i = 0; i < Math.min(commands.length, repSections.length); i++) {
-						const cmd = commands[i];
-						const repParts = repSections[i].split('––– output –––');
-
-						if (repParts.length >= 2) {
-							// Extract duration from this section of the rep file
-							const sectionContent = repSections[i];
-							cmd.duration = extractDuration(sectionContent);
-
-							// Get the output from the .rep file
-							const outputSection = repParts[1].trim();
-							const actualOutput = outputSection.split(/–––\s+.*?\s+–––/)[0].trim();
-
-							// Always set the actual output from the rep file
-							cmd.actualOutput = actualOutput;
-
-							// If this is a new command without expected output, set it
-							if (!cmd.expectedOutput) {
-								cmd.expectedOutput = actualOutput;
-							}
-						}
-					}
-				} catch (repError) {
-					console.log(`Could not read .rep file (this is normal for new tests): ${repError.message}`);
-					// If .rep file doesn't exist, keep default values for commands
-				}
-
-				// Parse the stdout from the command to determine command statuses
-				// The stdout contains the actual results of the test run
-				let stdoutSections = stdout.split('––– input –––').slice(1);
-				let allCommandsPassed = true;
-
-				for (let i = 0; i < Math.min(commands.length, stdoutSections.length); i++) {
-					const cmd = commands[i];
-					const stdoutParts = stdoutSections[i].split('––– output –––');
-
-					if (stdoutParts.length >= 2) {
-						const commandOutput = stdoutParts[1].trim().split('\n\n')[0].trim();
-
-						// Check if the output contains "OK" which means the test passed for this command
-						if (commandOutput === 'OK' || commandOutput.startsWith('OK\n')) {
-							cmd.status = 'matched';
-							// Don't modify actualOutput here, it comes from rep file
-						} else {
-							cmd.status = 'failed';
-							// Don't modify actualOutput here, it comes from rep file
-							allCommandsPassed = false;
-						}
-					} else {
-						// If we can't parse the output properly, mark as failed
-						cmd.status = 'failed';
-						allCommandsPassed = false;
-					}
-				}
-
-				// Determine overall success based on command results
-				success = allCommandsPassed;
-
-				// Return commands and test status
+				// Return the results
 				res.json({
 					filePath,
-					commands,
 					dockerImage: dockerImage || 'default-image',
-					success,
-					exitCode: exitCode,
-					exitCodeSuccess: exitCode === 0,
-					error: testReallyFailed ? error?.message : null,
-					stderr: stderr || null,
-					stdout: stdout || null,
-					message: success ? 'Test executed successfully' : 'Test executed with differences',
-					testReallyFailed
+					...results
 				});
 			} catch (readError) {
 				console.error('Error reading test files:', readError);
@@ -662,7 +852,7 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 	try {
 		const { title, description } = req.body;
-		
+
 		if (!title) {
 			return res.status(400).json({ error: 'PR title is required' });
 		}
@@ -701,7 +891,7 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 				// Get symlink target
 				const symlinkTarget = await fs.readlink(testsDir);
 				// Resolve to absolute path if needed
-				actualTestsDir = path.isAbsolute(symlinkTarget) ? 
+				actualTestsDir = path.isAbsolute(symlinkTarget) ?
 					symlinkTarget : path.resolve(path.dirname(testsDir), symlinkTarget);
 				console.log(`Tests directory is a symlink pointing to ${actualTestsDir}`);
 			}
@@ -720,7 +910,7 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 				const resolvedTarget = path.isAbsolute(symlinkTarget)
 					? symlinkTarget
 					: path.resolve(path.dirname(testsDir), symlinkTarget);
-				
+
 				console.log(`Tests directory is a symlink pointing to ${resolvedTarget}`);
 				actualRepoPath = resolvedTarget;
 			}
@@ -793,12 +983,12 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 
 				// Create a PR using gh CLI
 				let prCommand = `gh pr create --title "${title}" --head ${branchName}`;
-				
+
 				// Add description if provided
 				if (description) {
 					prCommand += ` --body "${description}"`;
 				}
-				
+
 				// Add default base branch
 				prCommand += ` --base ${currentBranch}`;
 
@@ -821,11 +1011,11 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 				});
 			} catch (ghError) {
 				console.error('Error using GitHub CLI:', ghError);
-				
+
 				// Push to the remote repository anyway
 				await execPromise(`git push -u origin ${branchName}`);
 				console.log(`Pushed to remote branch: ${branchName}`);
-				
+
 				// GitHub CLI not available, but we still pushed the branch
 				return res.json({
 					success: true,
@@ -860,3 +1050,216 @@ app.get('*', isAuthenticated, (req, res) => {
 app.listen(PORT, HOST === 'localhost' ? HOST : '0.0.0.0', () => {
 	console.log(`Server is running on ${HOST}:${PORT}`);
 });
+// Function to process test results with proper block handling
+async function processTestResults(absolutePath, expandedCommands, stdout, stderr, exitCode, error) {
+	const repFilePath = absolutePath.replace(/\.rec$/, '.rep');
+	let success = false; // Default to failure, will update based on command results
+
+	// Create a mapping of block commands by their parent block for status propagation
+	const blockCommandMap = new Map();
+	expandedCommands.forEach(cmd => {
+		if (cmd.isBlockCommand && cmd.parentBlock) {
+			// The key is the parent block's index/ID
+			const key = `${cmd.parentBlock.command}|${cmd.blockSource || ''}`;
+
+			if (!blockCommandMap.has(key)) {
+				blockCommandMap.set(key, []);
+			}
+			blockCommandMap.get(key).push(cmd);
+		}
+	});
+
+	try {
+		// Try to read the .rep file for actual outputs and durations
+		let repContent = '';
+		const repSections = [];
+
+		try {
+			repContent = await fs.readFile(repFilePath, 'utf8');
+			console.log(`Successfully read .rep file: ${repFilePath}`);
+
+			// Check if rep file is empty
+			if (!repContent || repContent.trim() === '') {
+				console.warn(`The .rep file is empty: ${repFilePath}`);
+				throw new Error('Empty rep file');
+			}
+
+			// Parse sections
+			const sections = repContent.split('\u2013\u2013\u2013 input \u2013\u2013\u2013').slice(1);
+			if (sections.length === 0) {
+				console.warn(`No input sections found in .rep file: ${repFilePath}`);
+				throw new Error('No sections found in rep file');
+			}
+
+			// Parse the .rep file sections
+			for (const section of sections) {
+				const parts = section.split('\u2013\u2013\u2013 output \u2013\u2013\u2013');
+				if (parts.length >= 2) {
+					repSections.push({
+						command: parts[0].trim(),
+						output: parts[1].trim(),
+						full: section
+					});
+				}
+			}
+
+			console.log(`Parsed ${repSections.length} sections from rep file`);
+			if (repSections.length === 0) {
+				console.warn(`Failed to parse sections from .rep file: ${repFilePath}`);
+				throw new Error('Failed to parse sections from rep file');
+			}
+		} catch (repError) {
+			// If the rep file doesn't exist or is invalid, continue without it
+			console.warn(`Could not process .rep file: ${repError.message}`);
+
+			// Try to parse outputs from stdout instead
+			if (stdout && stdout.trim()) {
+				console.log('Attempting to parse command outputs from stdout');
+				const sections = stdout.split('\u2013\u2013\u2013 input \u2013\u2013\u2013').slice(1);
+				for (const section of sections) {
+					const parts = section.split('\u2013\u2013\u2013 output \u2013\u2013\u2013');
+					if (parts.length >= 2) {
+						repSections.push({
+							command: parts[0].trim(),
+							output: parts[1].trim(),
+							full: section
+						});
+					}
+				}
+				console.log(`Parsed ${repSections.length} sections from stdout`);
+			}
+		}
+
+		// Process commands with outputs from rep file or stdout
+		let allCommandsPassed = true;
+
+		// Debug logging for initial command statuses
+		console.log('Processing commands - total:', expandedCommands.length);
+		console.log('Block commands:', expandedCommands.filter(cmd => cmd.isBlockCommand).length);
+		console.log('Block references:', expandedCommands.filter(cmd => cmd.type === 'block' && !cmd.isBlockCommand).length);
+
+		for (const cmd of expandedCommands) {
+			// Skip comments and mark blocks
+			if (cmd.type === 'comment') {
+				continue;
+			} else if (cmd.type === 'block' && !cmd.isBlockCommand) {
+				// Mark block with appropriate initial status based on exit code
+				cmd.status = exitCode === 0 ? 'matched' : 'pending';
+				continue;
+			}
+
+			// For regular commands, find the corresponding output
+			const commandText = cmd.command.trim();
+			const matchingSection = repSections.find(s => s.command.trim() === commandText);
+
+			if (matchingSection) {
+				// Extract duration
+				cmd.duration = extractDuration(matchingSection.full);
+
+				// Get the output content
+				const output = matchingSection.output;
+				const nextDelimiterMatch = output.match(/\u2013\u2013\u2013\s.*?\s\u2013\u2013\u2013/);
+				const actualOutput = nextDelimiterMatch
+					? output.substring(0, nextDelimiterMatch.index).trim()
+					: output;
+
+				// Set actual output
+				cmd.actualOutput = actualOutput;
+
+				// Set expected output if not already set
+				if (!cmd.expectedOutput) {
+					cmd.expectedOutput = actualOutput;
+				}
+
+				// If the exitCode is 0, treat everything as matched, otherwise do normal comparison
+				if (exitCode === 0) {
+					cmd.status = 'matched';
+				} else {
+					// Determine status based on comparison
+					if (cmd.expectedOutput === actualOutput) {
+						cmd.status = 'matched';
+					} else {
+						cmd.status = 'failed';
+						allCommandsPassed = false;
+					}
+				}
+			} else {
+				// Could not find matching output
+				console.warn(`No matching output found for command: ${commandText.substring(0, 50)}...`);
+
+				// If the exitCode is 0, treat everything as matched, even if no output was found
+				if (exitCode === 0) {
+					cmd.status = 'matched';
+					cmd.actualOutput = 'No matching output found, but test passed.';
+				} else {
+					cmd.status = 'failed';
+					allCommandsPassed = false;
+
+					// Set actual output to an error message for UI display
+					cmd.actualOutput = 'Error: No matching output found for this command';
+				}
+			}
+		}
+
+		// Now propagate status to block declarations based on their contained commands only
+		for (const cmd of expandedCommands) {
+			if (cmd.isBlockCommand && cmd.parentBlock) {
+				// The key is the parent block's index/ID
+				const key = `${cmd.parentBlock.command}|${cmd.blockSource || ''}`;
+				const blockCommands = blockCommandMap.get(key) || [];
+
+				if (blockCommands.length > 0) {
+					// If any block command failed, mark the block as failed
+					const anyFailed = blockCommands.some(bc => bc.status === 'failed');
+					// If any command matched, consider the block matched
+					const anyMatched = blockCommands.some(bc => bc.status === 'matched');
+
+					// Set status based only on the block's commands, independent of test exit code
+					// If no failures and at least one passed, then the block passed
+					cmd.status = anyFailed ? 'failed' : (anyMatched ? 'matched' : 'pending');
+
+					// Debug log for block status
+					console.log(`Block ${cmd.command} status: ${cmd.status} (anyFailed=${anyFailed}, anyMatched=${anyMatched}, command count=${blockCommands.length})`);
+					console.log('Block commands:', blockCommands.map(bc => ({ cmd: bc.command.substring(0, 30), status: bc.status })));
+
+					// Update overall success status only for real failures
+					if (anyFailed) allCommandsPassed = false;
+				}
+			}
+		}
+
+		// Determine overall success - a test is successful if exitCode is 0,
+		// regardless of individual command comparisons, which might only be different due to pattern variables
+		success = exitCode === 0;
+
+	} catch (processError) {
+		console.error('Error processing test results:', processError);
+		// Mark all commands as failed if there was an error
+		for (const cmd of expandedCommands) {
+			if (cmd.type !== 'comment' && !cmd.status) {
+				cmd.status = 'failed';
+			}
+		}
+	}
+
+	// Make sure non-block commands have a status set (blocks already handled above)
+	for (const cmd of expandedCommands) {
+		if (cmd.type !== 'comment' && cmd.type !== 'block' && !cmd.status) {
+			// For non-block commands without a status, set default status
+			cmd.status = 'pending';
+		}
+	}
+
+	const testReallyFailed = exitCode !== 0;
+	return {
+		commands: expandedCommands,
+		success,
+		exitCode,
+		exitCodeSuccess: exitCode === 0,
+		error: exitCode !== 0 ? error?.message : null,
+		stderr,
+		stdout,
+		message: success ? 'Test executed successfully' : 'Test executed with differences',
+		testReallyFailed: exitCode !== 0
+	};
+}

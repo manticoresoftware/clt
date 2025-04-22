@@ -56,11 +56,11 @@ const parseRecFileContent = (content: string): RecordingCommand[] => {
   let currentCommand = '';
   let currentOutput = '';
   let commandType: 'command' | 'block' | 'comment' = 'command';
-  
+
   let i = 0;
   while (i < lines.length) {
     const line = lines[i].trim();
-    
+
     // Detect section markers
     if (line.startsWith('––– ') || line.startsWith('--- ')) {
       // Process completed section before starting a new one
@@ -71,11 +71,11 @@ const parseRecFileContent = (content: string): RecordingCommand[] => {
         // We've completed an input/output pair
         commands.push({
           command: currentCommand.trim(),
-          expectedOutput: currentOutput.trim(),
+          expectedOutput: currentOutput, // Don't trim output to preserve whitespace
           type: 'command',
           status: 'pending',
         });
-        
+
         // Reset for next command
         currentCommand = '';
         currentOutput = '';
@@ -87,7 +87,7 @@ const parseRecFileContent = (content: string): RecordingCommand[] => {
           type: 'comment',
           status: 'pending',
         });
-        
+
         // Reset for next command
         currentCommand = '';
         currentSection = '';
@@ -98,12 +98,12 @@ const parseRecFileContent = (content: string): RecordingCommand[] => {
           type: 'block',
           status: 'pending',
         });
-        
+
         // Reset for next command
         currentCommand = '';
         currentSection = '';
       }
-      
+
       // Parse the marker to determine what section follows
       if (line.includes('input')) {
         currentSection = 'input';
@@ -117,16 +117,16 @@ const parseRecFileContent = (content: string): RecordingCommand[] => {
         currentSection = 'block';
         commandType = 'block';
         // Extract path from block marker: "--- block: path/to/file ---"
-        const pathMatch = line.match(/block:\s*([^\s-]+)/);
+        const pathMatch = line.match(/block:\s*([^\s]+)/);
         if (pathMatch && pathMatch[1]) {
           currentCommand = pathMatch[1].trim();
         }
       }
-      
+
       i++;
       continue;
     }
-    
+
     // Process content based on current section
     if (currentSection === 'input') {
       if (currentCommand) currentCommand += '\n';
@@ -141,10 +141,10 @@ const parseRecFileContent = (content: string): RecordingCommand[] => {
       // Only set the command if we haven't extracted it from the marker
       currentCommand = lines[i];
     }
-    
+
     i++;
   }
-  
+
   // Handle the last section if it wasn't closed properly
   if (currentSection === 'input' && currentCommand) {
     commands.push({
@@ -155,7 +155,7 @@ const parseRecFileContent = (content: string): RecordingCommand[] => {
   } else if (currentSection === 'output' && currentCommand) {
     commands.push({
       command: currentCommand.trim(),
-      expectedOutput: currentOutput.trim(),
+      expectedOutput: currentOutput, // Don't trim output to preserve whitespace
       type: 'command',
       status: 'pending',
     });
@@ -172,7 +172,7 @@ const parseRecFileContent = (content: string): RecordingCommand[] => {
       status: 'pending',
     });
   }
-  
+
   return commands;
 };
 
@@ -183,14 +183,14 @@ const checkFileLoaded = async (path: string) => {
     const response = await fetch(`${API_URL}/api/get-file?path=${encodeURIComponent(path)}`, {
       credentials: 'include'
     });
-    
+
     if (response.ok) {
       const data = await response.json();
       const fileContent = data.content;
-      
+
       // Parse the file content into commands
       const commands = parseRecFileContent(fileContent);
-      
+
       // Return the parsed commands
       return { success: true, commands };
     } else {
@@ -218,24 +218,33 @@ function createFilesStore() {
 
       // Handle different command types
       if (cmd.type === 'block') {
-        // Format as block reference
-        content += `––– block: ${cmd.command} –––\n`;
+        // Format as block reference - no extra newline after
+        content += `––– block: ${cmd.command} –––`;
       } else if (cmd.type === 'comment') {
-        // Format as comment
-        content += `––– comment –––\n${cmd.command}\n`;
+        // Format as comment - no extra newline after
+        content += `––– comment –––\n${cmd.command}`;
       } else {
         // Default - regular command (input/output format)
         content += '––– input –––\n';
-        content += cmd.command + '\n';
-        content += '––– output –––\n';
+        content += cmd.command;
+        
+        // Don't add extra newline if command already ends with one
+        if (!cmd.command.endsWith('\n')) {
+          content += '\n';
+        }
+        
+        // Add output section marker - no extra newline for empty outputs
+        content += '––– output –––';
 
         // Use the expected output if provided, otherwise use actual output if available
+        // Make sure to maintain all whitespace and newlines exactly as in the expected output
         const outputToSave = cmd.expectedOutput || cmd.actualOutput || '';
-        content += outputToSave;
+        
+        // Only add a newline before the output if there's actual content
+        if (outputToSave && outputToSave.trim() !== '') {
+          content += '\n' + outputToSave;
+        }
       }
-
-      // Do not add extra trailing newlines
-      // This ensures exact output matching without extra whitespace
     });
 
     try {
@@ -412,7 +421,8 @@ function createFilesStore() {
             return cmd;
           }
 
-          // Preserve expected output if it already exists
+          // Always preserve the original expected output exactly as it was
+          // This prevents formatting changes between runs
           return {
             ...cmd,
             actualOutput: matchingResultCmd.actualOutput, // This comes from the replay file
@@ -424,18 +434,65 @@ function createFilesStore() {
 
         // Determine overall file status
         const exitCodeSuccess = result.exitCodeSuccess === true;
-        const allPassed = exitCodeSuccess || (
-          typeof result.success !== 'undefined'
-          ? result.success
-          : mergedCommands.every(cmd => cmd.status !== 'failed')
-        );
+        
+        // Trust server's success value first, then exitCode status
+        let allPassed = false;
+        if (typeof result.success === 'boolean') {
+          allPassed = result.success;
+        } else {
+          allPassed = exitCodeSuccess;
+        }
 
         const anyRun = mergedCommands.some(cmd => cmd.status !== 'pending');
+
+        // Update blocks with proper status based on test results
+        const updatedCommands = mergedCommands.map(cmd => {
+          if (cmd.type === 'block') {
+            // Log the specific block reference we're processing
+            console.log(`Processing block reference: ${cmd.command}`);
+            
+            // Find all commands from this block by checking isBlockCommand flag and parentBlock reference
+            const blockCommands = mergedCommands.filter(c => {
+              return c.isBlockCommand && 
+                     c.parentBlock && 
+                     cmd.command === c.parentBlock.command;
+            });
+            
+            console.log(`Found ${blockCommands.length} commands for this block`);
+            
+            if (blockCommands.length > 0) {
+              // If any block command failed, mark the block as failed
+              const anyFailed = blockCommands.some(bc => bc.status === 'failed');
+              // If any block command is matched, consider the block matched
+              const anyMatched = blockCommands.some(bc => bc.status === 'matched');
+              
+              console.log(`Block ${cmd.command}: anyFailed=${anyFailed}, anyMatched=${anyMatched}`);
+              
+              // If no failures and at least one command matched, mark as matched
+              return {
+                ...cmd,
+                status: anyFailed ? 'failed' : (anyMatched ? 'matched' : 'pending'),
+                initializing: false
+              };
+            } else {
+              // Debug when no block commands were found
+              console.log(`No block commands found for block: ${cmd.command}`);
+              console.log('All commands in merged results:', mergedCommands.length);
+              console.log('Current command:', cmd);
+              // No child commands found, keep existing status
+              return {
+                ...cmd,
+                initializing: false
+              };
+            }
+          }
+          return cmd;
+        });
 
         // Create updated file with commands
         const updatedFile = {
           ...state.currentFile,
-          commands: mergedCommands,
+          commands: updatedCommands,
           status: anyRun ? (allPassed ? 'passed' : 'failed') : 'pending',
         };
 
@@ -457,7 +514,7 @@ function createFilesStore() {
     return children.map(child => {
       // Calculate the new path by replacing the old parent path with the new one
       const newPath = child.path.replace(oldParentPath, newParentPath);
-      
+
       if (child.isDirectory && child.children) {
         // Recursively update children
         return {
@@ -474,14 +531,14 @@ function createFilesStore() {
       }
     });
   };
-  
+
   // Helper to get current state
   const getState = (): FilesState => {
     let currentState: FilesState = defaultState;
     subscribe(state => { currentState = state; })();
     return currentState;
   };
-  
+
   // Helper function to find a node in the file tree
   const findNodeInTree = (tree: FileNode[], path: string): FileNode | null => {
     for (const node of tree) {
@@ -495,7 +552,7 @@ function createFilesStore() {
     }
     return null;
   };
-  
+
   // Helper function to remove a node from the file tree
   const removeNodeFromTree = (tree: FileNode[], path: string): FileNode[] => {
     return tree.filter(node => {
@@ -508,7 +565,7 @@ function createFilesStore() {
       return true;
     });
   };
-  
+
   // Helper function to optimistically add a node to the file tree
   const addNodeToDirectory = (tree: FileNode[], dirPath: string, newNode: FileNode): FileNode[] => {
     return tree.map(node => {
@@ -550,13 +607,13 @@ function createFilesStore() {
         const response = await fetch(`${API_URL}/api/get-file-tree`, {
           credentials: 'include'
         });
-        
+
         if (!response.ok) {
           throw new Error(`Failed to fetch file tree: ${response.statusText}`);
         }
-        
+
         const data = await response.json();
-        
+
         // Filter to only show the tests directory
         const testsNode = data.fileTree.find(node => node.name === 'tests');
         if (testsNode) {
@@ -575,42 +632,42 @@ function createFilesStore() {
       try {
         // Get current state
         const state = getState();
-        
+
         // Find the node to move
         const sourceNode = findNodeInTree(state.fileTree, sourcePath);
         if (!sourceNode) {
           throw new Error('Source file not found in file tree');
         }
-        
+
         // Get target directory path (the parent folder)
         const targetDirPath = targetPath.substring(0, targetPath.lastIndexOf('/'));
-        
+
         // Make a copy of the node to move
         const newNode = {
           ...sourceNode,
           path: targetPath,
           name: targetPath.split('/').pop() || ''
         };
-        
+
         // If it's a directory, we need to update all child paths
         if (sourceNode.isDirectory && sourceNode.children) {
           newNode.children = updateChildPaths(sourceNode.children, sourcePath, targetPath);
         }
-        
+
         // Update the file tree optimistically
         update(state => {
           // Remove from its original location
           const newTree = removeNodeFromTree([...state.fileTree], sourcePath);
-          
+
           // Add to the target directory
           const updatedTree = addNodeToDirectory(newTree, targetDirPath, newNode);
-          
+
           return {
             ...state,
             fileTree: updatedTree
           };
         });
-        
+
         // Now do the actual server request
         const response = await fetch(`${API_URL}/api/move-file`, {
           method: 'POST',
@@ -623,13 +680,13 @@ function createFilesStore() {
             targetPath
           })
         });
-        
+
         if (!response.ok) {
           // If server operation fails, refresh the file tree to restore correct state
           await storeModule.refreshFileTree();
           throw new Error(`Failed to move file: ${response.statusText}`);
         }
-        
+
         // Update currentFile path if it was the moved file
         update(state => {
           if (state.currentFile && state.currentFile.path === sourcePath) {
@@ -654,7 +711,7 @@ function createFilesStore() {
           }
           return state;
         });
-        
+
         return true;
       } catch (error) {
         console.error('Error moving file:', error);
@@ -667,7 +724,7 @@ function createFilesStore() {
         update(state => {
           // Remove from file tree
           const newTree = removeNodeFromTree([...state.fileTree], path);
-          
+
           // Update currentFile if it was the deleted file
           if (state.currentFile && state.currentFile.path === path) {
             return {
@@ -676,13 +733,13 @@ function createFilesStore() {
               currentFile: null
             };
           }
-          
+
           return {
             ...state,
             fileTree: newTree
           };
         });
-        
+
         // Now do the actual server request
         const response = await fetch(`${API_URL}/api/delete-file`, {
           method: 'DELETE',
@@ -692,13 +749,13 @@ function createFilesStore() {
           credentials: 'include',
           body: JSON.stringify({ path })
         });
-        
+
         if (!response.ok) {
           // If server operation fails, refresh the file tree to restore correct state
           await storeModule.refreshFileTree();
           throw new Error(`Failed to delete file: ${response.statusText}`);
         }
-        
+
         return true;
       } catch (error) {
         console.error('Error deleting file:', error);
@@ -709,7 +766,7 @@ function createFilesStore() {
       try {
         // Load the file content
         const result = await checkFileLoaded(path);
-        
+
         if (result.success && result.commands) {
           // Set initializing flag for all commands to hide output sections until test is run
           const commandsWithInitFlag = result.commands.map(cmd => ({
@@ -738,7 +795,7 @@ function createFilesStore() {
               console.error('Error running test after file load:', error);
             }
           }, 100);
-          
+
           return true;
         } else {
           console.error('Failed to load file:', result.error);
@@ -973,19 +1030,19 @@ function createFilesStore() {
       // Extract the file name and directory path
       const fileName = path.split('/').pop() || '';
       const dirPath = path.substring(0, path.lastIndexOf('/'));
-      
+
       // Create the file node for the file tree
       const newNode: FileNode = {
         name: fileName,
         path,
         isDirectory: false
       };
-      
+
       // Update the file tree optimistically
       update(state => {
         // Add the new file to the directory
         const updatedTree = addNodeToDirectory([...state.fileTree], dirPath, newNode);
-        
+
         return {
           ...state,
           fileTree: updatedTree,
@@ -1069,7 +1126,7 @@ export function updateChildPaths(children: FileNode[], oldParentPath: string, ne
   return children.map(child => {
     // Calculate the new path by replacing the old parent path with the new one
     const newPath = child.path.replace(oldParentPath, newParentPath);
-    
+
     if (child.isDirectory && child.children) {
       // Recursively update children
       return {
