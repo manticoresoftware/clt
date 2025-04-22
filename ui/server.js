@@ -207,6 +207,44 @@ function extractDuration(content) {
 	return durationMatch ? parseInt(durationMatch[1], 10) : null;
 }
 
+// API endpoint to get patterns file
+app.get('/api/get-patterns', isAuthenticated, async (req, res) => {
+  try {
+    // Read the patterns file from the .clt/patterns path in UI folder or fall back to the project root
+    let patternsContent;
+    try {
+      // First try to read from UI folder .clt directory
+      patternsContent = await fs.readFile(path.join(__dirname, '.clt', 'patterns'), 'utf8');
+    } catch (err) {
+      // If not found, try to read from project root
+      try {
+        patternsContent = await fs.readFile(path.join(ROOT_DIR, '.clt', 'patterns'), 'utf8');
+      } catch (innerErr) {
+        // If both fail, return an error
+        return res.status(404).json({ error: 'Patterns file not found' });
+      }
+    }
+
+    // Parse the patterns file to convert it to JSON format
+    const patterns = {};
+    const lines = patternsContent.split('\n').filter(line => line.trim() !== '');
+    
+    for (const line of lines) {
+      const parts = line.split(' ');
+      if (parts.length >= 2) {
+        const patternName = parts[0].trim();
+        const patternRegex = parts.slice(1).join(' ').trim();
+        patterns[patternName] = patternRegex;
+      }
+    }
+    
+    res.json({ patterns });
+  } catch (error) {
+    console.error('Error reading patterns file:', error);
+    res.status(500).json({ error: 'Failed to read patterns file' });
+  }
+});
+
 // API endpoint to run a test
 app.post('/api/run-test', isAuthenticated, async (req, res) => {
 	try {

@@ -3,8 +3,39 @@
   import { onMount } from 'svelte';
   import { PatternMatcher } from '../../pkg/wasm_diff';
 
+  // Add global TypeScript interface for window
+  declare global {
+    interface Window { 
+      patternMatcher: any;
+      lastPatternRefresh: number;
+    }
+  }
+
   let wasmLoaded = false;
   let patternMatcher: any = null;
+  let patterns = {};
+
+  // Fetch patterns from server
+  async function fetchPatterns() {
+    try {
+      const response = await fetch('/api/get-patterns', {
+        credentials: 'include'
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        patterns = data.patterns || {};
+        console.log('Loaded patterns:', patterns);
+        return patterns;
+      } else {
+        console.warn('Could not load patterns:', await response.text());
+        return {};
+      }
+    } catch (err) {
+      console.error('Error fetching patterns:', err);
+      return {};
+    }
+  }
 
   // Initialize WASM module
   async function initWasm() {
@@ -12,13 +43,15 @@
       console.log('Initializing WASM diff module...');
       const module = await import('../../pkg/wasm_diff');
       await module.default();
-      patternMatcher = new PatternMatcher(JSON.stringify({
-        // Define any patterns you want to use for variable matching
-        // For example: "ID": "[0-9a-f]+"
-      }));
+      
+      // Fetch patterns first
+      const patternsData = await fetchPatterns();
+      
+      // Initialize pattern matcher with fetched patterns
+      patternMatcher = new PatternMatcher(JSON.stringify(patternsData));
       window.patternMatcher = patternMatcher;
       wasmLoaded = true;
-      console.log('WASM diff module initialized successfully');
+      console.log('WASM diff module initialized successfully with patterns');
     } catch (err) {
       console.error('Failed to initialize WASM diff module:', err);
     }
@@ -55,6 +88,11 @@
 
     // Initialize WASM module for highlighting differences in the output
     initWasm();
+    
+    // Define global window property for pattern refresh tracking
+    if (typeof window !== 'undefined') {
+      window.lastPatternRefresh = 0;
+    }
   });
 
   // Update localStorage when checkbox changes
@@ -127,11 +165,25 @@
   //   • added lines are prefixed with a "+", styled with diff-added-line
   //   • removed lines are prefixed with a "−", styled with diff-removed-line
   //   • changed lines include character-level highlight spans if available.
-  function highlightDifferences(actual: string, expected: string): string {
+  async function highlightDifferences(actual: string, expected: string): Promise<string> {
     try {
       if (!wasmLoaded || !patternMatcher) {
         console.log('WASM module not loaded yet, showing plain text');
         return escapeHtml(actual); // Return plain text if WASM isn't ready
+      }
+
+      // For real-time comparison, refresh patterns when showing the diff
+      try {
+        // Only refresh if we've gone more than 5 seconds since last refresh
+        if (!window.lastPatternRefresh || (Date.now() - window.lastPatternRefresh > 5000)) {
+          const patternsData = await fetchPatterns();
+          patternMatcher = new PatternMatcher(JSON.stringify(patternsData));
+          window.patternMatcher = patternMatcher;
+          window.lastPatternRefresh = Date.now();
+          console.log('Refreshed patterns for real-time comparison');
+        }
+      } catch (refreshErr) {
+        console.warn('Could not refresh patterns:', refreshErr);
       }
 
       // Get the diff result from the WASM module (returns a JSON string)
@@ -450,7 +502,11 @@
                     aria-label="Actual Output"
                   >
                     {#if command.status === 'failed'}
-                      <div class="wasm-diff">{@html wasmLoaded ? highlightDifferences(parseActualOutputContent(command.actualOutput), command.expectedOutput || '') : parseActualOutputContent(command.actualOutput)}</div>
+                      {#await highlightDifferences(parseActualOutputContent(command.actualOutput), command.expectedOutput || '')}
+                        <pre class="plain-output">{parseActualOutputContent(command.actualOutput)}</pre>
+                      {:then diffHtml}
+                        <div class="wasm-diff">{@html diffHtml}</div>
+                      {/await}
                     {:else if command.actualOutput}
                       <pre class="plain-output">{parseActualOutputContent(command.actualOutput)}</pre>
                     {:else}

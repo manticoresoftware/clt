@@ -47,6 +47,16 @@ We have prebuilt binaries for use in a Linux environment, for both amd64 and arm
 
   You can locate the complete output replayed in the same file name but with a .rep extension. In this case, it's test.rep.
 
+## Web-based UI
+
+CLT includes a web-based user interface for editing and running tests. The UI provides an intuitive interface for managing test files, with real-time pattern matching and diff comparison. To learn more about the UI, its features, and how to set it up, see the [UI documentation](ui/README.md).
+
+Key UI features include:
+- File tree explorer for navigating test files
+- Real-time comparison with pattern matching
+- Docker image configuration for test validation
+- GitHub authentication for access control
+
 We utilize bash to initiate an interactive environment when you record a test. It's important to note that we reset the environment to ensure maximum compatibility with various operating systems. As of now, there is no option to pass environment variables from outside into the test environment.
 
 ## GitHub Workflow example
