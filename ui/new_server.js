@@ -659,6 +659,7 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 // Apply light authentication check - client side will show login UI when needed
 
 // API endpoint to create GitHub PR
+// API endpoint to create GitHub PR
 app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 	try {
 		const { title, description } = req.body;
@@ -710,29 +711,10 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 			return res.status(500).json({ error: 'Failed to access tests directory' });
 		}
 
-		// Determine if the tests directory is a symlink
-		let actualRepoPath = testsDir;
-		try {
-			const testsDirStats = await fs.lstat(testsDir);
-			if (testsDirStats.isSymbolicLink()) {
-				// Resolve the symlink target
-				const symlinkTarget = await fs.readlink(testsDir);
-				const resolvedTarget = path.isAbsolute(symlinkTarget)
-					? symlinkTarget
-					: path.resolve(path.dirname(testsDir), symlinkTarget);
-				
-				console.log(`Tests directory is a symlink pointing to ${resolvedTarget}`);
-				actualRepoPath = resolvedTarget;
-			}
-		} catch (error) {
-			console.error('Error checking if tests directory is a symlink:', error);
-			return res.status(500).json({ error: 'Failed to determine if tests directory is a symlink' });
-		}
-
-		// Try to find the git repository root for the actual tests directory
+		// Check if tests directory is a git repository or inside one
 		try {
 			// Change to the actual tests directory
-			process.chdir(actualRepoPath);
+			process.chdir(actualTestsDir);
 
 			// Check if git is available
 			await execPromise('git --version');
@@ -744,39 +726,28 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 			// Change to the git root directory
 			process.chdir(gitRoot);
 
-			// Get current repository information
-			const remoteUrl = await execPromise('git config --get remote.origin.url');
-			console.log(`Remote repository URL: ${remoteUrl}`);
-
 			// Get the current branch
 			const currentBranch = await execPromise('git rev-parse --abbrev-ref HEAD');
 			console.log(`Current branch: ${currentBranch}`);
+
+			// Get current repository information
+			const remoteUrl = await execPromise('git config --get remote.origin.url');
+			console.log(`Remote repository URL: ${remoteUrl}`);
 
 			// Create a new branch
 			await execPromise(`git checkout -b ${branchName}`);
 			console.log(`Created and switched to new branch: ${branchName}`);
 
-			// Determine which parts of the tests directory to stage
-			// If tests directory is a symlink, we need to figure out the correct relative path
-			const testsRelativePath = path.relative(gitRoot, actualRepoPath);
-			console.log(`Tests relative path: ${testsRelativePath}`);
-
 			// Stage all changes in the tests directory
-			if (testsRelativePath === '') {
-				// If the tests directory is the repository root, stage all changes
-				await execPromise('git add .');
-				console.log('Staged all changes in repository');
-			} else {
-				// Otherwise, stage changes in the tests directory
-				await execPromise(`git add ${testsRelativePath}`);
-				console.log(`Staged changes in tests directory: ${testsRelativePath}`);
-			}
-
-			// Check if there are changes to commit
-			const status = await execPromise('git status --porcelain');
-			if (!status) {
-				return res.status(400).json({ error: 'No changes to commit' });
-			}
+			// If we're using a symlink, we need to stage the actual directory inside the repo
+			const pathToStage = isSymlink ? 
+				// If symlink, find the relative path from the git root to the actual tests directory
+				path.relative(gitRoot, actualTestsDir) : 
+				// If not symlink, use the standard relative path
+				path.relative(gitRoot, testsDir);
+			
+			await execPromise(`git add ${pathToStage}`);
+			console.log(`Staged changes in tests directory (${pathToStage})`);
 
 			// Create a commit
 			await execPromise(`git commit -m "${title}"`);
@@ -816,7 +787,7 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 					branch: branchName,
 					commit: title,
 					pr: prUrl,
-					repository: remoteUrl,
+					repoUrl: remoteUrl,
 					message: 'Pull request created successfully'
 				});
 			} catch (ghError) {
@@ -831,7 +802,7 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 					success: true,
 					branch: branchName,
 					commit: title,
-					repository: remoteUrl,
+					repoUrl: remoteUrl,
 					message: 'Changes pushed to new branch. Please create PR manually.',
 					info: 'GitHub CLI not available for automatic PR creation'
 				});
@@ -850,7 +821,7 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 		console.error('Error creating PR:', error);
 		res.status(500).json({ error: `Failed to create PR: ${error.message}` });
 	}
-});
+});});
 
 app.get('*', isAuthenticated, (req, res) => {
 	res.sendFile(path.join(__dirname, 'dist', 'index.html'));

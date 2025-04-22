@@ -5,6 +5,8 @@ interface FileNode {
   name: string;
   path: string;
   isDirectory: boolean;
+  isSymlink?: boolean;
+  targetPath?: string;
   children?: FileNode[];
 }
 
