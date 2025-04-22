@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { filesStore, type FileNode, addNodeToDirectory } from '../stores/filesStore';
+  import { filesStore, type FileNode, addNodeToDirectory, updateChildPaths } from '../stores/filesStore';
   import { API_URL } from '../config.js';
 
   // Default to tests directory
@@ -274,16 +274,14 @@
   
   // Drag handlers
   function handleDragStart(event: DragEvent, node: FileNode) {
-    if (!node.isDirectory) {
-      // Only files can be dragged
-      draggedNode = node;
-      showRecycleBin = true;
-      
-      // Set dragging data
-      if (event.dataTransfer) {
-        event.dataTransfer.setData('text/plain', node.path);
-        event.dataTransfer.effectAllowed = 'move';
-      }
+    // Allow both files and directories to be dragged
+    draggedNode = node;
+    showRecycleBin = true;
+    
+    // Set dragging data
+    if (event.dataTransfer) {
+      event.dataTransfer.setData('text/plain', node.path);
+      event.dataTransfer.effectAllowed = 'move';
     }
   }
   
@@ -292,6 +290,15 @@
     if (draggedNode && draggedNode !== node) {
       // Only allow dropping onto directories
       if (node.isDirectory) {
+        // Prevent dropping a directory into one of its descendants (which would create recursion)
+        if (draggedNode.isDirectory) {
+          // Check if target node is a descendant of the dragged node
+          if (node.path.startsWith(draggedNode.path + '/')) {
+            // Can't drop a directory into its own descendant
+            return;
+          }
+        }
+        
         dropTarget = node;
         event.dataTransfer!.dropEffect = 'move';
       }
@@ -309,13 +316,31 @@
       const fileName = draggedNode.name;
       const targetPath = `${node.path}/${fileName}`;
       
-      // Move the file
+      // Don't do anything if dropping onto itself
+      if (sourcePath === targetPath) {
+        // Reset drag state
+        draggedNode = null;
+        dropTarget = null;
+        showRecycleBin = false;
+        return;
+      }
+      
+      // Prevent dropping a directory into one of its descendants
+      if (draggedNode.isDirectory && node.path.startsWith(draggedNode.path + '/')) {
+        // Reset drag state
+        draggedNode = null;
+        dropTarget = null;
+        showRecycleBin = false;
+        return;
+      }
+      
+      // Move the file or directory
       filesStore.moveFile(sourcePath, targetPath)
         .then(success => {
           if (success) {
-            console.log(`File moved from ${sourcePath} to ${targetPath}`);
+            console.log(`Item moved from ${sourcePath} to ${targetPath}`);
           } else {
-            console.error('Failed to move file');
+            console.error('Failed to move item');
           }
         });
     }
@@ -497,7 +522,7 @@
             class="tree-item {node.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === node ? 'drop-target' : ''}"
             role="button"
             tabindex="0"
-            draggable={!node.isDirectory}
+            draggable={true}
             on:dragstart={(e) => handleDragStart(e, node)}
             on:dragover={(e) => handleDragOver(e, node)}
             on:dragleave={handleDragLeave}
@@ -544,7 +569,7 @@
                     class="tree-item {childNode.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === childNode ? 'drop-target' : ''}"
                     role="button"
                     tabindex="0"
-                    draggable={!childNode.isDirectory}
+                    draggable={true}
                     on:dragstart={(e) => handleDragStart(e, childNode)}
                     on:dragover={(e) => handleDragOver(e, childNode)}
                     on:dragleave={handleDragLeave}
@@ -590,7 +615,7 @@
                             class="tree-item {grandChildNode.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === grandChildNode ? 'drop-target' : ''}"
                             role="button"
                             tabindex="0"
-                            draggable={!grandChildNode.isDirectory}
+                            draggable={true}
                             on:dragstart={(e) => handleDragStart(e, grandChildNode)}
                             on:dragover={(e) => handleDragOver(e, grandChildNode)}
                             on:dragleave={handleDragLeave}
@@ -729,6 +754,21 @@
   .tree-item[draggable="true"]:active {
     opacity: 0.7;
     cursor: grabbing;
+  }
+  
+  /* Different cursors depending on context */
+  .tree-item[draggable="true"] {
+    cursor: grab;
+  }
+  
+  .tree-item[draggable="true"]:hover {
+    background-color: var(--color-bg-hover);
+  }
+  
+  /* Special styling for directory drop targets */
+  .tree-item.drop-target:not(:active) {
+    outline: 2px dashed var(--color-bg-accent); 
+    outline-offset: -2px;
   }
   
   /* Add transition for smoother effects */

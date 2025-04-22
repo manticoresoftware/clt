@@ -285,6 +285,29 @@ function createFilesStore() {
     }
   };
 
+  // Helper function to update all child paths when moving a directory
+  const updateChildPaths = (children: FileNode[], oldParentPath: string, newParentPath: string): FileNode[] => {
+    return children.map(child => {
+      // Calculate the new path by replacing the old parent path with the new one
+      const newPath = child.path.replace(oldParentPath, newParentPath);
+      
+      if (child.isDirectory && child.children) {
+        // Recursively update children
+        return {
+          ...child,
+          path: newPath,
+          children: updateChildPaths(child.children, oldParentPath, newParentPath)
+        };
+      } else {
+        // For files, just update the path
+        return {
+          ...child,
+          path: newPath
+        };
+      }
+    });
+  };
+  
   // Helper to get current state
   const getState = (): FilesState => {
     let currentState: FilesState = defaultState;
@@ -402,6 +425,11 @@ function createFilesStore() {
           name: targetPath.split('/').pop() || ''
         };
         
+        // If it's a directory, we need to update all child paths
+        if (sourceNode.isDirectory && sourceNode.children) {
+          newNode.children = updateChildPaths(sourceNode.children, sourcePath, targetPath);
+        }
+        
         // Update the file tree optimistically
         update(state => {
           // Remove from its original location
@@ -443,6 +471,17 @@ function createFilesStore() {
               currentFile: {
                 ...state.currentFile,
                 path: targetPath
+              }
+            };
+          } else if (state.currentFile && state.currentFile.path.startsWith(sourcePath + '/')) {
+            // If current file is inside moved directory, update its path too
+            const relativePath = state.currentFile.path.substring(sourcePath.length);
+            const newPath = targetPath + relativePath;
+            return {
+              ...state,
+              currentFile: {
+                ...state.currentFile,
+                path: newPath
               }
             };
           }
@@ -840,5 +879,27 @@ export function removeNodeFromTree(tree: FileNode[], path: string): FileNode[] {
       node.children = removeNodeFromTree(node.children, path);
     }
     return true;
+  });
+}
+
+export function updateChildPaths(children: FileNode[], oldParentPath: string, newParentPath: string): FileNode[] {
+  return children.map(child => {
+    // Calculate the new path by replacing the old parent path with the new one
+    const newPath = child.path.replace(oldParentPath, newParentPath);
+    
+    if (child.isDirectory && child.children) {
+      // Recursively update children
+      return {
+        ...child,
+        path: newPath,
+        children: updateChildPaths(child.children, oldParentPath, newParentPath)
+      };
+    } else {
+      // For files, just update the path
+      return {
+        ...child,
+        path: newPath
+      };
+    }
   });
 }
