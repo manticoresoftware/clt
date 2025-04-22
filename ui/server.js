@@ -185,6 +185,71 @@ app.post('/api/save-file', isAuthenticated, async (req, res) => {
 	}
 });
 
+// API endpoint to move or rename a file
+app.post('/api/move-file', isAuthenticated, async (req, res) => {
+	try {
+		const { sourcePath, targetPath } = req.body;
+
+		if (!sourcePath || !targetPath) {
+			return res.status(400).json({ error: 'Source and target paths are required' });
+		}
+
+		const absoluteSourcePath = path.join(ROOT_DIR, sourcePath);
+		const absoluteTargetPath = path.join(ROOT_DIR, targetPath);
+
+		// Basic security check to ensure both paths are within the ROOT_DIR
+		if (!absoluteSourcePath.startsWith(ROOT_DIR) || !absoluteTargetPath.startsWith(ROOT_DIR)) {
+			return res.status(403).json({ error: 'Access denied' });
+		}
+
+		// Ensure target directory exists
+		const targetDir = path.dirname(absoluteTargetPath);
+		await fs.mkdir(targetDir, { recursive: true });
+
+		// Move/rename the file
+		await fs.rename(absoluteSourcePath, absoluteTargetPath);
+
+		res.json({ success: true });
+	} catch (error) {
+		console.error('Error moving file:', error);
+		res.status(500).json({ error: 'Failed to move file' });
+	}
+});
+
+// API endpoint to delete a file
+app.delete('/api/delete-file', isAuthenticated, async (req, res) => {
+	try {
+		const { path: filePath } = req.body;
+
+		if (!filePath) {
+			return res.status(400).json({ error: 'File path is required' });
+		}
+
+		const absolutePath = path.join(ROOT_DIR, filePath);
+
+		// Basic security check to ensure the path is within the ROOT_DIR
+		if (!absolutePath.startsWith(ROOT_DIR)) {
+			return res.status(403).json({ error: 'Access denied' });
+		}
+
+		// Check if it's a file or directory
+		const stats = await fs.stat(absolutePath);
+		
+		if (stats.isDirectory()) {
+			// For directories, use recursive removal
+			await fs.rm(absolutePath, { recursive: true });
+		} else {
+			// For individual files
+			await fs.unlink(absolutePath);
+		}
+
+		res.json({ success: true });
+	} catch (error) {
+		console.error('Error deleting file:', error);
+		res.status(500).json({ error: 'Failed to delete file' });
+	}
+});
+
 // API endpoint to create directory
 app.post('/api/create-directory', isAuthenticated, async (req, res) => {
 	try {

@@ -291,6 +291,54 @@ function createFilesStore() {
     subscribe(state => { currentState = state; })();
     return currentState;
   };
+  
+  // Helper function to find a node in the file tree
+  const findNodeInTree = (tree: FileNode[], path: string): FileNode | null => {
+    for (const node of tree) {
+      if (node.path === path) {
+        return node;
+      }
+      if (node.isDirectory && node.children) {
+        const found = findNodeInTree(node.children, path);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  
+  // Helper function to remove a node from the file tree
+  const removeNodeFromTree = (tree: FileNode[], path: string): FileNode[] => {
+    return tree.filter(node => {
+      if (node.path === path) {
+        return false; // Remove this node
+      }
+      if (node.isDirectory && node.children) {
+        node.children = removeNodeFromTree(node.children, path);
+      }
+      return true;
+    });
+  };
+  
+  // Helper function to optimistically add a node to the file tree
+  const addNodeToDirectory = (tree: FileNode[], dirPath: string, newNode: FileNode): FileNode[] => {
+    return tree.map(node => {
+      if (node.path === dirPath && node.isDirectory) {
+        // Found the directory, add the new node to its children
+        return {
+          ...node,
+          children: [...(node.children || []), newNode]
+        };
+      }
+      if (node.isDirectory && node.children) {
+        // Recursively look in this directory's children
+        return {
+          ...node,
+          children: addNodeToDirectory(node.children, dirPath, newNode)
+        };
+      }
+      return node;
+    });
+  };
 
   // Create store instance
   const storeModule = {
@@ -307,6 +355,150 @@ function createFilesStore() {
       ...state,
       fileTree: tree
     })),
+    refreshFileTree: async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/get-file-tree`, {
+          credentials: 'include'
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Failed to fetch file tree: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        // Filter to only show the tests directory
+        const testsNode = data.fileTree.find(node => node.name === 'tests');
+        if (testsNode) {
+          storeModule.setFileTree([testsNode]);
+          return true;
+        } else {
+          storeModule.setFileTree([]);
+          return false;
+        }
+      } catch (error) {
+        console.error('Error refreshing file tree:', error);
+        return false;
+      }
+    },
+    moveFile: async (sourcePath: string, targetPath: string) => {
+      try {
+        // Get current state
+        const state = getState();
+        
+        // Find the node to move
+        const sourceNode = findNodeInTree(state.fileTree, sourcePath);
+        if (!sourceNode) {
+          throw new Error('Source file not found in file tree');
+        }
+        
+        // Get target directory path (the parent folder)
+        const targetDirPath = targetPath.substring(0, targetPath.lastIndexOf('/'));
+        
+        // Make a copy of the node to move
+        const newNode = {
+          ...sourceNode,
+          path: targetPath,
+          name: targetPath.split('/').pop() || ''
+        };
+        
+        // Update the file tree optimistically
+        update(state => {
+          // Remove from its original location
+          const newTree = removeNodeFromTree([...state.fileTree], sourcePath);
+          
+          // Add to the target directory
+          const updatedTree = addNodeToDirectory(newTree, targetDirPath, newNode);
+          
+          return {
+            ...state,
+            fileTree: updatedTree
+          };
+        });
+        
+        // Now do the actual server request
+        const response = await fetch(`${API_URL}/api/move-file`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            sourcePath,
+            targetPath
+          })
+        });
+        
+        if (!response.ok) {
+          // If server operation fails, refresh the file tree to restore correct state
+          await storeModule.refreshFileTree();
+          throw new Error(`Failed to move file: ${response.statusText}`);
+        }
+        
+        // Update currentFile path if it was the moved file
+        update(state => {
+          if (state.currentFile && state.currentFile.path === sourcePath) {
+            return {
+              ...state,
+              currentFile: {
+                ...state.currentFile,
+                path: targetPath
+              }
+            };
+          }
+          return state;
+        });
+        
+        return true;
+      } catch (error) {
+        console.error('Error moving file:', error);
+        return false;
+      }
+    },
+    deleteFile: async (path: string) => {
+      try {
+        // Update UI optimistically
+        update(state => {
+          // Remove from file tree
+          const newTree = removeNodeFromTree([...state.fileTree], path);
+          
+          // Update currentFile if it was the deleted file
+          if (state.currentFile && state.currentFile.path === path) {
+            return {
+              ...state,
+              fileTree: newTree,
+              currentFile: null
+            };
+          }
+          
+          return {
+            ...state,
+            fileTree: newTree
+          };
+        });
+        
+        // Now do the actual server request
+        const response = await fetch(`${API_URL}/api/delete-file`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include',
+          body: JSON.stringify({ path })
+        });
+        
+        if (!response.ok) {
+          // If server operation fails, refresh the file tree to restore correct state
+          await storeModule.refreshFileTree();
+          throw new Error(`Failed to delete file: ${response.statusText}`);
+        }
+        
+        return true;
+      } catch (error) {
+        console.error('Error deleting file:', error);
+        return false;
+      }
+    },
     loadFile: async (path: string, commands: RecordingCommand[]) => {
       // Set initializing flag for all commands to hide output sections until test is run
       const commandsWithInitFlag = commands.map(cmd => ({
@@ -556,15 +748,41 @@ function createFilesStore() {
         status: 'pending'
       };
 
-      // New files should be saved immediately
-      update(state => ({
-        ...state,
-        currentFile: newFile
-      }));
+      // Extract the file name and directory path
+      const fileName = path.split('/').pop() || '';
+      const dirPath = path.substring(0, path.lastIndexOf('/'));
+      
+      // Create the file node for the file tree
+      const newNode: FileNode = {
+        name: fileName,
+        path,
+        isDirectory: false
+      };
+      
+      // Update the file tree optimistically
+      update(state => {
+        // Add the new file to the directory
+        const updatedTree = addNodeToDirectory([...state.fileTree], dirPath, newNode);
+        
+        return {
+          ...state,
+          fileTree: updatedTree,
+          currentFile: newFile
+        };
+      });
 
-      // Immediately save the new file
-      setTimeout(() => {
-        debouncedSave(newFile, false);
+      // Now do the actual save operation
+      setTimeout(async () => {
+        try {
+          // Save the file
+          await debouncedSave(newFile, false);
+        } catch (err) {
+          console.error('Error saving new file:', err);
+          // If there's an error, refresh the file tree to restore correct state
+          setTimeout(async () => {
+            await storeModule.refreshFileTree();
+          }, 100);
+        }
       }, 0);
     },
     runTest: runCurrentTest
@@ -578,3 +796,49 @@ function createFilesStore() {
 
 export const filesStore = createFilesStore();
 export type { FileNode, RecordingCommand, RecordingFile };
+
+// Helper functions for file tree manipulation
+export function findNodeInTree(tree: FileNode[], path: string): FileNode | null {
+  for (const node of tree) {
+    if (node.path === path) {
+      return node;
+    }
+    if (node.isDirectory && node.children) {
+      const found = findNodeInTree(node.children, path);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+export function addNodeToDirectory(tree: FileNode[], dirPath: string, newNode: FileNode): FileNode[] {
+  return tree.map(node => {
+    if (node.path === dirPath && node.isDirectory) {
+      // Found the directory, add the new node to its children
+      return {
+        ...node,
+        children: [...(node.children || []), newNode]
+      };
+    }
+    if (node.isDirectory && node.children) {
+      // Recursively look in this directory's children
+      return {
+        ...node,
+        children: addNodeToDirectory(node.children, dirPath, newNode)
+      };
+    }
+    return node;
+  });
+}
+
+export function removeNodeFromTree(tree: FileNode[], path: string): FileNode[] {
+  return tree.filter(node => {
+    if (node.path === path) {
+      return false; // Remove this node
+    }
+    if (node.isDirectory && node.children) {
+      node.children = removeNodeFromTree(node.children, path);
+    }
+    return true;
+  });
+}

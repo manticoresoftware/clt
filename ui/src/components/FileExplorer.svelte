@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { filesStore, type FileNode } from '../stores/filesStore';
+  import { filesStore, type FileNode, addNodeToDirectory } from '../stores/filesStore';
   import { API_URL } from '../config.js';
 
   // Default to tests directory
@@ -8,7 +8,13 @@
   let fileTree: FileNode[] = [];
   let newFileName = '';
   let expandedFolders: Set<string> = new Set();
-
+  
+  // Drag and drop state
+  let draggedNode: FileNode | null = null;
+  let dropTarget: FileNode | null = null;
+  let dragOverRecycleBin = false;
+  let showRecycleBin = false;
+  
   $: {
     if ($filesStore.fileTree) {
       fileTree = $filesStore.fileTree;
@@ -173,25 +179,45 @@
   // Function to create directory
   async function createDirectory(path: string) {
     try {
+      // Remove trailing slash for consistency
+      const cleanPath = path.replace(/\/$/, '');
+      
+      // Extract directory name and parent path
+      const dirName = cleanPath.split('/').pop() || '';
+      const parentPath = cleanPath.substring(0, cleanPath.lastIndexOf('/'));
+      
+      // Create a new node for the directory
+      const newNode: FileNode = {
+        name: dirName,
+        path: cleanPath,
+        isDirectory: true,
+        children: []
+      };
+      
+      // Update the file tree optimistically
+      const state = $filesStore;
+      const updatedTree = addNodeToDirectory([...state.fileTree], parentPath, newNode);
+      filesStore.setFileTree(updatedTree);
+      
+      // Expand the newly created directory
+      expandedFolders.add(cleanPath);
+      expandedFolders = expandedFolders; // Trigger reactivity
+      
+      // Now do the actual server request
       const response = await fetch(`${API_URL}/api/create-directory`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        credentials: 'include', // Add credentials for cookie passing
+        credentials: 'include',
         body: JSON.stringify({ path })
       });
 
       if (!response.ok) {
+        // If server operation fails, refresh the file tree to restore correct state
+        await filesStore.refreshFileTree();
         throw new Error(`Failed to create directory: ${response.statusText}`);
       }
-
-      // Refresh the file tree after directory creation
-      await fetchFileTree();
-
-      // Expand the newly created directory
-      expandedFolders.add(path.replace(/\/$/, '')); // Remove trailing slash for consistency
-      expandedFolders = expandedFolders; // Trigger reactivity
     } catch (error) {
       console.error('Error creating directory:', error);
       alert(`Failed to create directory: ${error.message}`);
@@ -213,7 +239,7 @@
     }
 
     // Fetch the file tree from the backend
-    await fetchFileTree();
+    await filesStore.refreshFileTree();
 
     // Open first level folders by default
     if (fileTree) {
@@ -245,6 +271,100 @@
     // Listen for hash changes to load files when URL changes
     window.addEventListener('hashchange', handleHashChange);
   });
+  
+  // Drag handlers
+  function handleDragStart(event: DragEvent, node: FileNode) {
+    if (!node.isDirectory) {
+      // Only files can be dragged
+      draggedNode = node;
+      showRecycleBin = true;
+      
+      // Set dragging data
+      if (event.dataTransfer) {
+        event.dataTransfer.setData('text/plain', node.path);
+        event.dataTransfer.effectAllowed = 'move';
+      }
+    }
+  }
+  
+  function handleDragOver(event: DragEvent, node: FileNode) {
+    event.preventDefault();
+    if (draggedNode && draggedNode !== node) {
+      // Only allow dropping onto directories
+      if (node.isDirectory) {
+        dropTarget = node;
+        event.dataTransfer!.dropEffect = 'move';
+      }
+    }
+  }
+  
+  function handleDragLeave() {
+    dropTarget = null;
+  }
+  
+  function handleDrop(event: DragEvent, node: FileNode) {
+    event.preventDefault();
+    if (draggedNode && node.isDirectory) {
+      const sourcePath = draggedNode.path;
+      const fileName = draggedNode.name;
+      const targetPath = `${node.path}/${fileName}`;
+      
+      // Move the file
+      filesStore.moveFile(sourcePath, targetPath)
+        .then(success => {
+          if (success) {
+            console.log(`File moved from ${sourcePath} to ${targetPath}`);
+          } else {
+            console.error('Failed to move file');
+          }
+        });
+    }
+    
+    // Reset drag state
+    draggedNode = null;
+    dropTarget = null;
+    showRecycleBin = false;
+  }
+  
+  function handleRecycleBinDragOver(event: DragEvent) {
+    event.preventDefault();
+    if (draggedNode) {
+      dragOverRecycleBin = true;
+      event.dataTransfer!.dropEffect = 'move';
+    }
+  }
+  
+  function handleRecycleBinDragLeave() {
+    dragOverRecycleBin = false;
+  }
+  
+  function handleRecycleBinDrop(event: DragEvent) {
+    event.preventDefault();
+    if (draggedNode) {
+      // Delete the file
+      filesStore.deleteFile(draggedNode.path)
+        .then(success => {
+          if (success) {
+            console.log(`File deleted: ${draggedNode!.path}`);
+          } else {
+            console.error('Failed to delete file');
+          }
+        });
+    }
+    
+    // Reset drag state
+    draggedNode = null;
+    dragOverRecycleBin = false;
+    showRecycleBin = false;
+  }
+  
+  function handleDragEnd() {
+    // Reset drag state
+    draggedNode = null;
+    dropTarget = null;
+    dragOverRecycleBin = false;
+    showRecycleBin = false;
+  }
 
   // Handle URL hash changes
   function handleHashChange() {
@@ -257,34 +377,6 @@
       if (!$filesStore.currentFile || $filesStore.currentFile.path !== filePath) {
         fetchFileContent(filePath);
       }
-    }
-  }
-
-  // Fetch file tree from backend
-  async function fetchFileTree() {
-    try {
-      const response = await fetch(`${API_URL}/api/get-file-tree`, {
-        credentials: 'include' // Add credentials for cookie passing
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch file tree: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-
-      // Filter to only show the tests directory
-      const testsNode = data.fileTree.find(node => node.name === 'tests');
-      if (testsNode) {
-        filesStore.setFileTree([testsNode]);
-      } else {
-        // If tests directory is not found, show empty state
-        filesStore.setFileTree([]);
-      }
-    } catch (error) {
-      console.error('Error fetching file tree:', error);
-      // If API not available, use mock data
-      useMockFileTree();
     }
   }
 
@@ -377,18 +469,43 @@
 </script>
 
 <div class="file-explorer">
-  <div class="file-explorer-header">Files</div>
+  <div class="file-explorer-header">
+    <span>Files</span>
+    {#if showRecycleBin}
+      <div 
+        class="recycle-bin {dragOverRecycleBin ? 'recycle-bin-active' : ''}"
+        on:dragover={handleRecycleBinDragOver}
+        on:dragleave={handleRecycleBinDragLeave}
+        on:drop={handleRecycleBinDrop}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          <line x1="10" y1="11" x2="10" y2="17"></line>
+          <line x1="14" y1="11" x2="14" y2="17"></line>
+        </svg>
+      </div>
+    {/if}
+  </div>
 
   <div class="file-tree">
     {#if fileTree && fileTree.length > 0}
       <!-- Render each file tree node recursively -->
       {#each fileTree as node}
         <div class="file-node">
-          <div class="tree-item {node.path === $filesStore.currentFile?.path ? 'selected' : ''}"
-               role="button"
-               tabindex="0"
-               on:click={(e) => handleNodeClick(e, node)}
-               on:keydown={(e) => e.key === 'Enter' && handleNodeClick(e, node)}>
+          <div 
+            class="tree-item {node.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === node ? 'drop-target' : ''}"
+            role="button"
+            tabindex="0"
+            draggable={!node.isDirectory}
+            on:dragstart={(e) => handleDragStart(e, node)}
+            on:dragover={(e) => handleDragOver(e, node)}
+            on:dragleave={handleDragLeave}
+            on:drop={(e) => handleDrop(e, node)}
+            on:dragend={handleDragEnd}
+            on:click={(e) => handleNodeClick(e, node)}
+            on:keydown={(e) => e.key === 'Enter' && handleNodeClick(e, node)}
+          >
             <div class="tree-item-icon {node.isDirectory ? (expandedFolders.has(node.path) ? 'tree-item-folder-open' : 'tree-item-folder') : ''}">
               {#if node.isDirectory}
                 {#if expandedFolders.has(node.path)}
@@ -423,11 +540,19 @@
               {#each node.children as childNode}
                 <!-- Recursive File Node Template -->
                 <div class="file-node">
-                  <div class="tree-item {childNode.path === $filesStore.currentFile?.path ? 'selected' : ''}"
-                       role="button"
-                       tabindex="0"
-                       on:click={(e) => handleNodeClick(e, childNode)}
-                       on:keydown={(e) => e.key === 'Enter' && handleNodeClick(e, childNode)}>
+                  <div 
+                    class="tree-item {childNode.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === childNode ? 'drop-target' : ''}"
+                    role="button"
+                    tabindex="0"
+                    draggable={!childNode.isDirectory}
+                    on:dragstart={(e) => handleDragStart(e, childNode)}
+                    on:dragover={(e) => handleDragOver(e, childNode)}
+                    on:dragleave={handleDragLeave}
+                    on:drop={(e) => handleDrop(e, childNode)}
+                    on:dragend={handleDragEnd}
+                    on:click={(e) => handleNodeClick(e, childNode)}
+                    on:keydown={(e) => e.key === 'Enter' && handleNodeClick(e, childNode)}
+                  >
                     <div class="tree-item-icon {childNode.isDirectory ? (expandedFolders.has(childNode.path) ? 'tree-item-folder-open' : 'tree-item-folder') : ''}">
                       {#if childNode.isDirectory}
                         {#if expandedFolders.has(childNode.path)}
@@ -461,11 +586,19 @@
                     <div class="tree-children">
                       {#each childNode.children as grandChildNode}
                         <div class="file-node">
-                          <div class="tree-item {grandChildNode.path === $filesStore.currentFile?.path ? 'selected' : ''}"
-                               role="button"
-                               tabindex="0"
-                               on:click={(e) => handleNodeClick(e, grandChildNode)}
-                               on:keydown={(e) => e.key === 'Enter' && handleNodeClick(e, grandChildNode)}>
+                          <div 
+                            class="tree-item {grandChildNode.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === grandChildNode ? 'drop-target' : ''}"
+                            role="button"
+                            tabindex="0"
+                            draggable={!grandChildNode.isDirectory}
+                            on:dragstart={(e) => handleDragStart(e, grandChildNode)}
+                            on:dragover={(e) => handleDragOver(e, grandChildNode)}
+                            on:dragleave={handleDragLeave}
+                            on:drop={(e) => handleDrop(e, grandChildNode)}
+                            on:dragend={handleDragEnd}
+                            on:click={(e) => handleNodeClick(e, grandChildNode)}
+                            on:keydown={(e) => e.key === 'Enter' && handleNodeClick(e, grandChildNode)}
+                          >
                             <div class="tree-item-icon {grandChildNode.isDirectory ? (expandedFolders.has(grandChildNode.path) ? 'tree-item-folder-open' : 'tree-item-folder') : ''}">
                               {#if grandChildNode.isDirectory}
                                 {#if expandedFolders.has(grandChildNode.path)}
@@ -557,6 +690,50 @@
     font-size: 14px;
     border-bottom: 1px solid var(--color-border);
     background-color: var(--color-bg-header);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  .recycle-bin {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: var(--color-bg-secondary);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  
+  .recycle-bin:hover {
+    background-color: var(--color-bg-secondary-hover);
+  }
+  
+  .recycle-bin-active {
+    background-color: var(--color-text-error);
+    color: white;
+    transform: scale(1.1);
+  }
+  
+  .drop-target {
+    background-color: var(--color-bg-accent-light);
+    border: 1px dashed var(--color-bg-accent);
+    transition: all 0.2s ease;
+    transform: scale(1.02);
+    box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
+  }
+  
+  /* Make dragged items semi-transparent */
+  .tree-item[draggable="true"]:active {
+    opacity: 0.7;
+    cursor: grabbing;
+  }
+  
+  /* Add transition for smoother effects */
+  .tree-item {
+    transition: background-color 0.15s ease, border 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
   }
 
   .file-tree {
