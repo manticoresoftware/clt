@@ -8,7 +8,7 @@
 
   function updateDockerImage() {
     filesStore.setDockerImage(dockerImage);
-    
+
     // Run the test with new docker image if there's a file loaded
     if ($filesStore.currentFile) {
       filesStore.runTest();
@@ -23,7 +23,7 @@
   function handleLogout() {
     logout();
   }
-  
+
   function openCreatePrModal() {
     githubStore.showModal();
   }
@@ -36,7 +36,7 @@
     </svg>
     Manticore Test Editor
   </div>
-  
+
   <div class="docker-image-container">
     <label for="docker-image">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -75,7 +75,7 @@
         Create PR
       </button>
     {/if}
-    
+
     {#if $authStore.isLoading}
       <span class="loading-indicator">
         <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -167,7 +167,7 @@
     font-size: 0.75rem;
     font-weight: 500;
   }
-  
+
   .create-pr-button {
     display: flex;
     align-items: center;
@@ -182,7 +182,7 @@
     font-weight: 500;
     margin-right: var(--spacing-md);
   }
-  
+
   .create-pr-button:hover {
     color: var(--color-text-primary);
     background-color: var(--color-bg-accent-hover);

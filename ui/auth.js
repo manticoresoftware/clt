@@ -10,7 +10,7 @@ export function setupPassport() {
     callbackURL: authConfig.github.callbackURL,
     skipAuth: authConfig.skipAuth
   });
-  
+
   // Serialize user to the session
   passport.serializeUser((user, done) => {
     console.log('Serializing user:', user.username);
@@ -31,7 +31,7 @@ export function setupPassport() {
       console.log('GitHub OAuth callback executed');
       console.log('Profile:', profile.username);
       console.log('Allowed users:', authConfig.allowedUsers);
-      
+
       // Check if the user is in the allowed list
       const username = profile.username;
       if (
@@ -44,6 +44,7 @@ export function setupPassport() {
           username: profile.username,
           displayName: profile.displayName || profile.username,
           avatarUrl: profile.photos?.[0]?.value || '',
+					token: accessToken,
         };
         console.log('User authenticated successfully:', username);
         return done(null, user);
@@ -80,7 +81,7 @@ export function isAuthenticated(req, res, next) {
   console.log(`[Auth Check] Session ID: ${req.sessionID}`);
   console.log(`[Auth Check] Authenticated: ${req.isAuthenticated()}`);
   console.log(`[Auth Check] Skip Auth: ${authConfig.skipAuth}`);
-  
+
   // Skip authentication if SKIP_AUTH is true
   if (authConfig.skipAuth) {
     console.log('[Auth Check] Skipping auth check - SKIP_AUTH enabled');
@@ -105,7 +106,7 @@ export function isAuthenticated(req, res, next) {
     console.log('[Auth Check] Public path, allowing access');
     return next();
   }
-  
+
   // For SPA routes, we'll just serve the index.html and let the client handle auth
   // The client-side code will show the login button when not authenticated
   console.log('[Auth Check] Non-API request, serving index.html and letting client handle auth');
@@ -128,7 +129,7 @@ export function addAuthRoutes(app) {
         // Redirect to the frontend URL after successful login
         successRedirect: process.env.FRONTEND_URL || `http://${process.env.HOST || 'localhost'}:${process.env.FRONTEND_PORT || 5173}`,
         // Redirect to the frontend login page on failure
-        failureRedirect: (process.env.FRONTEND_URL || `http://${process.env.HOST || 'localhost'}:${process.env.FRONTEND_PORT || 5173}`) + 
+        failureRedirect: (process.env.FRONTEND_URL || `http://${process.env.HOST || 'localhost'}:${process.env.FRONTEND_PORT || 5173}`) +
           '?error=Authentication%20failed.%20You%20might%20not%20be%20authorized%20to%20access%20this%20application.',
       })(req, res, next);
     }
@@ -145,17 +146,17 @@ export function addAuthRoutes(app) {
   app.get('/logout', (req, res, next) => {
     // Get the frontend URL for redirect
     const frontendUrl = process.env.FRONTEND_URL || `http://${process.env.HOST || 'localhost'}:${process.env.FRONTEND_PORT || 5173}`;
-    
+
     // Destroy the session completely
     req.session.destroy((err) => {
-      if (err) { 
+      if (err) {
         console.error('Session destroy error:', err);
-        return next(err); 
+        return next(err);
       }
-      
+
       // Clear the authentication cookies
       res.clearCookie('connect.sid');
-      
+
       // Respond with a success status for AJAX calls
       res.status(200).json({ success: true, message: 'Logged out successfully' });
     });
@@ -165,30 +166,30 @@ export function addAuthRoutes(app) {
   app.get('/api/current-user', (req, res) => {
     if (authConfig.skipAuth) {
       console.log('Auth skipped, returning dev-mode user');
-      return res.json({ 
-        isAuthenticated: true, 
+      return res.json({
+        isAuthenticated: true,
         skipAuth: true,
         user: { username: 'dev-mode' }
       });
     }
-    
+
     // For debugging
     console.log('Session ID:', req.sessionID);
     console.log('Session:', req.session);
     console.log('Session Cookie:', req.headers.cookie);
     console.log('Authenticated:', req.isAuthenticated());
     console.log('User:', req.user);
-    
+
     if (req.isAuthenticated() && req.user) {
       console.log('User is authenticated, returning user info');
-      return res.json({ 
-        isAuthenticated: true, 
-        user: req.user 
+      return res.json({
+        isAuthenticated: true,
+        user: req.user
       });
     }
-    
+
     console.log('User not authenticated');
-    return res.status(401).json({ 
+    return res.status(401).json({
       isAuthenticated: false,
       message: 'Authentication required. Please log in again.'
     });

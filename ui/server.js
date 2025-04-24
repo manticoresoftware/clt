@@ -848,6 +848,129 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 // Handle SPA routes - serve index.html for any other request
 // Apply light authentication check - client side will show login UI when needed
 
+// API endpoint to reset and sync to a specific branch
+app.post('/api/reset-to-branch', isAuthenticated, async (req, res) => {
+	try {
+		const { branch } = req.body;
+
+		if (!branch) {
+			return res.status(400).json({ error: 'Branch name is required' });
+		}
+
+		// Check if user is authenticated with GitHub
+		if (!req.user || !req.user.username) {
+			return res.status(401).json({ error: 'GitHub authentication required' });
+		}
+
+		// Determine if the tests directory is a symlink
+		const testsDir = path.join(ROOT_DIR, 'tests');
+		let actualRepoPath = testsDir;
+		try {
+			const testsDirStats = await fs.lstat(testsDir);
+			if (testsDirStats.isSymbolicLink()) {
+				// Resolve the symlink target
+				const symlinkTarget = await fs.readlink(testsDir);
+				const resolvedTarget = path.isAbsolute(symlinkTarget)
+					? symlinkTarget
+					: path.resolve(path.dirname(testsDir), symlinkTarget);
+
+				console.log(`Tests directory is a symlink pointing to ${resolvedTarget}`);
+				actualRepoPath = resolvedTarget;
+			}
+		} catch (error) {
+			console.error('Error checking if tests directory is a symlink:', error);
+			return res.status(500).json({ error: 'Failed to determine if tests directory is a symlink' });
+		}
+
+		// Helper function for executing commands
+		const { exec } = await import('child_process');
+		const execPromise = (cmd, options) => new Promise((resolve, reject) => {
+			exec(cmd, options, (error, stdout, stderr) => {
+				if (error) {
+					console.error(`Command execution error: ${stderr}`);
+					return reject(error);
+				}
+				resolve(stdout.trim());
+			});
+		});
+
+		// Try to find the git repository root for the actual tests directory
+		try {
+			// Change to the actual tests directory
+			process.chdir(actualRepoPath);
+
+			// Set the GH_TOKEN from env variable
+			const env = Object.assign({}, process.env, { GH_TOKEN: req.user.token });
+			const ghOptions = { env };
+
+			// Try to get the git repo root
+			const gitRoot = await execPromise('git rev-parse --show-toplevel', ghOptions);
+			console.log(`Git repository found at: ${gitRoot}`);
+
+			// Change to the git root directory
+			process.chdir(gitRoot);
+
+			// Get current repository information
+			const remoteUrl = await execPromise('gh repo view --json url -q .url', ghOptions);
+			console.log(`Remote repository URL: ${remoteUrl}`);
+
+			// Save current changes if any (in case user has unsaved work)
+			const hasChanges = await execPromise('git status --porcelain', ghOptions);
+			let stashMessage = '';
+
+			if (hasChanges) {
+				// Stash changes with a timestamp and username
+				const timestamp = new Date().toISOString();
+				stashMessage = `Auto-stashed by CLT-UI for ${req.user.username} at ${timestamp}`;
+				await execPromise(`git stash push -m "${stashMessage}"`, ghOptions);
+				console.log(`Stashed current changes: ${stashMessage}`);
+			}
+
+			// Make sure we have the latest from remote
+			await execPromise('git fetch', ghOptions);
+			console.log('Fetched latest updates from remote');
+
+			// Check if the branch exists
+			const branchExists = await execPromise(`git branch --list ${branch}`, ghOptions);
+
+			if (branchExists) {
+				// Local branch exists, check out and reset to remote
+				await execPromise(`git checkout ${branch}`, ghOptions);
+				console.log(`Switched to branch: ${branch}`);
+
+				// Reset to origin's version of the branch
+				await execPromise(`git reset --hard origin/${branch}`, ghOptions);
+				console.log(`Reset to origin/${branch}`);
+			} else {
+				// Local branch doesn't exist, create and track remote branch
+				await execPromise(`git checkout -b ${branch} origin/${branch}`, ghOptions);
+				console.log(`Created and checked out branch ${branch} tracking origin/${branch}`);
+			}
+
+			return res.json({
+				success: true,
+				branch,
+				repository: remoteUrl,
+				stashed: hasChanges ? stashMessage : null,
+				message: `Successfully reset to branch: ${branch}`
+			});
+
+		} catch (gitError) {
+			console.error('Git operation error:', gitError);
+			return res.status(500).json({
+				error: 'Git operation failed',
+				details: gitError.message
+			});
+		} finally {
+			// Change back to the original directory
+			process.chdir(ROOT_DIR);
+		}
+	} catch (error) {
+		console.error('Error resetting to branch:', error);
+		res.status(500).json({ error: `Failed to reset to branch: ${error.message}` });
+	}
+});
+
 // API endpoint to create GitHub PR
 app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 	try {
@@ -866,7 +989,7 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 		const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 		const branchName = `clt-ui-${req.user.username}-${timestamp}`;
 
-		// Check if git and gh CLI are available
+		// Check if gh CLI is available
 		const { exec } = await import('child_process');
 		const execPromise = (cmd, options) => new Promise((resolve, reject) => {
 			exec(cmd, options, (error, stdout, stderr) => {
@@ -924,26 +1047,30 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 			// Change to the actual tests directory
 			process.chdir(actualRepoPath);
 
-			// Check if git is available
-			await execPromise('git --version');
+			// Check if gh CLI is available
+			await execPromise('gh --version');
 
-			// Try to get the git repo root
-			const gitRoot = await execPromise('git rev-parse --show-toplevel');
+			// Set the GH_TOKEN from env variable
+			const env = Object.assign({}, process.env, { GH_TOKEN: req.user.token });
+			const ghOptions = { env };
+
+			// Try to get the git repo root (using gh repo view with --json flag)
+			const gitRoot = await execPromise('git rev-parse --show-toplevel', ghOptions);
 			console.log(`Git repository found at: ${gitRoot}`);
 
 			// Change to the git root directory
 			process.chdir(gitRoot);
 
 			// Get current repository information
-			const remoteUrl = await execPromise('git config --get remote.origin.url');
+			const remoteUrl = await execPromise('gh repo view --json url -q .url', ghOptions);
 			console.log(`Remote repository URL: ${remoteUrl}`);
 
 			// Get the current branch
-			const currentBranch = await execPromise('git rev-parse --abbrev-ref HEAD');
+			const currentBranch = await execPromise('gh repo view --json defaultBranchRef -q .defaultBranchRef.name', ghOptions);
 			console.log(`Current branch: ${currentBranch}`);
 
 			// Create a new branch
-			await execPromise(`git checkout -b ${branchName}`);
+			await execPromise(`git checkout -b ${branchName}`, ghOptions);
 			console.log(`Created and switched to new branch: ${branchName}`);
 
 			// Determine which parts of the tests directory to stage
@@ -954,31 +1081,31 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 			// Stage all changes in the tests directory
 			if (testsRelativePath === '') {
 				// If the tests directory is the repository root, stage all changes
-				await execPromise('git add .');
+				await execPromise(`git add ${testsRelativePath}`, ghOptions);
 				console.log('Staged all changes in repository');
 			} else {
 				// Otherwise, stage changes in the tests directory
-				await execPromise(`git add ${testsRelativePath}`);
+				await execPromise(`git add ${testsRelativePath}`, ghOptions);
 				console.log(`Staged changes in tests directory: ${testsRelativePath}`);
 			}
 
 			// Check if there are changes to commit
-			const status = await execPromise('git status --porcelain');
+			const status = await execPromise('git status --porcelain', ghOptions);
 			if (!status) {
 				return res.status(400).json({ error: 'No changes to commit' });
 			}
 
 			// Create a commit
-			await execPromise(`git commit -m "${title}"`);
+			await execPromise(`git commit -m "${title}"`, ghOptions);
 			console.log(`Created commit with message: ${title}`);
 
 			// Check if gh CLI is available
 			try {
-				await execPromise('gh --version');
+				await execPromise('gh --version', ghOptions, ghOptions);
 				console.log('GitHub CLI is available');
 
 				// Push to the remote repository
-				await execPromise(`git push -u origin ${branchName}`);
+				await execPromise(`git push -u origin ${branchName}`, ghOptions);
 				console.log(`Pushed to remote branch: ${branchName}`);
 
 				// Create a PR using gh CLI
@@ -993,7 +1120,7 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 				prCommand += ` --base ${currentBranch}`;
 
 				// Create the PR
-				const prOutput = await execPromise(prCommand);
+				const prOutput = await execPromise(prCommand, ghOptions);
 				console.log('PR created successfully');
 
 				// Extract PR URL from the output
@@ -1013,7 +1140,7 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 				console.error('Error using GitHub CLI:', ghError);
 
 				// Push to the remote repository anyway
-				await execPromise(`git push -u origin ${branchName}`);
+				await execPromise(`git push -u origin ${branchName}`, ghOptions);
 				console.log(`Pushed to remote branch: ${branchName}`);
 
 				// GitHub CLI not available, but we still pushed the branch

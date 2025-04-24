@@ -8,6 +8,7 @@ type User = {
   displayName?: string;
   email?: string;
   avatarUrl?: string;
+	token?: string;
 };
 
 type AuthState = {
@@ -55,14 +56,14 @@ export async function fetchAuthState() {
     }
 
     authStore.update(state => ({ ...state, isLoading: true, error: null }));
-    
+
     const response = await fetch(AUTH_CURRENT_USER_URL, {
       credentials: 'include', // Important for cookies/session
       headers: {
         'Accept': 'application/json'
       }
     });
-    
+
     if (!response.ok) {
       // If the request fails but we had previously stored auth, keep using it
       if (storedAuthState) {
@@ -76,17 +77,17 @@ export async function fetchAuthState() {
           return parsedState;
         }
       }
-      
+
       // Otherwise report the error
       throw new Error('Failed to fetch authentication state');
     }
-    
+
     const data = await response.json();
-    
+
     // Update auth store with the fresh data
     authStore.update(state => ({
       ...state,
-      isAuthenticated: data.isAuthenticated, 
+      isAuthenticated: data.isAuthenticated,
       user: data.user || null,
       skipAuth: data.skipAuth || false,
       isLoading: false
@@ -117,7 +118,7 @@ export async function fetchAuthState() {
       isLoading: false,
       error: error instanceof Error ? error.message : 'An unknown error occurred'
     }));
-    
+
     // Clear localStorage on authentication error
     localStorage.removeItem('auth_state');
   }
@@ -131,27 +132,27 @@ export async function logout() {
       ...initialState,
       isLoading: true
     });
-    
+
     // Send the logout request to the server
     const response = await fetch(AUTH_LOGOUT_URL, {
       method: 'GET',
       credentials: 'include'
     });
-    
+
     if (!response.ok) {
       console.error('Logout response not OK:', response.status);
     }
-    
+
     // Clear the auth store completely
     authStore.set({
       ...initialState,
       isLoading: false
     });
-    
+
     // Clear any auth-related localStorage/sessionStorage
     localStorage.removeItem('auth_state');
     sessionStorage.removeItem('auth_state');
-    
+
     // Force a hard reload of the page to clear any cached state
     window.location.href = window.location.origin + window.location.pathname;
   } catch (error) {
