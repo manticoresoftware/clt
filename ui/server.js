@@ -6,6 +6,7 @@ import { createReadStream } from 'fs';
 import session from 'express-session';
 import dotenv from 'dotenv';
 import { setupPassport, isAuthenticated, addAuthRoutes } from './auth.js';
+import authConfig from './config/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -84,6 +85,87 @@ app.use(express.static(path.join(__dirname, 'dist')));
 // Serve public content (for login page and other public resources)
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Create a workdir folder for the user repos if it doesn't exist
+const WORKDIR = path.join(ROOT_DIR, 'workdir');
+const REPO_URL = process.env.REPO_URL || 'git@github.com:manticoresoftware/manticoresearch.git';
+
+// Ensure workdir exists
+try {
+  await fs.mkdir(WORKDIR, { recursive: true });
+  console.log(`Ensured workdir exists at ${WORKDIR}`);
+} catch (error) {
+  console.error(`Error creating workdir: ${error}`);
+}
+
+// Setup or fetch the user's repository on login
+async function ensureUserRepo(username) {
+  if (!username) return null;
+
+  try {
+    const userDir = path.join(WORKDIR, username);
+    const userRepoExists = await fs.access(userDir).then(() => true).catch(() => false);
+
+    if (!userRepoExists) {
+      console.log(`Setting up repository for user ${username}`);
+      await fs.mkdir(userDir, { recursive: true });
+
+      // Clone the repository
+      const { exec } = await import('child_process');
+      const execPromise = (cmd, options) => new Promise((resolve, reject) => {
+        exec(cmd, options, (error, stdout, stderr) => {
+          if (error) {
+            console.error(`Command execution error: ${stderr}`);
+            return reject(error);
+          }
+          resolve(stdout.trim());
+        });
+      });
+
+      await execPromise(`git clone ${REPO_URL} ${userDir}`, { cwd: WORKDIR });
+      console.log(`Cloned repository for user ${username}`);
+    }
+
+    // Verify the repo is valid and the CLT tests folder exists
+    const testDir = path.join(userDir, 'test', 'clt-tests');
+    const testDirExists = await fs.access(testDir).then(() => true).catch(() => false);
+
+    if (!testDirExists) {
+      console.error(`CLT tests directory not found for user ${username}. Expected at: ${testDir}`);
+      return null;
+    }
+
+    return { userDir, testDir };
+  } catch (error) {
+    console.error(`Error setting up user repository: ${error}`);
+    return null;
+  }
+}
+
+// Make the function available globally for the auth system
+global.ensureUserRepo = ensureUserRepo;
+
+// Get user repository path (working directory)
+function getUserRepoPath(req) {
+  // If auth is skipped, use a default user
+  if (authConfig.skipAuth) {
+    return path.join(WORKDIR, 'dev-mode');
+  }
+
+  // If user is authenticated, use their username
+  if (req.isAuthenticated() && req.user && req.user.username) {
+    return path.join(WORKDIR, req.user.username);
+  }
+
+  // Fallback to the root directory if no user is available
+  return ROOT_DIR;
+}
+
+// Get user repository test path
+function getUserTestPath(req) {
+  const userRepo = getUserRepoPath(req);
+  return path.join(userRepo, 'test', 'clt-tests');
+}
+
 // Helper function to get a file tree
 async function buildFileTree(dir, basePath = '', followSymlinks = true) {
 	const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -159,7 +241,24 @@ async function buildFileTree(dir, basePath = '', followSymlinks = true) {
 // API endpoint to get the file tree
 app.get('/api/get-file-tree', isAuthenticated, async (req, res) => {
 	try {
-		const fileTree = await buildFileTree(ROOT_DIR);
+		// Ensure user repo exists
+		const username = req.user?.username || (authConfig.skipAuth ? 'dev-mode' : null);
+		if (username) {
+			await ensureUserRepo(username);
+		}
+
+		// Get the user's test directory
+		const testDir = getUserTestPath(req);
+		const testDirExists = await fs.access(testDir).then(() => true).catch(() => false);
+
+		if (!testDirExists) {
+			return res.status(404).json({ error: 'Test directory not found' });
+		}
+
+		// Build the file tree with the user's test directory as the base
+		const fileTree = await buildFileTree(testDir);
+
+		// Return the file tree directly without wrapping in a virtual root node
 		res.json({ fileTree });
 	} catch (error) {
 		console.error('Error getting file tree:', error);
@@ -176,45 +275,17 @@ app.get('/api/get-file', isAuthenticated, async (req, res) => {
 			return res.status(400).json({ error: 'File path is required' });
 		}
 
-		const absolutePath = path.join(ROOT_DIR, filePath);
+		// Use the user's test directory as the base
+		const testDir = getUserTestPath(req);
+		const absolutePath = path.join(testDir, filePath);
 
-		// Basic security check to ensure the path is within the ROOT_DIR
-		if (!absolutePath.startsWith(ROOT_DIR)) {
+		// Basic security check to ensure the path is within the test directory
+		if (!absolutePath.startsWith(testDir)) {
 			return res.status(403).json({ error: 'Access denied' });
 		}
 
-		// Handle symlinks and resolve to the actual file
-		let actualPath = absolutePath;
-		const pathParts = filePath.split('/');
-
-		// Check if the file is within a potential symlink directory
-		for (let i = 1; i <= pathParts.length; i++) {
-			const partialPath = pathParts.slice(0, i).join('/');
-			const partialAbsolutePath = path.join(ROOT_DIR, partialPath);
-
-			try {
-				const stats = await fs.lstat(partialAbsolutePath);
-				if (stats.isSymbolicLink()) {
-					// Found a symlink in the path hierarchy
-					const linkTarget = await fs.readlink(partialAbsolutePath);
-					const resolvedTarget = path.isAbsolute(linkTarget)
-						? linkTarget
-						: path.resolve(path.dirname(partialAbsolutePath), linkTarget);
-
-					// Replace the symlink part of the path with its target
-					const remainingPath = pathParts.slice(i).join('/');
-					actualPath = path.join(resolvedTarget, remainingPath);
-					console.log(`Resolved symlink: ${absolutePath} -> ${actualPath}`);
-					break;
-				}
-			} catch (error) {
-				// If we can't access this path part, continue with the next one
-				continue;
-			}
-		}
-
-		// Read the actual file content
-		const content = await fs.readFile(actualPath, 'utf8');
+		// Read the file content
+		const content = await fs.readFile(absolutePath, 'utf8');
 		res.json({ content });
 	} catch (error) {
 		console.error('Error reading file:', error);
@@ -231,49 +302,21 @@ app.post('/api/save-file', isAuthenticated, async (req, res) => {
 			return res.status(400).json({ error: 'File path and content are required' });
 		}
 
-		const absolutePath = path.join(ROOT_DIR, filePath);
+		// Use the user's test directory as the base
+		const testDir = getUserTestPath(req);
+		const absolutePath = path.join(testDir, filePath);
 
-		// Basic security check to ensure the path is within the ROOT_DIR
-		if (!absolutePath.startsWith(ROOT_DIR)) {
+		// Basic security check to ensure the path is within the test directory
+		if (!absolutePath.startsWith(testDir)) {
 			return res.status(403).json({ error: 'Access denied' });
 		}
 
-		// Handle symlinks in the path and save to the actual file location
-		let actualPath = absolutePath;
-		const pathParts = filePath.split('/');
-
-		// Check if the file is within a potential symlink directory
-		for (let i = 1; i <= pathParts.length; i++) {
-			const partialPath = pathParts.slice(0, i).join('/');
-			const partialAbsolutePath = path.join(ROOT_DIR, partialPath);
-
-			try {
-				const stats = await fs.lstat(partialAbsolutePath);
-				if (stats.isSymbolicLink()) {
-					// Found a symlink in the path hierarchy
-					const linkTarget = await fs.readlink(partialAbsolutePath);
-					const resolvedTarget = path.isAbsolute(linkTarget)
-						? linkTarget
-						: path.resolve(path.dirname(partialAbsolutePath), linkTarget);
-
-					// Replace the symlink part of the path with its target
-					const remainingPath = pathParts.slice(i).join('/');
-					actualPath = path.join(resolvedTarget, remainingPath);
-					console.log(`Resolved symlink for save: ${absolutePath} -> ${actualPath}`);
-					break;
-				}
-			} catch (error) {
-				// If we can't access this path part, continue with the next one
-				continue;
-			}
-		}
-
 		// Ensure directory exists
-		const directory = path.dirname(actualPath);
+		const directory = path.dirname(absolutePath);
 		await fs.mkdir(directory, { recursive: true });
 
-		// Write file to the resolved path
-		await fs.writeFile(actualPath, content, 'utf8');
+		// Write file
+		await fs.writeFile(absolutePath, content, 'utf8');
 
 		res.json({ success: true });
 	} catch (error) {
@@ -291,80 +334,22 @@ app.post('/api/move-file', isAuthenticated, async (req, res) => {
 			return res.status(400).json({ error: 'Source and target paths are required' });
 		}
 
-		const absoluteSourcePath = path.join(ROOT_DIR, sourcePath);
-		const absoluteTargetPath = path.join(ROOT_DIR, targetPath);
+		// Use the user's test directory as the base
+		const testDir = getUserTestPath(req);
+		const absoluteSourcePath = path.join(testDir, sourcePath);
+		const absoluteTargetPath = path.join(testDir, targetPath);
 
-		// Basic security check to ensure both paths are within the ROOT_DIR
-		if (!absoluteSourcePath.startsWith(ROOT_DIR) || !absoluteTargetPath.startsWith(ROOT_DIR)) {
+		// Basic security check to ensure both paths are within the test directory
+		if (!absoluteSourcePath.startsWith(testDir) || !absoluteTargetPath.startsWith(testDir)) {
 			return res.status(403).json({ error: 'Access denied' });
 		}
 
-		// Handle symlinks in the source path
-		let actualSourcePath = absoluteSourcePath;
-		const sourcePathParts = sourcePath.split('/');
-
-		// Check if the source file is within a potential symlink directory
-		for (let i = 1; i <= sourcePathParts.length; i++) {
-			const partialPath = sourcePathParts.slice(0, i).join('/');
-			const partialAbsolutePath = path.join(ROOT_DIR, partialPath);
-
-			try {
-				const stats = await fs.lstat(partialAbsolutePath);
-				if (stats.isSymbolicLink()) {
-					// Found a symlink in the path hierarchy
-					const linkTarget = await fs.readlink(partialAbsolutePath);
-					const resolvedTarget = path.isAbsolute(linkTarget)
-						? linkTarget
-						: path.resolve(path.dirname(partialAbsolutePath), linkTarget);
-
-					// Replace the symlink part of the path with its target
-					const remainingPath = sourcePathParts.slice(i).join('/');
-					actualSourcePath = path.join(resolvedTarget, remainingPath);
-					console.log(`Resolved source symlink: ${absoluteSourcePath} -> ${actualSourcePath}`);
-					break;
-				}
-			} catch (error) {
-				// If we can't access this path part, continue with the next one
-				continue;
-			}
-		}
-
-		// Handle symlinks in the target path
-		let actualTargetPath = absoluteTargetPath;
-		const targetPathParts = targetPath.split('/');
-
-		// Check if the target file is within a potential symlink directory
-		for (let i = 1; i <= targetPathParts.length; i++) {
-			const partialPath = targetPathParts.slice(0, i).join('/');
-			const partialAbsolutePath = path.join(ROOT_DIR, partialPath);
-
-			try {
-				const stats = await fs.lstat(partialAbsolutePath);
-				if (stats.isSymbolicLink()) {
-					// Found a symlink in the path hierarchy
-					const linkTarget = await fs.readlink(partialAbsolutePath);
-					const resolvedTarget = path.isAbsolute(linkTarget)
-						? linkTarget
-						: path.resolve(path.dirname(partialAbsolutePath), linkTarget);
-
-					// Replace the symlink part of the path with its target
-					const remainingPath = targetPathParts.slice(i).join('/');
-					actualTargetPath = path.join(resolvedTarget, remainingPath);
-					console.log(`Resolved target symlink: ${absoluteTargetPath} -> ${actualTargetPath}`);
-					break;
-				}
-			} catch (error) {
-				// If we can't access this path part, continue with the next one
-				continue;
-			}
-		}
-
 		// Ensure target directory exists
-		const targetDir = path.dirname(actualTargetPath);
+		const targetDir = path.dirname(absoluteTargetPath);
 		await fs.mkdir(targetDir, { recursive: true });
 
-		// Move/rename the file using resolved paths
-		await fs.rename(actualSourcePath, actualTargetPath);
+		// Move/rename the file
+		await fs.rename(absoluteSourcePath, absoluteTargetPath);
 
 		res.json({ success: true });
 	} catch (error) {
@@ -382,10 +367,12 @@ app.delete('/api/delete-file', isAuthenticated, async (req, res) => {
 			return res.status(400).json({ error: 'File path is required' });
 		}
 
-		const absolutePath = path.join(ROOT_DIR, filePath);
+		// Use the user's test directory as the base
+		const testDir = getUserTestPath(req);
+		const absolutePath = path.join(testDir, filePath);
 
-		// Basic security check to ensure the path is within the ROOT_DIR
-		if (!absolutePath.startsWith(ROOT_DIR)) {
+		// Basic security check to ensure the path is within the test directory
+		if (!absolutePath.startsWith(testDir)) {
 			return res.status(403).json({ error: 'Access denied' });
 		}
 
@@ -416,10 +403,12 @@ app.post('/api/create-directory', isAuthenticated, async (req, res) => {
 			return res.status(400).json({ error: 'Directory path is required' });
 		}
 
-		const absolutePath = path.join(ROOT_DIR, dirPath);
+		// Use the user's test directory as the base
+		const testDir = getUserTestPath(req);
+		const absolutePath = path.join(testDir, dirPath);
 
-		// Basic security check to ensure the path is within the ROOT_DIR
-		if (!absolutePath.startsWith(ROOT_DIR)) {
+		// Basic security check to ensure the path is within the test directory
+		if (!absolutePath.startsWith(testDir)) {
 			return res.status(403).json({ error: 'Access denied' });
 		}
 
@@ -780,22 +769,26 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 			return res.status(400).json({ error: 'File path is required' });
 		}
 
-		const absolutePath = path.join(ROOT_DIR, filePath);
+		// Use the user's test directory as the base
+		const testDir = getUserTestPath(req);
+		const absolutePath = path.join(testDir, filePath);
 
-		// Basic security check to ensure the path is within the ROOT_DIR
-		if (!absolutePath.startsWith(ROOT_DIR)) {
+		// Basic security check to ensure the path is within the test directory
+		if (!absolutePath.startsWith(testDir)) {
 			return res.status(403).json({ error: 'Access denied' });
 		}
 
-		// Execute the clt test command to run the test (from the current directory)
-		const testCommand = `clt test -d -t ${filePath} ${dockerImage ? dockerImage : ''}`;
-		console.log(`Executing test command: ${testCommand}`);
+		// Execute the clt test command to run the test (from the user's project directory)
+		const userRepoPath = getUserRepoPath(req);
+		const relativeFilePath = path.relative(userRepoPath, absolutePath);
+		const testCommand = `clt test -d -t ${relativeFilePath} ${dockerImage ? dockerImage : ''}`;
+		console.log(`Executing test command: ${testCommand} in dir: ${userRepoPath}`);
 
 		const { exec } = await import('child_process');
 
-		// Execute in the current working directory
+		// Execute in the user's repository directory
 		const execOptions = {
-			cwd: process.cwd(),
+			cwd: userRepoPath,
 			env: {
 				...process.env,
 				CLT_NO_COLOR: '1',
@@ -845,8 +838,349 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 	}
 });
 
-// Handle SPA routes - serve index.html for any other request
-// Apply light authentication check - client side will show login UI when needed
+// API endpoint to commit changes (with or without creating PR)
+app.post('/api/commit-changes', isAuthenticated, async (req, res) => {
+	try {
+		const { title, description, createPr = true } = req.body;
+
+		if (!title) {
+			return res.status(400).json({ error: 'Commit message is required' });
+		}
+
+		// Check if user is authenticated with GitHub
+		if (!req.user || !req.user.username) {
+			return res.status(401).json({ error: 'GitHub authentication required' });
+		}
+
+		// Get the user's repo path
+		const userRepoPath = getUserRepoPath(req);
+		const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+
+		if (!repoExists) {
+			return res.status(404).json({ error: 'Repository not found' });
+		}
+
+		// Helper function for executing commands
+		const { exec } = await import('child_process');
+		const execPromise = (cmd, options) => new Promise((resolve, reject) => {
+			exec(cmd, options, (error, stdout, stderr) => {
+				if (error) {
+					console.error(`Command execution error: ${stderr}`);
+					return reject(error);
+				}
+				resolve(stdout.trim());
+			});
+		});
+
+		// Try to find the git repository root for the user's repo
+		try {
+			// Change to the user's repo directory
+			process.chdir(userRepoPath);
+
+			// Set the GH_TOKEN from env variable
+			const env = Object.assign({}, process.env, { GH_TOKEN: req.user.token });
+			const ghOptions = { env };
+
+			// Get current branch name
+			const currentBranch = await execPromise('git rev-parse --abbrev-ref HEAD', ghOptions);
+			console.log(`Current branch: ${currentBranch}`);
+
+			// Get remote repository information
+			const remoteUrl = await execPromise('gh repo view --json url -q .url', ghOptions);
+			console.log(`Remote repository URL: ${remoteUrl}`);
+
+			// Get the default branch (main/master)
+			const defaultBranch = await execPromise('gh repo view --json defaultBranchRef -q .defaultBranchRef.name', ghOptions);
+			console.log(`Default branch: ${defaultBranch}`);
+
+			// Check if we're already on a clt-ui branch (PR branch)
+			const isPrBranch = currentBranch.startsWith('clt-ui-');
+			console.log(`Is PR branch: ${isPrBranch}`);
+
+			let branchName = currentBranch;
+			let needToCreatePr = createPr && !isPrBranch;
+
+			// Determine which parts of the tests directory to stage
+			const testDir = getUserTestPath(req);
+			const relativeTestPath = path.relative(userRepoPath, testDir);
+			console.log(`Tests relative path: ${relativeTestPath}`);
+
+			// Stage changes in the tests directory
+			await execPromise(`git add ${relativeTestPath}`, ghOptions);
+			console.log(`Staged changes in tests directory: ${relativeTestPath}`);
+
+			// Check if there are changes to commit
+			const status = await execPromise('git status --porcelain', ghOptions);
+			if (!status) {
+				return res.status(400).json({ error: 'No changes to commit' });
+			}
+
+			// If we need to create a PR, we need to create a new branch first
+			if (needToCreatePr) {
+				// Create a new branch name based on timestamp and username
+				const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+				branchName = `clt-ui-${req.user.username}-${timestamp}`;
+
+				// Create a new branch
+				await execPromise(`git checkout -b ${branchName}`, ghOptions);
+				console.log(`Created and switched to new branch: ${branchName}`);
+			}
+
+			// Create a commit
+			await execPromise(`git commit -m "${title}"`, ghOptions);
+			console.log(`Created commit with message: ${title}`);
+
+			// Push to the remote repository
+			await execPromise(`git push -u origin ${branchName}`, ghOptions);
+			console.log(`Pushed to remote branch: ${branchName}`);
+
+			// Create a PR if needed
+			let prUrl = null;
+			if (needToCreatePr) {
+				try {
+					// Create PR command
+					let prCommand = `gh pr create --title "${title}" --head ${branchName}`;
+
+					// Add description if provided
+					if (description) {
+						prCommand += ` --body "${description}"`;
+					}
+
+					// Add default base branch
+					prCommand += ` --base ${defaultBranch}`;
+
+					// Create the PR
+					const prOutput = await execPromise(prCommand, ghOptions);
+					console.log('PR created successfully');
+
+					// Extract PR URL from the output
+					const prUrlMatch = prOutput.match(/(https:\/\/github\.com\/[^\s]+)/);
+					prUrl = prUrlMatch ? prUrlMatch[0] : null;
+				} catch (prError) {
+					console.error('Error creating PR:', prError);
+					// Continue with the flow since we've already pushed changes
+				}
+			}
+
+			return res.json({
+				success: true,
+				branch: branchName,
+				commit: title,
+				pr: prUrl,
+				repository: remoteUrl,
+				message: needToCreatePr && prUrl
+					? 'Pull request created successfully'
+					: (needToCreatePr
+						? 'Changes committed and pushed to new branch. PR creation failed.'
+						: 'Changes committed successfully')
+			});
+
+		} catch (gitError) {
+			console.error('Git operation error:', gitError);
+			return res.status(500).json({
+				error: 'Git operation failed',
+				details: gitError.message
+			});
+		} finally {
+			// Change back to the original directory
+			process.chdir(ROOT_DIR);
+		}
+	} catch (error) {
+		console.error('Error creating commit:', error);
+		res.status(500).json({ error: `Failed to create commit: ${error.message}` });
+	}
+});
+
+// API endpoint to get git status information
+app.get('/api/git-status', isAuthenticated, async (req, res) => {
+	try {
+		// Check if user is authenticated with GitHub
+		if (!req.user || !req.user.username) {
+			return res.status(401).json({ error: 'GitHub authentication required' });
+		}
+
+		// Get the user's repo path
+		const userRepoPath = getUserRepoPath(req);
+		const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+
+		if (!repoExists) {
+			return res.status(404).json({ error: 'Repository not found' });
+		}
+
+		// Helper function for executing commands
+		const { exec } = await import('child_process');
+		const execPromise = (cmd, options) => new Promise((resolve, reject) => {
+			exec(cmd, options, (error, stdout, stderr) => {
+				if (error) {
+					console.error(`Command execution error: ${stderr}`);
+					return reject(error);
+				}
+				resolve(stdout.trim());
+			});
+		});
+
+		// Try to find the git repository root for the user's repo
+		try {
+			// Change to the user's repo directory
+			process.chdir(userRepoPath);
+
+			// Set the GH_TOKEN from env variable
+			const env = Object.assign({}, process.env, { GH_TOKEN: req.user.token });
+			const ghOptions = { env };
+
+			// Get current branch name
+			const currentBranch = await execPromise('git rev-parse --abbrev-ref HEAD', ghOptions);
+			console.log(`Current branch: ${currentBranch}`);
+
+			// Check if the branch is a PR branch (starts with clt-ui-)
+			const isPrBranch = currentBranch.startsWith('clt-ui-');
+			console.log(`Is PR branch: ${isPrBranch}`);
+
+			// Get list of files with changes (modified, unstaged)
+			const statusOutput = await execPromise('git status --porcelain', ghOptions);
+			console.log('Git status output:', statusOutput);
+
+			// Parse the status output to get modified files
+			const modifiedFiles = [];
+			const modifiedDirs = new Set();
+
+			const testDir = getUserTestPath(req);
+			// Get the relative path to the test directory from the repo root
+			const relativeTestPath = path.relative(userRepoPath, testDir);
+			console.log(`Relative test path: ${relativeTestPath}`);
+
+			if (statusOutput) {
+				const statusLines = statusOutput.split('\n');
+				for (const line of statusLines) {
+					if (line.trim()) {
+						// Format is XY filename (X is staging status, Y is working tree status)
+						const match = line.trim().match(/^(\S+)\s+(.+)$/);
+						if (!match) continue;
+
+						const status = match[1];
+						const filePath = match[2];
+
+						console.log(`Checking file: ${filePath}`);
+
+						// Check if this file is in the test directory
+						if (filePath.startsWith(relativeTestPath)) {
+							modifiedFiles.push({
+								path: filePath,
+								status: status.trim()
+							});
+
+							// Add all parent directories to modifiedDirs set
+							// Start with the file's directory
+							let dirPath = path.dirname(filePath);
+							while (dirPath && dirPath !== '.' && dirPath !== '/') {
+								modifiedDirs.add(dirPath);
+								dirPath = path.dirname(dirPath);
+							}
+						}
+					}
+				}
+			}
+
+			// Check if there are any changes to commit in the test directory
+			const hasChanges = modifiedFiles.length > 0;
+
+			return res.json({
+				success: true,
+				currentBranch,
+				isPrBranch,
+				hasChanges,
+				modifiedFiles,
+				modifiedDirs: Array.from(modifiedDirs),
+				testPath: relativeTestPath
+			});
+
+		} catch (gitError) {
+			console.error('Git operation error:', gitError);
+			return res.status(500).json({
+				error: 'Git operation failed',
+				details: gitError.message
+			});
+		} finally {
+			// Change back to the original directory
+			process.chdir(ROOT_DIR);
+		}
+	} catch (error) {
+		console.error('Error getting git status:', error);
+		res.status(500).json({ error: `Failed to get git status: ${error.message}` });
+	}
+});
+
+// API endpoint to get current branch information
+app.get('/api/current-branch', isAuthenticated, async (req, res) => {
+	try {
+		// Check if user is authenticated with GitHub
+		if (!req.user || !req.user.username) {
+			return res.status(401).json({ error: 'GitHub authentication required' });
+		}
+
+		// Get the user's repo path
+		const userRepoPath = getUserRepoPath(req);
+		const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+
+		if (!repoExists) {
+			return res.status(404).json({ error: 'Repository not found' });
+		}
+
+		// Helper function for executing commands
+		const { exec } = await import('child_process');
+		const execPromise = (cmd, options) => new Promise((resolve, reject) => {
+			exec(cmd, options, (error, stdout, stderr) => {
+				if (error) {
+					console.error(`Command execution error: ${stderr}`);
+					return reject(error);
+				}
+				resolve(stdout.trim());
+			});
+		});
+
+		// Try to find the git repository root for the user's repo
+		try {
+			// Change to the user's repo directory
+			process.chdir(userRepoPath);
+
+			// Set the GH_TOKEN from env variable
+			const env = Object.assign({}, process.env, { GH_TOKEN: req.user.token });
+			const ghOptions = { env };
+
+			// Get current branch name
+			const currentBranch = await execPromise('git rev-parse --abbrev-ref HEAD', ghOptions);
+			console.log(`Current branch: ${currentBranch}`);
+
+			// Get remote repository URL
+			const remoteUrl = await execPromise('gh repo view --json url -q .url', ghOptions);
+			console.log(`Remote repository URL: ${remoteUrl}`);
+
+			// Get default branch
+			const defaultBranch = await execPromise('gh repo view --json defaultBranchRef -q .defaultBranchRef.name', ghOptions);
+			console.log(`Default branch: ${defaultBranch}`);
+
+			return res.json({
+				success: true,
+				currentBranch,
+				defaultBranch,
+				repository: remoteUrl
+			});
+
+		} catch (gitError) {
+			console.error('Git operation error:', gitError);
+			return res.status(500).json({
+				error: 'Git operation failed',
+				details: gitError.message
+			});
+		} finally {
+			// Change back to the original directory
+			process.chdir(ROOT_DIR);
+		}
+	} catch (error) {
+		console.error('Error getting current branch:', error);
+		res.status(500).json({ error: `Failed to get current branch: ${error.message}` });
+	}
+});
 
 // API endpoint to get current branch information
 app.get('/api/current-branch', isAuthenticated, async (req, res) => {
@@ -953,24 +1287,12 @@ app.post('/api/reset-to-branch', isAuthenticated, async (req, res) => {
 			return res.status(401).json({ error: 'GitHub authentication required' });
 		}
 
-		// Determine if the tests directory is a symlink
-		const testsDir = path.join(ROOT_DIR, 'tests');
-		let actualRepoPath = testsDir;
-		try {
-			const testsDirStats = await fs.lstat(testsDir);
-			if (testsDirStats.isSymbolicLink()) {
-				// Resolve the symlink target
-				const symlinkTarget = await fs.readlink(testsDir);
-				const resolvedTarget = path.isAbsolute(symlinkTarget)
-					? symlinkTarget
-					: path.resolve(path.dirname(testsDir), symlinkTarget);
+		// Get the user's repo path
+		const userRepoPath = getUserRepoPath(req);
+		const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
 
-				console.log(`Tests directory is a symlink pointing to ${resolvedTarget}`);
-				actualRepoPath = resolvedTarget;
-			}
-		} catch (error) {
-			console.error('Error checking if tests directory is a symlink:', error);
-			return res.status(500).json({ error: 'Failed to determine if tests directory is a symlink' });
+		if (!repoExists) {
+			return res.status(404).json({ error: 'Repository not found' });
 		}
 
 		// Helper function for executing commands
@@ -985,21 +1307,14 @@ app.post('/api/reset-to-branch', isAuthenticated, async (req, res) => {
 			});
 		});
 
-		// Try to find the git repository root for the actual tests directory
+		// Try to find the git repository root for the user's repo
 		try {
-			// Change to the actual tests directory
-			process.chdir(actualRepoPath);
+			// Change to the user's repo directory
+			process.chdir(userRepoPath);
 
 			// Set the GH_TOKEN from env variable
 			const env = Object.assign({}, process.env, { GH_TOKEN: req.user.token });
 			const ghOptions = { env };
-
-			// Try to get the git repo root
-			const gitRoot = await execPromise('git rev-parse --show-toplevel', ghOptions);
-			console.log(`Git repository found at: ${gitRoot}`);
-
-			// Change to the git root directory
-			process.chdir(gitRoot);
 
 			// Get current repository information
 			const remoteUrl = await execPromise('gh repo view --json url -q .url', ghOptions);
@@ -1080,7 +1395,15 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 		const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 		const branchName = `clt-ui-${req.user.username}-${timestamp}`;
 
-		// Check if gh CLI is available
+		// Get the user's repo path
+		const userRepoPath = getUserRepoPath(req);
+		const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+
+		if (!repoExists) {
+			return res.status(404).json({ error: 'Repository not found' });
+		}
+
+		// Helper function for executing commands
 		const { exec } = await import('child_process');
 		const execPromise = (cmd, options) => new Promise((resolve, reject) => {
 			exec(cmd, options, (error, stdout, stderr) => {
@@ -1092,65 +1415,14 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 			});
 		});
 
-		// Get the tests directory path and resolve if it's a symlink
-		const testsDir = path.join(ROOT_DIR, 'tests');
-		let actualTestsDir = testsDir;
-		let isSymlink = false;
-
+		// Try to find the git repository root for the user's repo
 		try {
-			// Check if tests dir is a symlink
-			const testsDirStats = await fs.lstat(testsDir);
-			if (testsDirStats.isSymbolicLink()) {
-				isSymlink = true;
-				// Get symlink target
-				const symlinkTarget = await fs.readlink(testsDir);
-				// Resolve to absolute path if needed
-				actualTestsDir = path.isAbsolute(symlinkTarget) ?
-					symlinkTarget : path.resolve(path.dirname(testsDir), symlinkTarget);
-				console.log(`Tests directory is a symlink pointing to ${actualTestsDir}`);
-			}
-		} catch (err) {
-			console.error('Error checking tests directory:', err);
-			return res.status(500).json({ error: 'Failed to access tests directory' });
-		}
-
-		// Determine if the tests directory is a symlink
-		let actualRepoPath = testsDir;
-		try {
-			const testsDirStats = await fs.lstat(testsDir);
-			if (testsDirStats.isSymbolicLink()) {
-				// Resolve the symlink target
-				const symlinkTarget = await fs.readlink(testsDir);
-				const resolvedTarget = path.isAbsolute(symlinkTarget)
-					? symlinkTarget
-					: path.resolve(path.dirname(testsDir), symlinkTarget);
-
-				console.log(`Tests directory is a symlink pointing to ${resolvedTarget}`);
-				actualRepoPath = resolvedTarget;
-			}
-		} catch (error) {
-			console.error('Error checking if tests directory is a symlink:', error);
-			return res.status(500).json({ error: 'Failed to determine if tests directory is a symlink' });
-		}
-
-		// Try to find the git repository root for the actual tests directory
-		try {
-			// Change to the actual tests directory
-			process.chdir(actualRepoPath);
-
-			// Check if gh CLI is available
-			await execPromise('gh --version');
+			// Change to the user's repo directory
+			process.chdir(userRepoPath);
 
 			// Set the GH_TOKEN from env variable
 			const env = Object.assign({}, process.env, { GH_TOKEN: req.user.token });
 			const ghOptions = { env };
-
-			// Try to get the git repo root (using gh repo view with --json flag)
-			const gitRoot = await execPromise('git rev-parse --show-toplevel', ghOptions);
-			console.log(`Git repository found at: ${gitRoot}`);
-
-			// Change to the git root directory
-			process.chdir(gitRoot);
 
 			// Get current repository information
 			const remoteUrl = await execPromise('gh repo view --json url -q .url', ghOptions);
@@ -1165,20 +1437,13 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 			console.log(`Created and switched to new branch: ${branchName}`);
 
 			// Determine which parts of the tests directory to stage
-			// If tests directory is a symlink, we need to figure out the correct relative path
-			const testsRelativePath = path.relative(gitRoot, actualRepoPath);
-			console.log(`Tests relative path: ${testsRelativePath}`);
+			const testDir = getUserTestPath(req);
+			const relativeTestPath = path.relative(userRepoPath, testDir);
+			console.log(`Tests relative path: ${relativeTestPath}`);
 
-			// Stage all changes in the tests directory
-			if (testsRelativePath === '') {
-				// If the tests directory is the repository root, stage all changes
-				await execPromise(`git add ${testsRelativePath}`, ghOptions);
-				console.log('Staged all changes in repository');
-			} else {
-				// Otherwise, stage changes in the tests directory
-				await execPromise(`git add ${testsRelativePath}`, ghOptions);
-				console.log(`Staged changes in tests directory: ${testsRelativePath}`);
-			}
+			// Stage changes in the tests directory
+			await execPromise(`git add ${relativeTestPath}`, ghOptions);
+			console.log(`Staged changes in tests directory: ${relativeTestPath}`);
 
 			// Check if there are changes to commit
 			const status = await execPromise('git status --porcelain', ghOptions);
@@ -1190,14 +1455,14 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 			await execPromise(`git commit -m "${title}"`, ghOptions);
 			console.log(`Created commit with message: ${title}`);
 
+			// Push to the remote repository
+			await execPromise(`git push -u origin ${branchName}`, ghOptions);
+			console.log(`Pushed to remote branch: ${branchName}`);
+
 			// Check if gh CLI is available
 			try {
 				await execPromise('gh --version', ghOptions, ghOptions);
 				console.log('GitHub CLI is available');
-
-				// Push to the remote repository
-				await execPromise(`git push -u origin ${branchName}`, ghOptions);
-				console.log(`Pushed to remote branch: ${branchName}`);
 
 				// Create a PR using gh CLI
 				let prCommand = `gh pr create --title "${title}" --head ${branchName}`;
@@ -1229,10 +1494,6 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 				});
 			} catch (ghError) {
 				console.error('Error using GitHub CLI:', ghError);
-
-				// Push to the remote repository anyway
-				await execPromise(`git push -u origin ${branchName}`, ghOptions);
-				console.log(`Pushed to remote branch: ${branchName}`);
 
 				// GitHub CLI not available, but we still pushed the branch
 				return res.json({

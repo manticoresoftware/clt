@@ -613,11 +613,9 @@ function createFilesStore() {
         }
 
         const data = await response.json();
-
-        // Filter to only show the tests directory
-        const testsNode = data.fileTree.find(node => node.name === 'tests');
-        if (testsNode) {
-          storeModule.setFileTree([testsNode]);
+        // Use the file tree returned directly from the API
+        if (data.fileTree) {
+          storeModule.setFileTree(data.fileTree);
           return true;
         } else {
           storeModule.setFileTree([]);

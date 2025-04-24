@@ -6,6 +6,8 @@
   import { onMount } from 'svelte';
 
   let dockerImage = $filesStore.dockerImage;
+  let hasGitChanges = false;
+  let isGitStatusLoading = false;
 
   function updateDockerImage() {
     filesStore.setDockerImage(dockerImage);
@@ -16,9 +18,39 @@
     }
   }
 
-  // Fetch auth state when component mounts
+  // Check git status periodically
+  async function checkGitStatus() {
+    if (isGitStatusLoading) return;
+    
+    isGitStatusLoading = true;
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/git-status`, {
+        credentials: 'include'
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        hasGitChanges = data.hasChanges || false;
+      } else {
+        console.error('Failed to check git status');
+      }
+    } catch (error) {
+      console.error('Error checking git status:', error);
+    } finally {
+      isGitStatusLoading = false;
+    }
+  }
+
+  // Fetch auth state when component mounts and check git status
   onMount(() => {
     fetchAuthState();
+    checkGitStatus();
+
+    // Set up interval to check git status every 10 seconds
+    const interval = setInterval(checkGitStatus, 10000);
+    
+    // Clear interval on component unmount
+    return () => clearInterval(interval);
   });
 
   function handleLogout() {
@@ -66,7 +98,12 @@
 
   <div class="user-profile">
     {#if $authStore.isAuthenticated && !$authStore.isLoading}
-      <button class="create-pr-button" on:click={openCreatePrModal}>
+      <button 
+        class="create-pr-button {!hasGitChanges ? 'disabled' : ''}"
+        on:click={openCreatePrModal}
+        disabled={!hasGitChanges}
+        title={hasGitChanges ? 'Create a pull request' : 'No changes to commit'}
+      >
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="18" cy="18" r="3"></circle>
           <circle cx="6" cy="6" r="3"></circle>
@@ -187,5 +224,14 @@
   .create-pr-button:hover {
     color: var(--color-text-primary);
     background-color: var(--color-bg-accent-hover);
+  }
+
+  .create-pr-button.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  
+  .create-pr-button.disabled:hover {
+    background-color: var(--color-bg-accent);
   }
 </style>

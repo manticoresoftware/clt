@@ -9,25 +9,25 @@
   let fileTree: FileNode[] = [];
   let newFileName = '';
   let expandedFolders: Set<string> = new Set();
-  
+
   // Reset branch state
   let resetBranch = 'master';
-  
+
   // Update resetBranch when default branch is loaded
   $: if ($branchStore.defaultBranch && resetBranch === 'master') {
     resetBranch = $branchStore.defaultBranch;
   }
-  
+
   // Handler for reset to branch
   async function handleResetToBranch() {
     if (!resetBranch) return;
-    
+
     try {
       await branchStore.resetToBranch(resetBranch);
-      
+
       // Refresh the file tree after reset
       await filesStore.refreshFileTree();
-      
+
       // Re-expand default folders after reset
       if (fileTree) {
         const testsNode = fileTree.find(node => node.name === 'tests');
@@ -41,13 +41,12 @@
       alert(`Failed to reset to branch ${resetBranch}: ${error.message}`);
     }
   }
-  
   // Drag and drop state
   let draggedNode: FileNode | null = null;
   let dropTarget: FileNode | null = null;
   let dragOverRecycleBin = false;
   let showRecycleBin = false;
-  
+
   $: {
     if ($filesStore.fileTree) {
       fileTree = $filesStore.fileTree;
@@ -94,7 +93,7 @@
     try {
       // Use loadFile method from filesStore which now uses our new parsing function
       const success = await filesStore.loadFile(path);
-      
+
       if (!success) {
         // If file doesn't exist or couldn't be loaded, create it as a new file
         if (path.endsWith('.rec') || path.endsWith('.recb')) {
@@ -141,11 +140,11 @@
     try {
       // Remove trailing slash for consistency
       const cleanPath = path.replace(/\/$/, '');
-      
+
       // Extract directory name and parent path
       const dirName = cleanPath.split('/').pop() || '';
       const parentPath = cleanPath.substring(0, cleanPath.lastIndexOf('/'));
-      
+
       // Create a new node for the directory
       const newNode: FileNode = {
         name: dirName,
@@ -153,16 +152,16 @@
         isDirectory: true,
         children: []
       };
-      
+
       // Update the file tree optimistically
       const state = $filesStore;
       const updatedTree = addNodeToDirectory([...state.fileTree], parentPath, newNode);
       filesStore.setFileTree(updatedTree);
-      
+
       // Expand the newly created directory
       expandedFolders.add(cleanPath);
       expandedFolders = expandedFolders; // Trigger reactivity
-      
+
       // Now do the actual server request
       const response = await fetch(`${API_URL}/api/create-directory`, {
         method: 'POST',
@@ -186,9 +185,6 @@
 
   // Initialize file explorer
   onMount(async () => {
-    // Set the default config directory to point to the tests folder
-    filesStore.setConfigDirectory('tests');
-
     // Check URL hash for file path
     const hash = window.location.hash;
     let filePath = null;
@@ -200,17 +196,6 @@
 
     // Fetch the file tree from the backend
     await filesStore.refreshFileTree();
-
-    // Open first level folders by default
-    if (fileTree) {
-      // Always open the tests folder
-      const testsNode = fileTree.find(node => node.name === 'tests');
-      if (testsNode && testsNode.isDirectory) {
-        expandedFolders.add(testsNode.path);
-      }
-
-      expandedFolders = expandedFolders;
-    }
 
     // If file path is specified in URL hash, open it
     if (filePath) {
@@ -231,20 +216,20 @@
     // Listen for hash changes to load files when URL changes
     window.addEventListener('hashchange', handleHashChange);
   });
-  
+
   // Drag handlers
   function handleDragStart(event: DragEvent, node: FileNode) {
     // Allow both files and directories to be dragged
     draggedNode = node;
     showRecycleBin = true;
-    
+
     // Set dragging data
     if (event.dataTransfer) {
       event.dataTransfer.setData('text/plain', node.path);
       event.dataTransfer.effectAllowed = 'move';
     }
   }
-  
+
   function handleDragOver(event: DragEvent, node: FileNode) {
     event.preventDefault();
     if (draggedNode && draggedNode !== node) {
@@ -258,24 +243,24 @@
             return;
           }
         }
-        
+
         dropTarget = node;
         event.dataTransfer!.dropEffect = 'move';
       }
     }
   }
-  
+
   function handleDragLeave() {
     dropTarget = null;
   }
-  
+
   function handleDrop(event: DragEvent, node: FileNode) {
     event.preventDefault();
     if (draggedNode && node.isDirectory) {
       const sourcePath = draggedNode.path;
       const fileName = draggedNode.name;
       const targetPath = `${node.path}/${fileName}`;
-      
+
       // Don't do anything if dropping onto itself
       if (sourcePath === targetPath) {
         // Reset drag state
@@ -284,7 +269,7 @@
         showRecycleBin = false;
         return;
       }
-      
+
       // Prevent dropping a directory into one of its descendants
       if (draggedNode.isDirectory && node.path.startsWith(draggedNode.path + '/')) {
         // Reset drag state
@@ -293,7 +278,7 @@
         showRecycleBin = false;
         return;
       }
-      
+
       // Move the file or directory
       filesStore.moveFile(sourcePath, targetPath)
         .then(success => {
@@ -304,13 +289,13 @@
           }
         });
     }
-    
+
     // Reset drag state
     draggedNode = null;
     dropTarget = null;
     showRecycleBin = false;
   }
-  
+
   function handleRecycleBinDragOver(event: DragEvent) {
     event.preventDefault();
     if (draggedNode) {
@@ -318,11 +303,11 @@
       event.dataTransfer!.dropEffect = 'move';
     }
   }
-  
+
   function handleRecycleBinDragLeave() {
     dragOverRecycleBin = false;
   }
-  
+
   function handleRecycleBinDrop(event: DragEvent) {
     event.preventDefault();
     if (draggedNode) {
@@ -336,13 +321,13 @@
           }
         });
     }
-    
+
     // Reset drag state
     draggedNode = null;
     dragOverRecycleBin = false;
     showRecycleBin = false;
   }
-  
+
   function handleDragEnd() {
     // Reset drag state
     draggedNode = null;
@@ -457,7 +442,7 @@
   <div class="file-explorer-header">
     <span>Files</span>
     {#if showRecycleBin}
-      <div 
+      <div
         class="recycle-bin {dragOverRecycleBin ? 'recycle-bin-active' : ''}"
         on:dragover={handleRecycleBinDragOver}
         on:dragleave={handleRecycleBinDragLeave}
@@ -478,7 +463,7 @@
       <!-- Render each file tree node recursively -->
       {#each fileTree as node}
         <div class="file-node">
-          <div 
+          <div
             class="tree-item {node.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === node ? 'drop-target' : ''}"
             role="button"
             tabindex="0"
@@ -508,7 +493,7 @@
                   <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd" />
                 </svg>
               {/if}
-              
+
               {#if node.isSymlink}
                 <span class="symlink-indicator">
                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -534,7 +519,7 @@
               {#each node.children as childNode}
                 <!-- Recursive File Node Template -->
                 <div class="file-node">
-                  <div 
+                  <div
                     class="tree-item {childNode.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === childNode ? 'drop-target' : ''}"
                     role="button"
                     tabindex="0"
@@ -580,7 +565,7 @@
                     <div class="tree-children">
                       {#each childNode.children as grandChildNode}
                         <div class="file-node">
-                          <div 
+                          <div
                             class="tree-item {grandChildNode.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === grandChildNode ? 'drop-target' : ''}"
                             role="button"
                             tabindex="0"
@@ -644,7 +629,6 @@
     <div class="current-directory">
       <div class="branch-info">
         <span>
-          Current branch: 
           {#if $branchStore.isLoading}
             <span class="loading-indicator-small">
               <svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -660,15 +644,15 @@
           <div class="branch-error">{$branchStore.error}</div>
         {/if}
         <div class="branch-reset">
-          <input 
-            type="text" 
-            bind:value={resetBranch} 
-            placeholder="e.g., master, main, feature/xyz" 
+          <input
+            type="text"
+            bind:value={resetBranch}
+            placeholder="e.g., master, main, feature/xyz"
             class="branch-input"
           />
-          <button 
-            class="reset-button" 
-            on:click={handleResetToBranch} 
+          <button
+            class="reset-button"
+            on:click={handleResetToBranch}
             disabled={$branchStore.isResetting || !resetBranch}
           >
             {#if $branchStore.isResetting}
@@ -731,7 +715,7 @@
     justify-content: space-between;
     align-items: center;
   }
-  
+
   .recycle-bin {
     width: 28px;
     height: 28px;
@@ -743,17 +727,17 @@
     cursor: pointer;
     transition: all 0.2s ease;
   }
-  
+
   .recycle-bin:hover {
     background-color: var(--color-bg-secondary-hover);
   }
-  
+
   .recycle-bin-active {
     background-color: var(--color-text-error);
     color: white;
     transform: scale(1.1);
   }
-  
+
   .drop-target {
     background-color: var(--color-bg-accent-light);
     border: 1px dashed var(--color-bg-accent);
@@ -761,28 +745,28 @@
     transform: scale(1.02);
     box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
   }
-  
+
   /* Make dragged items semi-transparent */
   .tree-item[draggable="true"]:active {
     opacity: 0.7;
     cursor: grabbing;
   }
-  
+
   /* Different cursors depending on context */
   .tree-item[draggable="true"] {
     cursor: grab;
   }
-  
+
   .tree-item[draggable="true"]:hover {
     background-color: var(--color-bg-hover);
   }
-  
+
   /* Special styling for directory drop targets */
   .tree-item.drop-target:not(:active) {
-    outline: 2px dashed var(--color-bg-accent); 
+    outline: 2px dashed var(--color-bg-accent);
     outline-offset: -2px;
   }
-  
+
   /* Add transition for smoother effects */
   .tree-item {
     transition: background-color 0.15s ease, border 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
@@ -827,20 +811,20 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  
+
   .branch-info {
     display: flex;
     flex-direction: column;
     gap: 4px;
     margin-bottom: 4px;
   }
-  
+
   .branch-reset {
     display: flex;
     gap: 4px;
     margin-bottom: 4px;
   }
-  
+
   .branch-input {
     flex: 1;
     padding: 3px 6px;
@@ -848,7 +832,7 @@
     border-radius: 4px;
     font-size: 12px;
   }
-  
+
   .reset-button {
     display: flex;
     align-items: center;
@@ -861,23 +845,80 @@
     cursor: pointer;
     font-size: 12px;
   }
-  
+
   .reset-button:not(:disabled):hover {
     background-color: var(--color-bg-secondary-hover);
   }
-  
+
   .reset-button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
-  
+
   .loading-indicator-small {
     display: inline-flex;
     margin-left: 3px;
     margin-right: 3px;
     vertical-align: middle;
   }
-  
+
+  .branch-error {
+    font-size: 11px;
+    color: var(--color-text-error);
+    margin-top: 2px;
+    margin-bottom: 2px;
+  }
+
+  .branch-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+
+  .branch-reset {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+
+  .branch-input {
+    flex: 1;
+    padding: 3px 6px;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    font-size: 12px;
+  }
+
+  .reset-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--color-bg-secondary);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+
+  .reset-button:not(:disabled):hover {
+    background-color: var(--color-bg-secondary-hover);
+  }
+
+  .reset-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .loading-indicator-small {
+    display: inline-flex;
+    margin-left: 3px;
+    margin-right: 3px;
+    vertical-align: middle;
+  }
+
   .branch-error {
     font-size: 11px;
     color: var(--color-text-error);
