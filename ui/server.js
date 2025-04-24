@@ -848,6 +848,97 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 // Handle SPA routes - serve index.html for any other request
 // Apply light authentication check - client side will show login UI when needed
 
+// API endpoint to get current branch information
+app.get('/api/current-branch', isAuthenticated, async (req, res) => {
+	try {
+		// Check if user is authenticated with GitHub
+		if (!req.user || !req.user.username) {
+			return res.status(401).json({ error: 'GitHub authentication required' });
+		}
+
+		// Determine if the tests directory is a symlink
+		const testsDir = path.join(ROOT_DIR, 'tests');
+		let actualRepoPath = testsDir;
+		try {
+			const testsDirStats = await fs.lstat(testsDir);
+			if (testsDirStats.isSymbolicLink()) {
+				// Resolve the symlink target
+				const symlinkTarget = await fs.readlink(testsDir);
+				const resolvedTarget = path.isAbsolute(symlinkTarget)
+					? symlinkTarget
+					: path.resolve(path.dirname(testsDir), symlinkTarget);
+
+				console.log(`Tests directory is a symlink pointing to ${resolvedTarget}`);
+				actualRepoPath = resolvedTarget;
+			}
+		} catch (error) {
+			console.error('Error checking if tests directory is a symlink:', error);
+			return res.status(500).json({ error: 'Failed to determine if tests directory is a symlink' });
+		}
+
+		// Helper function for executing commands
+		const { exec } = await import('child_process');
+		const execPromise = (cmd, options) => new Promise((resolve, reject) => {
+			exec(cmd, options, (error, stdout, stderr) => {
+				if (error) {
+					console.error(`Command execution error: ${stderr}`);
+					return reject(error);
+				}
+				resolve(stdout.trim());
+			});
+		});
+
+		// Try to find the git repository root for the actual tests directory
+		try {
+			// Change to the actual tests directory
+			process.chdir(actualRepoPath);
+
+			// Set the GH_TOKEN from env variable
+			const env = Object.assign({}, process.env, { GH_TOKEN: req.user.token });
+			const ghOptions = { env };
+
+			// Try to get the git repo root
+			const gitRoot = await execPromise('git rev-parse --show-toplevel', ghOptions);
+			console.log(`Git repository found at: ${gitRoot}`);
+
+			// Change to the git root directory
+			process.chdir(gitRoot);
+
+			// Get current branch name
+			const currentBranch = await execPromise('git rev-parse --abbrev-ref HEAD', ghOptions);
+			console.log(`Current branch: ${currentBranch}`);
+
+			// Get remote repository URL
+			const remoteUrl = await execPromise('gh repo view --json url -q .url', ghOptions);
+			console.log(`Remote repository URL: ${remoteUrl}`);
+
+			// Get default branch
+			const defaultBranch = await execPromise('gh repo view --json defaultBranchRef -q .defaultBranchRef.name', ghOptions);
+			console.log(`Default branch: ${defaultBranch}`);
+
+			return res.json({
+				success: true,
+				currentBranch,
+				defaultBranch,
+				repository: remoteUrl
+			});
+
+		} catch (gitError) {
+			console.error('Git operation error:', gitError);
+			return res.status(500).json({
+				error: 'Git operation failed',
+				details: gitError.message
+			});
+		} finally {
+			// Change back to the original directory
+			process.chdir(ROOT_DIR);
+		}
+	} catch (error) {
+		console.error('Error getting current branch:', error);
+		res.status(500).json({ error: `Failed to get current branch: ${error.message}` });
+	}
+});
+
 // API endpoint to reset and sync to a specific branch
 app.post('/api/reset-to-branch', isAuthenticated, async (req, res) => {
 	try {

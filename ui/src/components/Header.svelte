@@ -2,6 +2,7 @@
   import { filesStore } from '../stores/filesStore';
   import { authStore, logout, fetchAuthState } from '../stores/authStore';
   import { githubStore } from '../stores/githubStore';
+  import { branchStore } from '../stores/branchStore';
   import { onMount } from 'svelte';
 
   let dockerImage = $filesStore.dockerImage;

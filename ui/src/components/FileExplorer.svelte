@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { filesStore, type FileNode, addNodeToDirectory, updateChildPaths } from '../stores/filesStore';
+  import { branchStore } from '../stores/branchStore';
   import { API_URL } from '../config.js';
 
   // Default to tests directory
@@ -8,6 +9,38 @@
   let fileTree: FileNode[] = [];
   let newFileName = '';
   let expandedFolders: Set<string> = new Set();
+  
+  // Reset branch state
+  let resetBranch = 'master';
+  
+  // Update resetBranch when default branch is loaded
+  $: if ($branchStore.defaultBranch && resetBranch === 'master') {
+    resetBranch = $branchStore.defaultBranch;
+  }
+  
+  // Handler for reset to branch
+  async function handleResetToBranch() {
+    if (!resetBranch) return;
+    
+    try {
+      await branchStore.resetToBranch(resetBranch);
+      
+      // Refresh the file tree after reset
+      await filesStore.refreshFileTree();
+      
+      // Re-expand default folders after reset
+      if (fileTree) {
+        const testsNode = fileTree.find(node => node.name === 'tests');
+        if (testsNode && testsNode.isDirectory) {
+          expandedFolders.add(testsNode.path);
+        }
+        expandedFolders = expandedFolders;
+      }
+    } catch (error) {
+      console.error('Failed to reset to branch:', error);
+      alert(`Failed to reset to branch ${resetBranch}: ${error.message}`);
+    }
+  }
   
   // Drag and drop state
   let draggedNode: FileNode | null = null;
@@ -609,6 +642,49 @@
 
   <div class="file-explorer-footer">
     <div class="current-directory">
+      <div class="branch-info">
+        <span>
+          Current branch: 
+          {#if $branchStore.isLoading}
+            <span class="loading-indicator-small">
+              <svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            </span>
+          {:else}
+            <strong>{$branchStore.currentBranch}</strong>
+          {/if}
+        </span>
+        {#if $branchStore.error}
+          <div class="branch-error">{$branchStore.error}</div>
+        {/if}
+        <div class="branch-reset">
+          <input 
+            type="text" 
+            bind:value={resetBranch} 
+            placeholder="e.g., master, main, feature/xyz" 
+            class="branch-input"
+          />
+          <button 
+            class="reset-button" 
+            on:click={handleResetToBranch} 
+            disabled={$branchStore.isResetting || !resetBranch}
+          >
+            {#if $branchStore.isResetting}
+              <span class="loading-indicator-small">
+                <svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              </span>
+              Resetting...
+            {:else}
+              Reset
+            {/if}
+          </button>
+        </div>
+      </div>
       <span>Current directory: {currentDirectory}</span>
     </div>
     <div class="new-file-form">
@@ -750,6 +826,63 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  
+  .branch-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+  
+  .branch-reset {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+  
+  .branch-input {
+    flex: 1;
+    padding: 3px 6px;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  
+  .reset-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--color-bg-secondary);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  
+  .reset-button:not(:disabled):hover {
+    background-color: var(--color-bg-secondary-hover);
+  }
+  
+  .reset-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  
+  .loading-indicator-small {
+    display: inline-flex;
+    margin-left: 3px;
+    margin-right: 3px;
+    vertical-align: middle;
+  }
+  
+  .branch-error {
+    font-size: 11px;
+    color: var(--color-text-error);
+    margin-top: 2px;
+    margin-bottom: 2px;
   }
 
   .new-file-form {

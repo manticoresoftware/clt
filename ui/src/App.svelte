@@ -5,6 +5,7 @@
   import PullRequestModal from './components/PullRequestModal.svelte';
   import { filesStore } from './stores/filesStore';
   import { authStore, fetchAuthState } from './stores/authStore';
+  import { branchStore } from './stores/branchStore';
   import { AUTH_GITHUB_URL } from './config.js';
   import { onMount } from 'svelte';
 
@@ -17,6 +18,11 @@
       await fetchAuthState();
       isLoading = false;
       authError = false;
+      
+      // Fetch current branch info after authentication
+      if ($authStore.isAuthenticated) {
+        await branchStore.fetchCurrentBranch();
+      }
     } catch (err) {
       console.error('Failed to fetch auth state:', err);
       isLoading = false;
