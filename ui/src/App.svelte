@@ -23,14 +23,39 @@
       if ($authStore.isAuthenticated) {
         await branchStore.fetchCurrentBranch();
       }
+      
+      // Set up periodic check of authentication status to keep in sync with backend
+      const authCheckInterval = setInterval(async () => {
+        // Only check if we think we're authenticated
+        if ($authStore.isAuthenticated) {
+          try {
+            const result = await fetch(`${import.meta.env.VITE_API_URL}/api/health`, {
+              credentials: 'include'
+            });
+            
+            // If request fails or returns not authenticated, refresh auth state
+            if (!result.ok) {
+              await fetchAuthState();
+            } else {
+              const data = await result.json();
+              if (!data.authenticated) {
+                await fetchAuthState();
+              }
+            }
+          } catch (error) {
+            console.warn('Auth check failed, will retry later:', error);
+          }
+        }
+      }, 60000); // Check every minute
+      
+      return () => {
+        clearInterval(authCheckInterval);
+      };
     } catch (err) {
       console.error('Failed to fetch auth state:', err);
       isLoading = false;
       authError = true;
     }
-
-    // Don't automatically redirect - let the UI handle showing
-    // the login button instead of redirecting to avoid reload loops
   });
 </script>
 

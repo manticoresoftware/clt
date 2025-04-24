@@ -34,27 +34,6 @@ export const authStore = writable<AuthState>(initialState);
 // Function to fetch the current authentication state
 export async function fetchAuthState() {
   try {
-    // First check if we have data in sessionStorage
-    const storedAuthState = sessionStorage.getItem('auth_state') || localStorage.getItem('auth_state');
-    if (storedAuthState) {
-      try {
-        const parsedState = JSON.parse(storedAuthState);
-        // Only update the store with stored state if it indicates authenticated
-        if (parsedState.isAuthenticated && parsedState.user) {
-          authStore.update(state => ({
-            ...state,
-            ...parsedState,
-            isLoading: true, // Still set loading to true as we fetch fresh data
-          }));
-        }
-      } catch (e) {
-        console.error('Error parsing stored auth state:', e);
-        // Invalid stored state, remove it
-        sessionStorage.removeItem('auth_state');
-        localStorage.removeItem('auth_state');
-      }
-    }
-
     authStore.update(state => ({ ...state, isLoading: true, error: null }));
 
     const response = await fetch(AUTH_CURRENT_USER_URL, {
@@ -65,20 +44,10 @@ export async function fetchAuthState() {
     });
 
     if (!response.ok) {
-      // If the request fails but we had previously stored auth, keep using it
-      if (storedAuthState) {
-        const parsedState = JSON.parse(storedAuthState);
-        if (parsedState.isAuthenticated && parsedState.user) {
-          authStore.update(state => ({
-            ...state,
-            ...parsedState,
-            isLoading: false
-          }));
-          return parsedState;
-        }
-      }
-
-      // Otherwise report the error
+      // Clear any stored state if the server says we're not authenticated
+      sessionStorage.removeItem('auth_state');
+      localStorage.removeItem('auth_state');
+      
       throw new Error('Failed to fetch authentication state');
     }
 
@@ -93,21 +62,17 @@ export async function fetchAuthState() {
       isLoading: false
     }));
 
-    // If authenticated, store the auth state in localStorage for persistence
+    // If authenticated, store the auth state in sessionStorage (not localStorage)
     if (data.isAuthenticated && data.user) {
-      // Store only until the window is closed - using sessionStorage instead
-      // This prevents old authentication data from persisting too long
+      // Store only until the window is closed - using sessionStorage
       sessionStorage.setItem('auth_state', JSON.stringify({
         isAuthenticated: data.isAuthenticated,
         user: data.user,
         skipAuth: data.skipAuth || false
       }));
-      // Clear any old localStorage data
-      localStorage.removeItem('auth_state');
     } else {
       // If not authenticated, clear any previously stored state
       sessionStorage.removeItem('auth_state');
-      localStorage.removeItem('auth_state');
     }
 
     return data;
@@ -115,12 +80,14 @@ export async function fetchAuthState() {
     console.error('Auth error:', error);
     authStore.update(state => ({
       ...state,
+      isAuthenticated: false,
+      user: null,
       isLoading: false,
       error: error instanceof Error ? error.message : 'An unknown error occurred'
     }));
 
-    // Clear localStorage on authentication error
-    localStorage.removeItem('auth_state');
+    // Clear sessionStorage on authentication error
+    sessionStorage.removeItem('auth_state');
   }
 }
 
