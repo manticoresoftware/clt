@@ -14,7 +14,7 @@
   let resetBranch = 'master';
 
   // Update resetBranch when default branch is loaded
-  $: if ($branchStore.defaultBranch && resetBranch === 'master') {
+  $: if ($branchStore.defaultBranch) {
     resetBranch = $branchStore.defaultBranch;
   }
 
