@@ -417,7 +417,7 @@ fn buffer_block<R: BufRead + Seek>(reader: &mut R) -> io::Result<Vec<String>> {
 		}
 
 		// Empty lines important, so keep it
-		block_lines.push(line.trim().to_string());
+		block_lines.push(line.trim_end().to_string());
 	}
 	Ok(block_lines)
 }
@@ -438,11 +438,11 @@ fn reader_at_end<R: BufRead + Seek>(reader: &mut R) -> bool {
 // Simple printing of the diff with line by line comparison
 fn print_diff(stdout:&mut StandardStream, line: &str, diff: Diff) {
 	let (line, color) = match diff {
-		Diff::Plus => (format!("+ {}", line.trim()), Color::Green),
-		Diff::Minus => (format!("- {}", line.trim()), Color::Red),
+		Diff::Plus => (format!("+ {}", line.trim_end()), Color::Green),
+		Diff::Minus => (format!("- {}", line.trim_end()), Color::Red),
 	};
 	stdout.set_color(ColorSpec::new().set_fg(Some(color))).unwrap();
-	writeln!(stdout, "{}", line.trim()).unwrap();
+	writeln!(stdout, "{}", line.trim_end()).unwrap();
 	stdout.reset().unwrap();
 }
 
