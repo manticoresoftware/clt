@@ -4,6 +4,7 @@
   import { githubStore } from '../stores/githubStore';
   import { branchStore } from '../stores/branchStore';
   import { onMount } from 'svelte';
+  import { API_URL } from '../config.js';
 
   let dockerImage = $filesStore.dockerImage;
   let hasGitChanges = false;
@@ -21,13 +22,13 @@
   // Check git status periodically
   async function checkGitStatus() {
     if (isGitStatusLoading) return;
-    
+
     isGitStatusLoading = true;
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/git-status`, {
+      const response = await fetch(`${API_URL}/api/git-status`, {
         credentials: 'include'
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         hasGitChanges = data.hasChanges || false;
@@ -48,7 +49,7 @@
 
     // Set up interval to check git status every 10 seconds
     const interval = setInterval(checkGitStatus, 10000);
-    
+
     // Clear interval on component unmount
     return () => clearInterval(interval);
   });
@@ -98,7 +99,7 @@
 
   <div class="user-profile">
     {#if $authStore.isAuthenticated && !$authStore.isLoading}
-      <button 
+      <button
         class="create-pr-button {!hasGitChanges ? 'disabled' : ''}"
         on:click={openCreatePrModal}
         disabled={!hasGitChanges}
@@ -230,7 +231,7 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
-  
+
   .create-pr-button.disabled:hover {
     background-color: var(--color-bg-accent);
   }

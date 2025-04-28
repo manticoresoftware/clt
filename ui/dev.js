@@ -27,9 +27,8 @@ console.log('- SKIP_AUTH:', process.env.SKIP_AUTH);
 console.log('- ALLOWED_GITHUB_USERS:', process.env.ALLOWED_GITHUB_USERS ? 'Configured' : 'Not configured');
 
 // Override callback URL to use the specified host/port if not set or using dev2.manticoresearch.com
-if (!process.env.GITHUB_CALLBACK_URL || process.env.GITHUB_CALLBACK_URL.includes('dev2.manticoresearch.com')) {
-  console.log(`⚠️  Warning: Using ${HOST}:${BACKEND_PORT} for GitHub callback URL`);
-  process.env.GITHUB_CALLBACK_URL = `http://${HOST}:${BACKEND_PORT}/auth/github/callback`;
+if (!process.env.GITHUB_CALLBACK_URL) {
+	console.error(`⚠️  Warning: GITHUB_CALLBACK_URL not set.`);
 }
 
 // Set frontend URL if not already set
@@ -56,28 +55,28 @@ const colors = {
 // Run a command and prefix its output
 function runCommand(command, args, name, color) {
   const prefix = `${color}[${name}]${colors.reset} `;
-  
+
   console.log(`${colors.bright}${color}Starting ${name}...${colors.reset}`);
-  
-  const proc = spawn(command, args, { 
+
+  const proc = spawn(command, args, {
     stdio: ['inherit', 'pipe', 'pipe'],
     env: process.env // Pass environment variables to the child process
   });
-  
+
   proc.stdout.on('data', (data) => {
     const lines = data.toString().trim().split('\n');
     lines.forEach(line => {
       if (line.trim()) console.log(prefix + line);
     });
   });
-  
+
   proc.stderr.on('data', (data) => {
     const lines = data.toString().trim().split('\n');
     lines.forEach(line => {
       if (line.trim()) console.error(`${prefix}${colors.red}${line}${colors.reset}`);
     });
   });
-  
+
   proc.on('close', (code) => {
     if (code !== 0) {
       console.error(`${prefix}${colors.red}Process exited with code ${code}${colors.reset}`);
@@ -85,7 +84,7 @@ function runCommand(command, args, name, color) {
       console.log(`${prefix}${colors.green}Process completed successfully${colors.reset}`);
     }
   });
-  
+
   return proc;
 }
 

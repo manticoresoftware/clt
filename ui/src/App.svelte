@@ -6,7 +6,7 @@
   import { filesStore } from './stores/filesStore';
   import { authStore, fetchAuthState } from './stores/authStore';
   import { branchStore } from './stores/branchStore';
-  import { AUTH_GITHUB_URL } from './config.js';
+  import { API_URL, AUTH_GITHUB_URL } from './config.js';
   import { onMount } from 'svelte';
 
   let isLoading = true;
@@ -18,21 +18,21 @@
       await fetchAuthState();
       isLoading = false;
       authError = false;
-      
+
       // Fetch current branch info after authentication
       if ($authStore.isAuthenticated) {
         await branchStore.fetchCurrentBranch();
       }
-      
+
       // Set up periodic check of authentication status to keep in sync with backend
       const authCheckInterval = setInterval(async () => {
         // Only check if we think we're authenticated
         if ($authStore.isAuthenticated) {
           try {
-            const result = await fetch(`${import.meta.env.VITE_API_URL}/api/health`, {
+            const result = await fetch(`${API_URL}/api/health`, {
               credentials: 'include'
             });
-            
+
             // If request fails or returns not authenticated, refresh auth state
             if (!result.ok) {
               await fetchAuthState();
@@ -47,7 +47,7 @@
           }
         }
       }, 60000); // Check every minute
-      
+
       return () => {
         clearInterval(authCheckInterval);
       };
@@ -72,7 +72,7 @@
       <FileExplorer />
       <Editor />
     </div>
-    
+
     <!-- Pull Request Modal -->
     <PullRequestModal />
   {:else}

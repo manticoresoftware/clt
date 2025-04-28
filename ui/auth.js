@@ -5,6 +5,7 @@ import authConfig from './config/auth.js';
 // Configure Passport with GitHub strategy
 export function setupPassport() {
   console.log('Setting up Passport with GitHub strategy');
+	console.log('Env config', process.env);
   console.log('Auth config:', {
     clientID: authConfig.github.clientID ? 'Configured' : 'Not configured',
     callbackURL: authConfig.github.callbackURL,
@@ -127,9 +128,9 @@ export function addAuthRoutes(app) {
       console.log('GitHub callback received', req.query);
       passport.authenticate('github', {
         // Redirect to the frontend URL after successful login
-        successRedirect: process.env.FRONTEND_URL || `http://${process.env.HOST || 'localhost'}:${process.env.FRONTEND_PORT || 5173}`,
+        successRedirect: process.env.GITHUB_SUCCESS_URL || `http://${process.env.HOST || 'localhost'}:${process.env.FRONTEND_PORT || 5173}`,
         // Redirect to the frontend login page on failure
-        failureRedirect: (process.env.FRONTEND_URL || `http://${process.env.HOST || 'localhost'}:${process.env.FRONTEND_PORT || 5173}`) +
+        failureRedirect: (process.env.GITHUB_FAILURE_URL || `http://${process.env.HOST || 'localhost'}:${process.env.FRONTEND_PORT || 5173}`) +
           '?error=Authentication%20failed.%20You%20might%20not%20be%20authorized%20to%20access%20this%20application.',
       })(req, res, next);
     }
