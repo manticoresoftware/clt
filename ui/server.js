@@ -5,6 +5,7 @@ import fs from 'fs/promises';
 import { createReadStream } from 'fs';
 import session from 'express-session';
 import dotenv from 'dotenv';
+import simpleGit from 'simple-git';
 import { setupPassport, isAuthenticated, addAuthRoutes } from './auth.js';
 import authConfig from './config/auth.js';
 
@@ -38,6 +39,16 @@ app.use(session({
 const passport = setupPassport();
 app.use(passport.initialize());
 app.use(passport.session());
+
+// Add helper to save tokens when users authenticate
+app.use((req, res, next) => {
+  if (req.user && req.user.username && req.user.token) {
+    // Store token for repository operations
+    if (!global.userTokens) global.userTokens = {};
+    global.userTokens[req.user.username] = req.user.token;
+  }
+  next();
+});
 
 // Enable CORS for development
 app.use((req, res, next) => {
@@ -109,19 +120,27 @@ async function ensureUserRepo(username) {
       console.log(`Setting up repository for user ${username}`);
       await fs.mkdir(userDir, { recursive: true });
 
-      // Clone the repository
-      const { exec } = await import('child_process');
-      const execPromise = (cmd, options) => new Promise((resolve, reject) => {
-        exec(cmd, options, (error, stdout, stderr) => {
-          if (error) {
-            console.error(`Command execution error: ${stderr}`);
-            return reject(error);
-          }
-          resolve(stdout.trim());
-        });
-      });
+      // Get the user's token if available from session
+      const userToken = global.userTokens && global.userTokens[username];
 
-      await execPromise(`git clone ${REPO_URL} ${userDir}`, { cwd: WORKDIR });
+      // Clone the repository using simple-git
+      const git = simpleGit({ baseDir: WORKDIR });
+
+      // Use authentication if we have a token
+      if (userToken) {
+        // Create authenticated URL
+        let cloneUrl = REPO_URL;
+        if (REPO_URL.startsWith('https://')) {
+          cloneUrl = REPO_URL.replace('https://', `https://x-access-token:${userToken}@`);
+        }
+        console.log(`Cloning repository for user ${username} with authentication`);
+        await git.clone(cloneUrl, userDir);
+      } else {
+        // Fall back to regular clone without auth
+        console.log(`Cloning repository for user ${username} without authentication`);
+        await git.clone(REPO_URL, userDir);
+      }
+
       console.log(`Cloned repository for user ${username}`);
     }
 
@@ -140,6 +159,9 @@ async function ensureUserRepo(username) {
     return null;
   }
 }
+
+// Store user tokens for repository operations
+global.userTokens = {};
 
 // Make the function available globally for the auth system
 global.ensureUserRepo = ensureUserRepo;
@@ -840,155 +862,156 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 
 // API endpoint to commit changes (with or without creating PR)
 app.post('/api/commit-changes', isAuthenticated, async (req, res) => {
-	try {
-		const { title, description, createPr = true } = req.body;
+  try {
+    const { title, description, createPr = true } = req.body;
 
-		if (!title) {
-			return res.status(400).json({ error: 'Commit message is required' });
-		}
+    if (!title) {
+      return res.status(400).json({ error: 'Commit message is required' });
+    }
 
-		// Check if user is authenticated with GitHub
-		if (!req.user || !req.user.username) {
-			return res.status(401).json({ error: 'GitHub authentication required' });
-		}
+    // Check if user is authenticated with GitHub
+    if (!req.user || !req.user.username) {
+      return res.status(401).json({ error: 'GitHub authentication required' });
+    }
 
-		// Get the user's repo path
-		const userRepoPath = getUserRepoPath(req);
-		const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+    // Get the user's repo path
+    const userRepoPath = getUserRepoPath(req);
+    const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
 
-		if (!repoExists) {
-			return res.status(404).json({ error: 'Repository not found' });
-		}
+    if (!repoExists) {
+      return res.status(404).json({ error: 'Repository not found' });
+    }
 
-		// Helper function for executing commands
-		const { exec } = await import('child_process');
-		const execPromise = (cmd, options) => new Promise((resolve, reject) => {
-			exec(cmd, options, (error, stdout, stderr) => {
-				if (error) {
-					console.error(`Command execution error: ${stderr}`);
-					return reject(error);
-				}
-				resolve(stdout.trim());
-			});
-		});
+    try {
+      // Initialize simple-git with the user's repo path
+      const git = simpleGit(userRepoPath);
 
-		// Try to find the git repository root for the user's repo
-		try {
-			// Change to the user's repo directory
-			process.chdir(userRepoPath);
+      // Configure git to use the user's token for this session
+      if (req.user.token) {
+        await git.addConfig('credential.helper', 'store');
 
-			// Set the GH_TOKEN from env variable
-			const env = Object.assign({}, process.env, { GH_TOKEN: req.user.token });
-			const ghOptions = { env };
+        // Get current remote URL and create authenticated version
+        const remoteUrl = await git.remote(['get-url', 'origin']);
+        const tokenUrl = remoteUrl.replace('https://', `https://x-access-token:${req.user.token}@`);
+        console.log(`Configured authentication for git operations`);
+      }
 
-			// Get current branch name
-			const currentBranch = await execPromise('git rev-parse --abbrev-ref HEAD', ghOptions);
-			console.log(`Current branch: ${currentBranch}`);
+      // Get current branch and status
+      const branchSummary = await git.branch();
+      const currentBranch = branchSummary.current;
+      console.log(`Current branch: ${currentBranch}`);
 
-			// Get remote repository information
-			const remoteUrl = await execPromise('gh repo view --json url -q .url', ghOptions);
-			console.log(`Remote repository URL: ${remoteUrl}`);
+      // Check if we're on a PR branch
+      const isPrBranch = currentBranch.startsWith('clt-ui-');
+      console.log(`Is PR branch: ${isPrBranch}`);
 
-			// Get the default branch (main/master)
-			const defaultBranch = await execPromise('gh repo view --json defaultBranchRef -q .defaultBranchRef.name', ghOptions);
-			console.log(`Default branch: ${defaultBranch}`);
+      let branchName = currentBranch;
+      let needToCreatePr = createPr && !isPrBranch;
 
-			// Check if we're already on a clt-ui branch (PR branch)
-			const isPrBranch = currentBranch.startsWith('clt-ui-');
-			console.log(`Is PR branch: ${isPrBranch}`);
+      // Determine test directory for staging
+      const testDir = getUserTestPath(req);
+      const relativeTestPath = path.relative(userRepoPath, testDir);
+      console.log(`Tests relative path: ${relativeTestPath}`);
 
-			let branchName = currentBranch;
-			let needToCreatePr = createPr && !isPrBranch;
+      // Stage changes in the tests directory
+      await git.add(relativeTestPath);
+      console.log(`Staged changes in tests directory: ${relativeTestPath}`);
 
-			// Determine which parts of the tests directory to stage
-			const testDir = getUserTestPath(req);
-			const relativeTestPath = path.relative(userRepoPath, testDir);
-			console.log(`Tests relative path: ${relativeTestPath}`);
+      // Check if there are changes to commit
+      const status = await git.status();
+      if (status.isClean()) {
+        return res.status(400).json({ error: 'No changes to commit' });
+      }
 
-			// Stage changes in the tests directory
-			await execPromise(`git add ${relativeTestPath}`, ghOptions);
-			console.log(`Staged changes in tests directory: ${relativeTestPath}`);
+      // If we need to create a PR, create a new branch
+      if (needToCreatePr) {
+        // Create a new branch name based on timestamp and username
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        branchName = `clt-ui-${req.user.username}-${timestamp}`;
 
-			// Check if there are changes to commit
-			const status = await execPromise('git status --porcelain', ghOptions);
-			if (!status) {
-				return res.status(400).json({ error: 'No changes to commit' });
-			}
+        // Create and checkout new branch
+        await git.checkoutLocalBranch(branchName);
+        console.log(`Created and switched to new branch: ${branchName}`);
+      }
 
-			// If we need to create a PR, we need to create a new branch first
-			if (needToCreatePr) {
-				// Create a new branch name based on timestamp and username
-				const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-				branchName = `clt-ui-${req.user.username}-${timestamp}`;
+      // Create a commit
+      await git.commit(title);
+      console.log(`Created commit with message: ${title}`);
 
-				// Create a new branch
-				await execPromise(`git checkout -b ${branchName}`, ghOptions);
-				console.log(`Created and switched to new branch: ${branchName}`);
-			}
+      // Push to the remote repository
+      await git.push('origin', branchName, ['--set-upstream']);
+      console.log(`Pushed to remote branch: ${branchName}`);
 
-			// Create a commit
-			await execPromise(`git commit -m "${title}"`, ghOptions);
-			console.log(`Created commit with message: ${title}`);
+      // Create a PR if needed
+      let prUrl = null;
+      if (needToCreatePr) {
+        try {
+          // Use GitHub CLI to create PR if available
+          const { exec } = await import('child_process');
+          const execPromise = (cmd, options) => new Promise((resolve, reject) => {
+            exec(cmd, options, (error, stdout, stderr) => {
+              if (error) {
+                console.error(`Command execution error: ${stderr}`);
+                return reject(error);
+              }
+              resolve(stdout.trim());
+            });
+          });
 
-			// Push to the remote repository
-			await execPromise(`git push -u origin ${branchName}`, ghOptions);
-			console.log(`Pushed to remote branch: ${branchName}`);
+          // Set environment for gh command
+          const env = { ...process.env, GH_TOKEN: req.user.token };
+          const ghOptions = { cwd: userRepoPath, env };
 
-			// Create a PR if needed
-			let prUrl = null;
-			if (needToCreatePr) {
-				try {
-					// Create PR command
-					let prCommand = `gh pr create --title "${title}" --head ${branchName}`;
+          // Get default branch for PR base
+          const repoInfo = await execPromise('gh repo view --json defaultBranchRef -q .defaultBranchRef.name', ghOptions);
+          const defaultBranch = repoInfo.trim();
 
-					// Add description if provided
-					if (description) {
-						prCommand += ` --body "${description}"`;
-					}
+          // Create PR command
+          let prCommand = `gh pr create --title "${title}" --head ${branchName}`;
+          if (description) {
+            prCommand += ` --body "${description}"`;
+          }
+          prCommand += ` --base ${defaultBranch}`;
 
-					// Add default base branch
-					prCommand += ` --base ${defaultBranch}`;
+          // Create the PR
+          const prOutput = await execPromise(prCommand, ghOptions);
+          console.log('PR created successfully');
 
-					// Create the PR
-					const prOutput = await execPromise(prCommand, ghOptions);
-					console.log('PR created successfully');
+          // Extract PR URL from the output
+          const prUrlMatch = prOutput.match(/(https:\/\/github\.com\/[^\s]+)/);
+          prUrl = prUrlMatch ? prUrlMatch[0] : null;
+        } catch (prError) {
+          console.error('Error creating PR:', prError);
+          // Continue with the flow since we've already pushed changes
+        }
+      }
 
-					// Extract PR URL from the output
-					const prUrlMatch = prOutput.match(/(https:\/\/github\.com\/[^\s]+)/);
-					prUrl = prUrlMatch ? prUrlMatch[0] : null;
-				} catch (prError) {
-					console.error('Error creating PR:', prError);
-					// Continue with the flow since we've already pushed changes
-				}
-			}
+      // Get repo URL for response
+      const remote = await git.remote(['get-url', 'origin']);
 
-			return res.json({
-				success: true,
-				branch: branchName,
-				commit: title,
-				pr: prUrl,
-				repository: remoteUrl,
-				message: needToCreatePr && prUrl
-					? 'Pull request created successfully'
-					: (needToCreatePr
-						? 'Changes committed and pushed to new branch. PR creation failed.'
-						: 'Changes committed successfully')
-			});
-
-		} catch (gitError) {
-			console.error('Git operation error:', gitError);
-			return res.status(500).json({
-				error: 'Git operation failed',
-				details: gitError.message
-			});
-		} finally {
-			// Change back to the original directory
-			process.chdir(ROOT_DIR);
-		}
-	} catch (error) {
-		console.error('Error creating commit:', error);
-		res.status(500).json({ error: `Failed to create commit: ${error.message}` });
-	}
+      return res.json({
+        success: true,
+        branch: branchName,
+        commit: title,
+        pr: prUrl,
+        repository: remote,
+        message: needToCreatePr && prUrl
+          ? 'Pull request created successfully'
+          : (needToCreatePr
+            ? 'Changes committed and pushed to new branch. PR creation failed.'
+            : 'Changes committed successfully')
+      });
+    } catch (gitError) {
+      console.error('Git operation error:', gitError);
+      return res.status(500).json({
+        error: 'Git operation failed',
+        details: gitError.message
+      });
+    }
+  } catch (error) {
+    console.error('Error creating commit:', error);
+    res.status(500).json({ error: `Failed to create commit: ${error.message}` });
+  }
 });
 
 // API endpoint to get git status information
@@ -1275,106 +1298,94 @@ app.get('/api/current-branch', isAuthenticated, async (req, res) => {
 
 // API endpoint to reset and sync to a specific branch
 app.post('/api/reset-to-branch', isAuthenticated, async (req, res) => {
-	try {
-		const { branch } = req.body;
+  try {
+    const { branch } = req.body;
 
-		if (!branch) {
-			return res.status(400).json({ error: 'Branch name is required' });
-		}
+    if (!branch) {
+      return res.status(400).json({ error: 'Branch name is required' });
+    }
 
-		// Check if user is authenticated with GitHub
-		if (!req.user || !req.user.username) {
-			return res.status(401).json({ error: 'GitHub authentication required' });
-		}
+    // Check if user is authenticated with GitHub
+    if (!req.user || !req.user.username) {
+      return res.status(401).json({ error: 'GitHub authentication required' });
+    }
 
-		// Get the user's repo path
-		const userRepoPath = getUserRepoPath(req);
-		const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+    // Get the user's repo path
+    const userRepoPath = getUserRepoPath(req);
+    const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
 
-		if (!repoExists) {
-			return res.status(404).json({ error: 'Repository not found' });
-		}
+    if (!repoExists) {
+      return res.status(404).json({ error: 'Repository not found' });
+    }
 
-		// Helper function for executing commands
-		const { exec } = await import('child_process');
-		const execPromise = (cmd, options) => new Promise((resolve, reject) => {
-			exec(cmd, options, (error, stdout, stderr) => {
-				if (error) {
-					console.error(`Command execution error: ${stderr}`);
-					return reject(error);
-				}
-				resolve(stdout.trim());
-			});
-		});
+    try {
+      // Initialize simple-git with the user's repo path
+      const git = simpleGit(userRepoPath);
 
-		// Try to find the git repository root for the user's repo
-		try {
-			// Change to the user's repo directory
-			process.chdir(userRepoPath);
+      // Configure git to use the user's token
+      if (req.user && req.user.token) {
+        // Set up auth with token for this operation
+        await git.addConfig('credential.helper', 'store');
 
-			// Set the GH_TOKEN from env variable
-			const env = Object.assign({}, process.env, { GH_TOKEN: req.user.token });
-			const ghOptions = { env };
+        // Create URL with token for auth
+        const remoteUrl = await git.remote(['get-url', 'origin']);
+        const tokenUrl = remoteUrl.replace('https://', `https://x-access-token:${req.user.token}@`);
 
-			// Get current repository information
-			const remoteUrl = await execPromise('gh repo view --json url -q .url', ghOptions);
-			console.log(`Remote repository URL: ${remoteUrl}`);
+        console.log(`Authenticated remote URL configured (token hidden)`);
+      }
 
-			// Save current changes if any (in case user has unsaved work)
-			const hasChanges = await execPromise('git status --porcelain', ghOptions);
-			let stashMessage = '';
+      // Get current status to check for changes
+      const status = await git.status();
+      let stashMessage = '';
 
-			if (hasChanges) {
-				// Stash changes with a timestamp and username
-				const timestamp = new Date().toISOString();
-				stashMessage = `Auto-stashed by CLT-UI for ${req.user.username} at ${timestamp}`;
-				await execPromise(`git stash push -m "${stashMessage}"`, ghOptions);
-				console.log(`Stashed current changes: ${stashMessage}`);
-			}
+      // Stash changes if needed
+      if (!status.isClean()) {
+        const timestamp = new Date().toISOString();
+        stashMessage = `Auto-stashed by CLT-UI for ${req.user.username} at ${timestamp}`;
+        await git.stash(['push', '-m', stashMessage]);
+        console.log(`Stashed current changes: ${stashMessage}`);
+      }
 
-			// Make sure we have the latest from remote
-			await execPromise('git fetch', ghOptions);
-			console.log('Fetched latest updates from remote');
+      // Fetch latest from remote
+      await git.fetch(['--all']);
+      console.log('Fetched latest updates from remote');
 
-			// Check if the branch exists
-			const branchExists = await execPromise(`git branch --list ${branch}`, ghOptions);
+      // Get the list of branches to check if the requested branch exists
+      const branches = await git.branch();
+      const branchExists = branches.all.includes(branch);
 
-			if (branchExists) {
-				// Local branch exists, check out and reset to remote
-				await execPromise(`git checkout ${branch}`, ghOptions);
-				console.log(`Switched to branch: ${branch}`);
+      if (branchExists) {
+        // Local branch exists, checkout and reset to remote
+        await git.checkout(branch);
+        console.log(`Switched to branch: ${branch}`);
 
-				// Reset to origin's version of the branch
-				await execPromise(`git reset --hard origin/${branch}`, ghOptions);
-				console.log(`Reset to origin/${branch}`);
-			} else {
-				// Local branch doesn't exist, create and track remote branch
-				await execPromise(`git checkout -b ${branch} origin/${branch}`, ghOptions);
-				console.log(`Created and checked out branch ${branch} tracking origin/${branch}`);
-			}
+        // Reset to origin's version of the branch
+        await git.reset(['--hard', `origin/${branch}`]);
+        console.log(`Reset to origin/${branch}`);
+      } else {
+        // Local branch doesn't exist, create tracking branch
+        await git.checkout(['-b', branch, `origin/${branch}`]);
+        console.log(`Created and checked out branch ${branch} tracking origin/${branch}`);
+      }
 
-			return res.json({
-				success: true,
-				branch,
-				repository: remoteUrl,
-				stashed: hasChanges ? stashMessage : null,
-				message: `Successfully reset to branch: ${branch}`
-			});
-
-		} catch (gitError) {
-			console.error('Git operation error:', gitError);
-			return res.status(500).json({
-				error: 'Git operation failed',
-				details: gitError.message
-			});
-		} finally {
-			// Change back to the original directory
-			process.chdir(ROOT_DIR);
-		}
-	} catch (error) {
-		console.error('Error resetting to branch:', error);
-		res.status(500).json({ error: `Failed to reset to branch: ${error.message}` });
-	}
+      return res.json({
+        success: true,
+        branch,
+        repository: status.tracking,
+        stashed: status.isClean() ? null : stashMessage,
+        message: `Successfully reset to branch: ${branch}`
+      });
+    } catch (gitError) {
+      console.error('Git operation error:', gitError);
+      return res.status(500).json({
+        error: 'Git operation failed',
+        details: gitError.message || 'Unknown error during git operation'
+      });
+    }
+  } catch (error) {
+    console.error('Error resetting to branch:', error);
+    res.status(500).json({ error: `Failed to reset to branch: ${error.message}` });
+  }
 });
 
 // API endpoint to create GitHub PR

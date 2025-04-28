@@ -30,6 +30,7 @@
     "express-session": "^1.18.1",
     "passport": "^0.7.0",
     "passport-github2": "^0.1.12",
+    "simple-git": "^3.27.0",
     "svelte-file-tree": "^0.1.0",
     "svelte-split-pane": "^0.1.2"
   }
