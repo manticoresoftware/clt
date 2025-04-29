@@ -135,10 +135,16 @@ async function ensureUserRepo(username) {
 				}
 				console.log(`Cloning repository for user ${username} with authentication`);
 				await git.clone(cloneUrl, userDir);
+
+				// Initialize a new git instance in the user's repository directory
+				const userGit = simpleGit(userDir);
+
+				// Set local repository configuration for the specific repository
+				await userGit.addConfig('user.name', username, false, 'local');
+				await userGit.addConfig('user.email', `${username}@users.noreply.github.com`, false, 'local');
+				console.log(`Set local git config for ${username}`);
 			} else {
-				// Fall back to regular clone without auth
-				console.log(`Cloning repository for user ${username} without authentication`);
-				await git.clone(REPO_URL, userDir);
+				console.log('Missing user token, skipping git clone');
 			}
 
 			console.log(`Cloned repository for user ${username}`);
@@ -157,6 +163,29 @@ async function ensureUserRepo(username) {
 	} catch (error) {
 		console.error(`Error setting up user repository: ${error}`);
 		return null;
+	}
+}
+
+async function ensureGitRemoteWithToken(gitInstance, token) {
+	if (!token) return; // Skip if no token provided
+
+	try {
+		// Get current remote URL
+		const remoteUrl = await gitInstance.remote(['get-url', 'origin']);
+
+		// Check if the remote URL already contains a token
+		if (remoteUrl.includes('@github.com') || !remoteUrl.startsWith('https://')) {
+			// Remote already configured or not using HTTPS, no need to change
+			return;
+		}
+
+		// Configure with token
+		const tokenUrl = remoteUrl.replace('https://', `https://x-access-token:${token}@`);
+		await gitInstance.removeRemote('origin');
+		await gitInstance.addRemote('origin', tokenUrl);
+		console.log('Git remote configured with authentication token');
+	} catch (error) {
+		console.warn('Error configuring git remote with token:', error.message);
 	}
 }
 
@@ -885,24 +914,7 @@ app.post('/api/commit-changes', isAuthenticated, async (req, res) => {
 		try {
 			// Initialize simple-git with the user's repo path
 			const git = simpleGit({ baseDir: userRepoPath });
-
-			// Configure git for authenticated operations
-			if (req.user.token) {
-				// Set user details for commit
-				await git.addConfig('user.name', req.user.username);
-				await git.addConfig('user.email', `${req.user.username}@github.com`);
-
-				// Get current remote URL
-				const remoteUrl = await git.remote(['get-url', 'origin']);
-
-				// Create authenticated URL for push operations
-				if (remoteUrl.trim().startsWith('https://')) {
-					const tokenUrl = remoteUrl.replace('https://', `https://x-access-token:${req.user.token}@`);
-					await git.removeRemote('origin');
-					await git.addRemote('origin', tokenUrl);
-					console.log(`Configured authenticated remote for git operations`);
-				}
-			}
+			ensureGitRemoteWithToken(git, req.user.token);
 
 			// Get current branch and status
 			const branchSummary = await git.branch();
@@ -1219,18 +1231,7 @@ app.post('/api/reset-to-branch', isAuthenticated, async (req, res) => {
 		try {
 			// Initialize simple-git with the user's repo path
 			const git = simpleGit(userRepoPath);
-
-			// Configure git to use the user's token
-			if (req.user && req.user.token) {
-				// Set up auth with token for this operation
-				await git.addConfig('credential.helper', 'store');
-
-				// Create URL with token for auth
-				const remoteUrl = await git.remote(['get-url', 'origin']);
-				const tokenUrl = remoteUrl.replace('https://', `https://x-access-token:${req.user.token}@`);
-
-				console.log(`Authenticated remote URL configured (token hidden)`);
-			}
+			ensureGitRemoteWithToken(git, req.user.token);
 
 			// Get current status to check for changes
 			const status = await git.status();
@@ -1272,7 +1273,7 @@ app.post('/api/reset-to-branch', isAuthenticated, async (req, res) => {
 				repository: status.tracking,
 				stashed: status.isClean() ? null : stashMessage,
 				message: `Successfully reset to branch: ${branch}`
-			});
+				});
 		} catch (gitError) {
 			console.error('Git operation error:', gitError);
 			return res.status(500).json({
@@ -1301,27 +1302,13 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 	if (!title) return res.status(400).json({ error: 'PR title is required' });
 
 	const username = req.user.username;
-	const token    = req.user.token;
 	const userRepo = getUserRepoPath(req);
 
 	// slugify title for branch name
 	const branchName = `clt-ui-${slugify(title)}`;
 
 	const git = simpleGit({ baseDir: userRepo });
-	// configure git remote with token if needed
-	if (token) {
-		await git.addConfig('user.name', username);
-		await git.addConfig('user.email', `${username}@users.noreply.github.com`);
-		const remoteUrl = (await git.remote(['get-url', 'origin'])).trim();
-		if (remoteUrl.startsWith('https://')) {
-			const authed = remoteUrl.replace(
-				/^https:\/\//,
-				`https://x-access-token:${token}@`
-			);
-			await git.removeRemote('origin');
-			await git.addRemote('origin', authed);
-		}
-	}
+	ensureGitRemoteWithToken(git, req.user.token);
 
 	try {
 		// fetch all
