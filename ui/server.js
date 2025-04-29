@@ -166,21 +166,15 @@ async function ensureUserRepo(username) {
 	}
 }
 
+// Make sure that we use the origin with the user's authentication token when connecting online
 async function ensureGitRemoteWithToken(gitInstance, token) {
-	if (!token) return; // Skip if no token provided
+	if (!token) return;
 
 	try {
-		// Get current remote URL
-		const remoteUrl = await gitInstance.remote(['get-url', 'origin']);
+		// Use the REPO_URL variable directly for consistent base URL
+		const tokenUrl = REPO_URL.replace('https://', `https://x-access-token:${token}@`);
 
-		// Check if the remote URL already contains a token
-		if (remoteUrl.includes('@github.com') || !remoteUrl.startsWith('https://')) {
-			// Remote already configured or not using HTTPS, no need to change
-			return;
-		}
-
-		// Configure with token
-		const tokenUrl = remoteUrl.replace('https://', `https://x-access-token:${token}@`);
+		// Remove existing origin and add new one with token
 		await gitInstance.removeRemote('origin');
 		await gitInstance.addRemote('origin', tokenUrl);
 		console.log('Git remote configured with authentication token');
