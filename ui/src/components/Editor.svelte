@@ -743,7 +743,7 @@
                           <div class="wasm-diff">{@html diffHtml}</div>
                         {/await}
                       {:else}
-                        <span class="no-output-message">No actual output yet. Run validation to see results.</span>
+                        <span class="no-output-message">Empty output.</span>
                       {/if}
                     </div>
                   </div>
