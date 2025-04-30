@@ -1315,11 +1315,21 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 		const existsRemote  = remote.all.includes(`origin/${branchName}`);
 		const branchExists  = existsLocally || existsRemote;
 
+		const { exec } = await import('child_process');
+
 		// helper to run gh commands
-		const execPromise = (cmd) => new Promise((Y,N) =>
-			require('child_process').exec(cmd, { cwd: userRepo, env: { ...process.env, GH_TOKEN: token } },
-				(err, stdout, stderr) => err ? N(stderr||err) : Y(stdout.trim()))
-		);
+		const execPromise = (cmd) => new Promise((resolve, reject) => {
+			exec(cmd, { cwd: userRepo, env: { ...process.env, GH_TOKEN: req.user.token } },
+				(err, stdout, stderr) => {
+					if (err) {
+						reject(stderr || err);
+					} else {
+						resolve(stdout.trim());
+					}
+				}
+			);
+		});
+
 
 		if (branchExists) {
 			// check if there's an OPEN PR for that head
