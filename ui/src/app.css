@@ -489,7 +489,6 @@ body {
   font-size: 13px;
   height: 100px !important;  /* Default height */
   max-height: 100px !important;
-  overflow-y: auto;
   transition: all 0.2s ease;
 }
 
@@ -497,6 +496,7 @@ body {
   resize: none;
   background-color: #f0fff4;
   color: var(--color-text-primary);
+	word-wrap: normal;
 }
 
 .expected-output:focus {

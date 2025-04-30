@@ -81,6 +81,23 @@
     }
   }
 
+// arrays for our refs
+  let expectedEls: HTMLElement[] = [];
+  let actualEls: HTMLElement[] = [];
+
+  /**
+   * syncScroll
+   * @param idx  index in the loop
+   * @param fromExpected  if true, copy from expectedElems[idx] → actualElems[idx], else vice versa
+   */
+  function syncScroll(idx: number, fromExpected = true) {
+    const from = fromExpected ? expectedEls[idx] : actualEls[idx];
+    const to   = fromExpected ? actualEls[idx]   : expectedEls[idx];
+    if (from && to) {
+      to.scrollTop = from.scrollTop;
+    }
+  }
+
   let commands: RecordingCommand[] = [];
   let autoSaveEnabled = true;
   $: commands = $filesStore.currentFile ? $filesStore.currentFile.commands : [];
@@ -653,6 +670,8 @@
                     <textarea
                       id={`expected-output-${i}`}
                       class="expected-output {command.isOutputExpanded ? 'expanded' : ''}"
+											bind:this={expectedEls[i]}
+											on:scroll={() => syncScroll(i, true)}
                       placeholder="Expected output..."
                       rows="1"
                       bind:value={command.expectedOutput}
@@ -708,6 +727,8 @@
                     <div
                       id={`actual-output-${i}`}
                       class="actual-output {command.status === 'failed' ? 'failed-output' : ''} {command.isOutputExpanded ? 'expanded' : ''}"
+											bind:this={actualEls[i]}
+											on:scroll={() => syncScroll(i, false)}
                       role="region"
                       aria-label="Actual Output"
                       on:click={() => {
