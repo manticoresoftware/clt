@@ -15,7 +15,7 @@ pub fn read_test_file(test_file_path: &str) -> Result<TestStructure> {
 }
 
 /// Parse .rec content and convert to structured format
-fn parse_rec_content(content: &str, base_dir: &Path) -> Result<TestStructure> {
+pub fn parse_rec_content(content: &str, base_dir: &Path) -> Result<TestStructure> {
     let lines: Vec<&str> = content.lines().collect();
     let mut steps = Vec::new();
     let mut i = 0;

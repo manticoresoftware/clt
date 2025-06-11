@@ -1,4 +1,4 @@
-use crate::mcp_protocol::{RunTestOutput, TestError};
+use crate::mcp_protocol::{RunTestOutput, TestError, TestStructure};
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::Command;
@@ -117,15 +117,22 @@ impl TestRunner {
         let rep_content = fs::read_to_string(rep_path)
             .context("Failed to read .rep file")?;
 
-        // Parse sections from both files
-        let rec_sections = self.parse_file_sections(&rec_content)?;
-        let rep_sections = self.parse_file_sections(&rep_content)?;
+        // Parse REC file into structured format (reuse existing logic)
+        let base_dir = rec_path.parent()
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine parent directory of .rec file"))?;
+        let test_structure = crate::structured_test::parse_rec_content(&rec_content, base_dir)?;
+
+        // Extract all expected outputs from structured REC (handles blocks, nesting, etc.)
+        let expected_outputs = self.extract_all_outputs_from_structured(&test_structure);
+
+        // Extract all actual outputs from flat REP file
+        let actual_outputs = self.extract_all_outputs_from_rep(&rep_content)?;
 
         // Find pattern file for comparison (same logic as CLT)
         let pattern_file = self.find_pattern_file(rec_path);
-        
-        // Compare sections and identify differences
-        errors.extend(self.compare_sections(&rec_sections, &rep_sections, pattern_file)?);
+
+        // Compare output sequences using existing pattern matching logic
+        errors.extend(self.compare_output_sequences(&expected_outputs, &actual_outputs, pattern_file)?);
 
         Ok(errors)
     }
@@ -141,10 +148,96 @@ impl TestRunner {
         None
     }
 
-    fn compare_sections(&self, rec_sections: &[TestSection], rep_sections: &[TestSection], pattern_file: Option<String>) -> Result<Vec<TestError>> {
+    #[cfg(test)]
+    pub fn get_clt_path(&self) -> &str {
+        &self.clt_path
+    }
+
+    fn extract_all_outputs_from_structured(&self, test_structure: &TestStructure) -> Vec<OutputExpectation> {
+        let mut outputs = Vec::new();
+        let mut command_index = 0;
+        
+        self.extract_outputs_from_steps(&test_structure.steps, &mut outputs, &mut command_index);
+        outputs
+    }
+
+    fn extract_outputs_from_steps(&self, steps: &[crate::mcp_protocol::TestStep], outputs: &mut Vec<OutputExpectation>, command_index: &mut usize) {
+        let mut current_input: Option<(String, usize)> = None;
+        
+        for step in steps {
+            match step.step_type.as_str() {
+                "input" => {
+                    if let Some(content) = &step.content {
+                        current_input = Some((content.clone(), *command_index));
+                        *command_index += 1;
+                    }
+                }
+                "output" => {
+                    if let Some(content) = &step.content {
+                        if let Some((input_command, cmd_idx)) = &current_input {
+                            outputs.push(OutputExpectation {
+                                expected_content: content.clone(),
+                                command: input_command.clone(),
+                                command_index: *cmd_idx,
+                            });
+                        }
+                    }
+                }
+                "block" => {
+                    // Handle nested steps from blocks
+                    if let Some(nested_steps) = &step.steps {
+                        self.extract_outputs_from_steps(nested_steps, outputs, command_index);
+                    }
+                }
+                _ => {} // Skip comments and other types
+            }
+        }
+    }
+
+    fn extract_all_outputs_from_rep(&self, rep_content: &str) -> Result<Vec<ActualOutput>> {
+        let mut outputs = Vec::new();
+        let mut current_section = None;
+        let mut current_content = Vec::new();
+
+        for line in rep_content.lines() {
+            // Check if this is a section marker
+            if line.starts_with("––– ") && line.ends_with(" –––") {
+                // Save previous section if it was an output
+                if let Some("output") = current_section {
+                    outputs.push(ActualOutput {
+                        actual_content: current_content.join("\n"),
+                    });
+                    current_content.clear();
+                }
+
+                // Determine new section type
+                current_section = if line.contains("input") {
+                    Some("input")
+                } else if line.contains("output") {
+                    Some("output")
+                } else {
+                    None // Skip other section types
+                };
+            } else if current_section == Some("output") {
+                current_content.push(line.to_string());
+            }
+            // Skip input content - we only care about outputs
+        }
+
+        // Save last section if it was an output
+        if let Some("output") = current_section {
+            outputs.push(ActualOutput {
+                actual_content: current_content.join("\n"),
+            });
+        }
+
+        Ok(outputs)
+    }
+
+    fn compare_output_sequences(&self, expected: &[OutputExpectation], actual: &[ActualOutput], pattern_file: Option<String>) -> Result<Vec<TestError>> {
         let mut errors = Vec::new();
         
-        // Create pattern matcher (same as CLT uses)
+        // Create pattern matcher (reuse existing CLT logic)
         let pattern_matcher = match cmp::PatternMatcher::new(pattern_file) {
             Ok(matcher) => matcher,
             Err(e) => {
@@ -158,166 +251,43 @@ impl TestRunner {
             }
         };
 
-        // Parse input-output pairs from both files
-        let rec_pairs = self.extract_input_output_pairs(rec_sections);
-        let rep_pairs = self.extract_input_output_pairs(rep_sections);
-
-        // Compare each input-output pair
-        for (rec_pair, rep_pair) in rec_pairs.iter().zip(rep_pairs.iter()) {
-            // First, check if the input commands match
-            if rec_pair.input_content != rep_pair.input_content {
+        // Compare each expected output with actual output
+        for (exp, act) in expected.iter().zip(actual.iter()) {
+            // Use CLT's pattern matcher for comparison (handles regex patterns)
+            if pattern_matcher.has_diff(exp.expected_content.clone(), act.actual_content.clone()) {
                 errors.push(TestError {
-                    command: "input_mismatch".to_string(),
-                    expected: rec_pair.input_content.clone(),
-                    actual: rep_pair.input_content.clone(),
-                    line_number: rec_pair.input_line,
-                });
-                continue; // Skip output comparison if input doesn't match
-            }
-
-            // Compare the outputs using pattern matcher
-            if pattern_matcher.has_diff(rec_pair.output_content.clone(), rep_pair.output_content.clone()) {
-                errors.push(TestError {
-                    command: rec_pair.input_content.clone(), // The command that produced this output
-                    expected: rec_pair.output_content.clone(),
-                    actual: rep_pair.output_content.clone(),
-                    line_number: rec_pair.output_line,
+                    command: exp.command.clone(), // The input command that produced this output
+                    expected: exp.expected_content.clone(),
+                    actual: act.actual_content.clone(),
+                    line_number: exp.command_index + 1, // Use command index as line reference
                 });
             }
         }
 
-        // Check for pair count mismatch
-        if rec_pairs.len() != rep_pairs.len() {
+        // Check for count mismatch
+        if expected.len() != actual.len() {
             errors.push(TestError {
-                command: "test_structure_mismatch".to_string(),
-                expected: format!("{} input-output pairs", rec_pairs.len()),
-                actual: format!("{} input-output pairs", rep_pairs.len()),
+                command: "output_count_mismatch".to_string(),
+                expected: format!("{} outputs expected", expected.len()),
+                actual: format!("{} outputs found", actual.len()),
                 line_number: 0,
             });
         }
 
         Ok(errors)
     }
-
-    fn parse_file_sections(&self, content: &str) -> Result<Vec<TestSection>> {
-        let mut sections = Vec::new();
-        let mut current_section_type: Option<SectionType> = None;
-        let mut current_content = Vec::new();
-        let mut line_number = 1;
-        let mut section_start_line = 1;
-
-        for line in content.lines() {
-            // Check if this is a section marker
-            if line.starts_with("––– ") && line.ends_with(" –––") {
-                // Save previous section if exists
-                if let Some(ref section_type) = current_section_type {
-                    let content_str = current_content.join("\n");
-                    match section_type {
-                        SectionType::Input => {
-                            sections.push(TestSection::Input {
-                                content: content_str,
-                                line: section_start_line,
-                            });
-                        }
-                        SectionType::Output => {
-                            sections.push(TestSection::Output {
-                                content: content_str,
-                                line: section_start_line,
-                            });
-                        }
-                    }
-                    current_content.clear();
-                }
-
-                // Parse new section type
-                if line.contains("input") {
-                    current_section_type = Some(SectionType::Input);
-                    section_start_line = line_number + 1;
-                } else if line.contains("output") {
-                    current_section_type = Some(SectionType::Output);
-                    section_start_line = line_number + 1;
-                } else {
-                    // Skip other section types (comment, block, etc.)
-                    current_section_type = None;
-                }
-            } else if current_section_type.is_some() {
-                current_content.push(line.to_string());
-            }
-            
-            line_number += 1;
-        }
-
-        // Save last section
-        if let Some(ref section_type) = current_section_type {
-            let content_str = current_content.join("\n");
-            match section_type {
-                SectionType::Input => {
-                    sections.push(TestSection::Input {
-                        content: content_str,
-                        line: section_start_line,
-                    });
-                }
-                SectionType::Output => {
-                    sections.push(TestSection::Output {
-                        content: content_str,
-                        line: section_start_line,
-                    });
-                }
-            }
-        }
-
-        Ok(sections)
-    }
-
-    #[cfg(test)]
-    pub fn get_clt_path(&self) -> &str {
-        &self.clt_path
-    }
-
-    fn extract_input_output_pairs(&self, sections: &[TestSection]) -> Vec<InputOutputPair> {
-        let mut pairs = Vec::new();
-        let mut current_input: Option<(String, usize)> = None;
-
-        for section in sections {
-            match section {
-                TestSection::Input { content, line } => {
-                    current_input = Some((content.clone(), *line));
-                }
-                TestSection::Output { content, line } => {
-                    if let Some((input_content, input_line)) = current_input.take() {
-                        pairs.push(InputOutputPair {
-                            input_content,
-                            input_line,
-                            output_content: content.clone(),
-                            output_line: *line,
-                        });
-                    }
-                }
-            }
-        }
-
-        pairs
-    }
 }
 
 #[derive(Debug, Clone)]
-struct InputOutputPair {
-    input_content: String,
-    input_line: usize,
-    output_content: String,
-    output_line: usize,
+struct OutputExpectation {
+    expected_content: String,
+    command: String,        // The input command that should produce this output
+    command_index: usize,   // Index of the command for error reporting
 }
 
 #[derive(Debug, Clone)]
-enum TestSection {
-    Input { content: String, line: usize },
-    Output { content: String, line: usize },
-}
-
-#[derive(Debug, Clone)]
-enum SectionType {
-    Input,
-    Output,
+struct ActualOutput {
+    actual_content: String,
 }
 
 #[cfg(test)]
@@ -389,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_file_sections() {
+    fn test_extract_all_outputs_from_structured() {
         let runner = TestRunner::new(
             "test-image".to_string(),
             None
@@ -401,22 +371,58 @@ mod tests {
         }
 
         let runner = runner.unwrap();
-        let content = "––– input –––\necho hello\n––– output –––\nhello\n";
-        let sections = runner.parse_file_sections(content).unwrap();
+        
+        // Create a test structure with nested blocks
+        let test_structure = TestStructure {
+            description: Some("Test with blocks".to_string()),
+            steps: vec![
+                crate::mcp_protocol::TestStep {
+                    step_type: "input".to_string(),
+                    args: vec![],
+                    content: Some("echo hello".to_string()),
+                    steps: None,
+                },
+                crate::mcp_protocol::TestStep {
+                    step_type: "output".to_string(),
+                    args: vec![],
+                    content: Some("hello".to_string()),
+                    steps: None,
+                },
+                crate::mcp_protocol::TestStep {
+                    step_type: "block".to_string(),
+                    args: vec!["test-block".to_string()],
+                    content: None,
+                    steps: Some(vec![
+                        crate::mcp_protocol::TestStep {
+                            step_type: "input".to_string(),
+                            args: vec![],
+                            content: Some("echo world".to_string()),
+                            steps: None,
+                        },
+                        crate::mcp_protocol::TestStep {
+                            step_type: "output".to_string(),
+                            args: vec![],
+                            content: Some("world".to_string()),
+                            steps: None,
+                        },
+                    ]),
+                },
+            ],
+        };
 
-        assert_eq!(sections.len(), 2);
-        match &sections[0] {
-            TestSection::Input { content, .. } => assert_eq!(content, "echo hello"),
-            _ => panic!("Expected Input section"),
-        }
-        match &sections[1] {
-            TestSection::Output { content, .. } => assert_eq!(content, "hello"),
-            _ => panic!("Expected Output section"),
-        }
+        let outputs = runner.extract_all_outputs_from_structured(&test_structure);
+
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(outputs[0].expected_content, "hello");
+        assert_eq!(outputs[0].command, "echo hello");
+        assert_eq!(outputs[0].command_index, 0);
+        assert_eq!(outputs[1].expected_content, "world");
+        assert_eq!(outputs[1].command, "echo world");
+        assert_eq!(outputs[1].command_index, 1);
     }
 
     #[test]
-    fn test_extract_input_output_pairs() {
+    fn test_extract_all_outputs_from_rep() {
         let runner = TestRunner::new(
             "test-image".to_string(),
             None
@@ -428,19 +434,12 @@ mod tests {
         }
 
         let runner = runner.unwrap();
-        let sections = vec![
-            TestSection::Input { content: "echo hello".to_string(), line: 1 },
-            TestSection::Output { content: "hello".to_string(), line: 2 },
-            TestSection::Input { content: "echo world".to_string(), line: 3 },
-            TestSection::Output { content: "world".to_string(), line: 4 },
-        ];
+        let rep_content = "––– input –––\necho hello\n––– output –––\nhello\n––– input –––\necho world\n––– output –––\nworld\n";
+        
+        let outputs = runner.extract_all_outputs_from_rep(rep_content).unwrap();
 
-        let pairs = runner.extract_input_output_pairs(&sections);
-
-        assert_eq!(pairs.len(), 2);
-        assert_eq!(pairs[0].input_content, "echo hello");
-        assert_eq!(pairs[0].output_content, "hello");
-        assert_eq!(pairs[1].input_content, "echo world");
-        assert_eq!(pairs[1].output_content, "world");
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(outputs[0].actual_content, "hello");
+        assert_eq!(outputs[1].actual_content, "world");
     }
 }
