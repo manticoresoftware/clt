@@ -1,6 +1,7 @@
 mod mcp_protocol;
 mod test_runner;
 mod pattern_refiner;
+mod structured_test;
 
 use mcp_protocol::*;
 use test_runner::TestRunner;
@@ -10,23 +11,26 @@ use anyhow::Result;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fs;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
 
 #[derive(Debug)]
 struct McpServer {
     #[allow(dead_code)]
     docker_image: String,
+    clt_binary_path: Option<String>,
     test_runner: TestRunner,
     pattern_refiner: PatternRefiner,
 }
 
 impl McpServer {
     fn new(docker_image: String, clt_binary_path: Option<String>) -> Result<Self> {
-        let test_runner = TestRunner::new(docker_image.clone(), clt_binary_path)?;
+        let test_runner = TestRunner::new(docker_image.clone(), clt_binary_path.clone())?;
         let pattern_refiner = PatternRefiner::new()?;
 
         Ok(Self {
             docker_image,
+            clt_binary_path,
             test_runner,
             pattern_refiner,
         })
@@ -38,17 +42,68 @@ impl McpServer {
         let mut stdout = tokio::io::stdout();
 
         let mut line = String::new();
-        while reader.read_line(&mut line).await? > 0 {
-            if let Ok(request) = serde_json::from_str::<McpRequest>(line.trim()) {
-                let response = self.handle_request(request).await;
-                let response_json = serde_json::to_string(&response)?;
-                stdout.write_all(response_json.as_bytes()).await?;
-                stdout.write_all(b"\n").await?;
-                stdout.flush().await?;
-            }
+        loop {
             line.clear();
+            
+            // Handle EOF or read errors gracefully
+            let bytes_read = match reader.read_line(&mut line).await {
+                Ok(0) => break, // EOF - client disconnected
+                Ok(n) => n,
+                Err(e) => {
+                    // Check if it's a broken pipe or connection reset
+                    if e.kind() == std::io::ErrorKind::BrokenPipe 
+                        || e.kind() == std::io::ErrorKind::ConnectionReset 
+                        || e.kind() == std::io::ErrorKind::ConnectionAborted {
+                        // Client disconnected - exit gracefully
+                        break;
+                    }
+                    // For other errors, continue trying
+                    continue;
+                }
+            };
+
+            if bytes_read == 0 {
+                break; // EOF
+            }
+
+            // Parse JSON and handle errors properly
+            let response = match serde_json::from_str::<McpRequest>(line.trim()) {
+                Ok(request) => self.handle_request(request).await,
+                Err(_) => {
+                    // Send error response for malformed JSON
+                    McpResponse::error(
+                        None,
+                        -32700,
+                        "Parse error: Invalid JSON".to_string(),
+                    )
+                }
+            };
+
+            // Send response with proper error handling
+            if let Err(e) = self.send_response(&mut stdout, &response).await {
+                // Check if it's a broken pipe or connection issue
+                if e.kind() == std::io::ErrorKind::BrokenPipe 
+                    || e.kind() == std::io::ErrorKind::ConnectionReset 
+                    || e.kind() == std::io::ErrorKind::ConnectionAborted {
+                    // Client disconnected - exit gracefully
+                    break;
+                }
+                // For other errors, continue trying
+                continue;
+            }
         }
 
+        Ok(())
+    }
+
+    async fn send_response(&self, stdout: &mut tokio::io::Stdout, response: &McpResponse) -> std::io::Result<()> {
+        let response_json = serde_json::to_string(response)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        
+        stdout.write_all(response_json.as_bytes()).await?;
+        stdout.write_all(b"\n").await?;
+        stdout.flush().await?;
+        
         Ok(())
     }
 
@@ -84,28 +139,28 @@ impl McpServer {
         let tools = vec![
             McpTool {
                 name: "run_test".to_string(),
-                description: "Execute a CLT (Command Line Tester) test file and return detailed results. CLT tests are defined in .rec files containing input commands and expected outputs. Test files can include reusable blocks from .recb files using '––– block: relative-path –––' statements. This tool runs the test in a Docker container, compiles any included blocks, and compares actual vs expected results, providing structured error information for any mismatches. Use this to validate that command-line applications behave as expected.".to_string(),
+                description: "Execute a CLT test file in a Docker container and return the results. Compares actual output with expected output and reports success/failure. The Docker image is configured when the MCP server is started.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "test_path": {
+                        "test_file": {
                             "type": "string",
-                            "description": "Absolute path to the .rec test file. CLT test files use a specific format with sections like '––– input –––' (commands to execute) and '––– output –––' (expected results). Example: /path/to/test.rec"
+                            "description": "Path to the test file to execute"
                         }
                     },
-                    "required": ["test_path"],
+                    "required": ["test_file"],
                     "additionalProperties": false
                 }),
             },
             McpTool {
                 name: "refine_output".to_string(),
-                description: "Analyze differences between expected and actual command outputs, then suggest regex patterns to handle dynamic content. This tool uses diff analysis to identify parts that change between test runs (like timestamps, PIDs, version numbers) and suggests CLT-compatible patterns to make tests more robust. It supports both named patterns from .clt/patterns file (like %{SEMVER} for version numbers) and custom regex patterns (like #!/[0-9]+/!# for any number). Use this when test outputs contain dynamic data that changes between runs.".to_string(),
+                description: "Analyze differences between expected and actual command outputs, then suggest patterns to handle dynamic content. This tool uses diff analysis to identify parts that change between test runs (like timestamps, PIDs, version numbers) and suggests compatible patterns to make tests more robust. Use this when test outputs contain dynamic data that changes between runs.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
                         "expected": {
                             "type": "string",
-                            "description": "The expected output string from your test. This can already contain CLT patterns like %{SEMVER} for semantic versions or #!/regex/!# for custom patterns. Example: 'Process started with PID 1234'"
+                            "description": "The expected output string from your test. This can already contain patterns for dynamic content. Example: 'Process started with PID 1234'"
                         },
                         "actual": {
                             "type": "string",
@@ -118,13 +173,13 @@ impl McpServer {
             },
             McpTool {
                 name: "test_match".to_string(),
-                description: "Compare expected vs actual output strings using CLT's pattern matching engine. This tool understands CLT pattern syntax including named patterns (%{PATTERN_NAME}) and regex patterns (#!/regex/!#), and performs intelligent matching that can handle dynamic content. It returns detailed mismatch information showing exactly where and why strings don't match, including character positions and context. Use this to validate if test outputs match expectations, especially when they contain patterns for dynamic data.".to_string(),
+                description: "Compare expected vs actual output strings using pattern matching. This tool understands pattern syntax and performs intelligent matching that can handle dynamic content. It returns detailed mismatch information showing exactly where and why strings don't match, including character positions and context. Use this to validate if test outputs match expectations, especially when they contain patterns for dynamic data.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
                         "expected": {
                             "type": "string",
-                            "description": "Expected output string with optional CLT patterns. Patterns include: %{SEMVER} (semantic versions like 1.2.3), %{IPADDR} (IP addresses), %{DATE} (dates), %{TIME} (times), %{NUMBER} (any number), #!/[0-9]+/!# (custom regex for numbers), #!/[0-9]{4}-[0-9]{2}-[0-9]{2}/!# (custom regex for dates). Example: 'Server started on %{IPADDR} at %{TIME}'"
+                            "description": "Expected output string with optional patterns. Patterns can match dynamic content like version numbers, IP addresses, dates, times, and custom regex patterns. Example: 'Server started on %{IPADDR} at %{TIME}'"
                         },
                         "actual": {
                             "type": "string",
@@ -137,17 +192,95 @@ impl McpServer {
             },
             McpTool {
                 name: "clt_help".to_string(),
-                description: "Get comprehensive documentation about CLT (Command Line Tester) concepts, file formats, pattern syntax, and workflow examples. This tool provides detailed explanations of how CLT works, the .rec file format, pattern matching syntax, and step-by-step examples for common testing scenarios. Use this to understand CLT concepts before using other tools.".to_string(),
+                description: "Get comprehensive documentation about CLT (Command Line Tester) concepts, testing workflows, pattern syntax, and examples. This tool provides detailed explanations of how CLT works and step-by-step examples for common testing scenarios. Use this to understand CLT concepts before using other tools.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
                         "topic": {
                             "type": "string",
-                            "description": "Help topic to explain. Options: 'overview' (CLT introduction), 'rec_format' (.rec file structure), 'patterns' (pattern syntax guide), 'blocks' (reusable test blocks and .recb files), 'workflow' (testing workflow), 'examples' (practical examples), 'troubleshooting' (common issues)",
-                            "enum": ["overview", "rec_format", "patterns", "blocks", "workflow", "examples", "troubleshooting"]
+                            "description": "Help topic to explain. Options: 'overview' (CLT introduction), 'test_format' (structured test format guide), 'patterns' (pattern syntax guide), 'blocks' (reusable test blocks), 'workflow' (testing workflow), 'examples' (practical examples), 'troubleshooting' (common issues), 'structured_tests' (AI-friendly JSON format)",
+                            "enum": ["overview", "test_format", "patterns", "blocks", "workflow", "examples", "troubleshooting", "structured_tests"]
                         }
                     },
                     "required": ["topic"],
+                    "additionalProperties": false
+                }),
+            },
+            McpTool {
+                name: "get_patterns".to_string(),
+                description: "Get all available patterns for the current CLT project. Returns predefined patterns that can be used in test outputs for dynamic content matching.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                }),
+            },
+            McpTool {
+                name: "read_test".to_string(),
+                description: "Read a CLT test file and return its structured representation. The test is returned as a sequence of steps including commands, expected outputs, comments, and reusable blocks.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "test_file": {
+                            "type": "string",
+                            "description": "Path to the test file to read"
+                        }
+                    },
+                    "required": ["test_file"],
+                    "additionalProperties": false
+                }),
+            },
+            McpTool {
+                name: "write_test".to_string(),
+                description: "Write a CLT test file from structured format. Creates a test file that can be executed with run_test. Supports commands, expected outputs, comments, and reusable blocks.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "test_file": {
+                            "type": "string",
+                            "description": "Path where the test file should be written"
+                        },
+                        "test_structure": {
+                            "type": "object",
+                            "description": "Structured test definition",
+                            "properties": {
+                                "description": {
+                                    "type": "string",
+                                    "description": "Optional description text that appears at the beginning of the test file. Can be multiline."
+                                },
+                                "steps": {
+                                    "type": "array",
+                                    "description": "Sequence of test steps",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "statement": {
+                                                "type": "string",
+                                                "enum": ["input", "output", "comment", "block"],
+                                                "description": "Type of step: input (command to execute), output (expected result), comment (documentation), block (reusable test sequence)"
+                                            },
+                                            "args": {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                                "description": "Arguments for the statement. For output: optional custom checker name. For block: relative path to block file."
+                                            },
+                                            "content": {
+                                                "type": ["string", "null"],
+                                                "description": "Content of the step. Command text for input, expected output for output, comment text for comment, null for block."
+                                            },
+                                            "steps": {
+                                                "type": "array",
+                                                "description": "Nested steps for block types (resolved block content)"
+                                            }
+                                        },
+                                        "required": ["statement", "args"]
+                                    }
+                                }
+                            },
+                            "required": ["steps"]
+                        }
+                    },
+                    "required": ["test_file", "test_structure"],
                     "additionalProperties": false
                 }),
             },
@@ -197,13 +330,13 @@ impl McpServer {
                 let input: RunTestInput = serde_json::from_value(
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
-                let output = self.test_runner.run_test(&input.test_path)?;
+                let output = self.test_runner.run_test(&input.test_file)?;
                 
                 // Add helpful context to the output
                 let enhanced_output = json!({
                     "tool": "run_test",
                     "description": "CLT test execution results",
-                    "test_file": input.test_path,
+                    "test_file": input.test_file,
                     "result": output,
                     "help": {
                         "success_meaning": "true = test passed, all commands executed and outputs matched expectations",
@@ -279,8 +412,70 @@ impl McpServer {
                 let help_content = self.get_help_content(&input.topic);
                 Ok(serde_json::to_string_pretty(&help_content)?)
             }
+            "get_patterns" => {
+                let patterns = structured_test::get_patterns(self.clt_binary_path.as_deref())?;
+                
+                let enhanced_output = json!({
+                    "tool": "get_patterns",
+                    "description": "Available patterns for CLT tests",
+                    "patterns": patterns,
+                    "help": {
+                        "usage": "Use these patterns in test outputs like %{PATTERN_NAME}",
+                        "example": "Replace '1.2.3' with '%{SEMVER}' to match any semantic version",
+                        "custom_patterns": "Add custom patterns to .clt/patterns file with format: PATTERN_NAME REGEX"
+                    }
+                });
+                
+                Ok(serde_json::to_string_pretty(&enhanced_output)?)
+            }
+            "read_test" => {
+                let input: mcp_protocol::ReadTestInput = serde_json::from_value(
+                    arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
+                )?;
+                
+                let test_structure = structured_test::read_test_file(&input.test_file)?;
+                
+                let enhanced_output = json!({
+                    "tool": "read_test",
+                    "description": "Structured representation of CLT test file",
+                    "test_file": input.test_file,
+                    "result": test_structure,
+                    "help": {
+                        "structure": "JSON format with 'steps' array containing test steps",
+                        "step_types": "input (commands), output (expected results), comment (documentation), block (reusable components)",
+                        "nested_blocks": "Block steps contain resolved content in 'steps' field",
+                        "usage": "Modify this structure and use 'write_test' to save changes"
+                    }
+                });
+                
+                Ok(serde_json::to_string_pretty(&enhanced_output)?)
+            }
+            "write_test" => {
+                let input: mcp_protocol::WriteTestInput = serde_json::from_value(
+                    arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
+                )?;
+                
+                structured_test::write_test_file(&input.test_file, &input.test_structure)?;
+                
+                let enhanced_output = json!({
+                    "tool": "write_test",
+                    "description": "CLT test file written successfully",
+                    "test_file": input.test_file,
+                    "result": {
+                        "success": true,
+                        "message": format!("Test file written to {}", input.test_file)
+                    },
+                    "help": {
+                        "next_steps": "Use 'run_test' to execute the written test file",
+                        "file_format": "File saved in CLT .rec format with proper en dash syntax",
+                        "blocks": "Block references preserved as references (not inlined content)"
+                    }
+                });
+                
+                Ok(serde_json::to_string_pretty(&enhanced_output)?)
+            }
             _ => {
-                anyhow::bail!("Unknown tool: {}. Available tools: run_test, refine_output, test_match, clt_help", tool_name);
+                anyhow::bail!("Unknown tool: {}. Available tools: run_test, refine_output, test_match, clt_help, get_patterns, read_test, write_test", tool_name);
             }
         }
     }
@@ -291,7 +486,7 @@ impl McpServer {
                 "topic": "CLT Overview",
                 "description": "CLT (Command Line Tester) is a testing framework for command-line applications",
                 "content": {
-                    "what_is_clt": "CLT allows you to record interactive command sessions, save them as test files (.rec), and replay them to verify consistent behavior. All commands run inside Docker containers for reproducible environments.",
+                    "what_is_clt": "CLT allows you to record interactive command sessions, save them as test files, and replay them to verify consistent behavior. All commands run inside Docker containers for reproducible environments.",
                     "key_features": [
                         "Record interactive command sessions",
                         "Replay tests to verify behavior",
@@ -302,81 +497,337 @@ impl McpServer {
                     "typical_workflow": [
                         "1. Record a test session: clt record ubuntu:20.04",
                         "2. Execute commands interactively (all recorded)",
-                        "3. Exit with Ctrl+D to save the .rec file",
-                        "4. Replay test: clt test -t mytest.rec -d ubuntu:20.04",
+                        "3. Exit with Ctrl+D to save the test file",
+                        "4. Replay test: clt test -t mytest -d ubuntu:20.04",
                         "5. Refine patterns if dynamic content causes failures"
                     ],
                     "file_types": {
-                        ".rec": "Test recording files with input/output sections",
-                        ".rep": "Test replay results (generated during test execution)",
-                        ".recb": "Reusable test blocks that can be included in .rec files"
+                        "test_files": "Test recording files with input/output sections",
+                        "result_files": "Test replay results (generated during test execution)", 
+                        "block_files": "Reusable test blocks that can be included in test files"
                     }
                 }
             }),
-            "rec_format" => json!({
-                "topic": "CLT .rec File Format",
-                "description": "Structure and syntax of CLT test recording files",
+            "test_format" => json!({
+                "topic": "Structured Test Format",
+                "description": "Complete guide to CLT's structured JSON test format for AI-friendly test creation",
                 "content": {
-                    "basic_structure": "CLT files use section markers with en dashes (–) to separate different parts",
-                    "section_types": {
-                        "input": {
-                            "marker": "––– input –––",
-                            "purpose": "Contains commands to execute",
-                            "example": "echo 'Hello World'"
+                    "overview": "CLT uses a structured JSON format that makes it easy for AI to create, read, and modify tests. This format abstracts away complex syntax and provides a clear, hierarchical representation of test steps.",
+                    "basic_structure": {
+                        "description": "A test consists of an optional description and an array of steps",
+                        "schema": {
+                            "description": "Optional text description of what the test does (appears at top of test file)",
+                            "steps": "Array of test steps to execute in sequence"
                         },
-                        "output": {
-                            "marker": "––– output –––",
-                            "purpose": "Contains expected output from the command",
-                            "example": "Hello World"
-                        },
-                        "block": {
-                            "marker": "––– block: filename –––",
-                            "purpose": "Includes reusable test blocks from .recb files",
-                            "example": "––– block: login-sequence –––",
-                            "important": "Block files (.recb) must be in relative path from the current .rec file location",
-                            "path_rules": [
-                                "Relative to the .rec file containing the block statement",
-                                "Can use subdirectories: ––– block: auth/admin-login –––",
-                                "Always use .recb extension for block files",
-                                "Block files can include other blocks (nested blocks supported)"
+                        "minimal_example": {
+                            "description": "Simple test with one command",
+                            "steps": [
+                                {
+                                    "statement": "input",
+                                    "args": [],
+                                    "content": "echo 'Hello World'"
+                                },
+                                {
+                                    "statement": "output",
+                                    "args": [],
+                                    "content": "Hello World"
+                                }
                             ]
-                        },
-                        "comment": {
-                            "marker": "––– comment –––",
-                            "purpose": "Documentation (ignored during execution)",
-                            "example": "This test validates user authentication"
                         }
                     },
-                    "complete_example": [
-                        "––– comment –––",
-                        "Test with reusable login block",
-                        "––– block: common/login-sequence –––",
-                        "––– input –––",
-                        "echo 'After login'",
-                        "––– output –––",
-                        "After login"
-                    ],
-                    "block_file_structure": {
-                        "description": "Block files (.recb) contain reusable test sequences",
-                        "location": "Must be relative to the .rec file that includes them",
-                        "format": "Same as .rec files but without the .rec extension",
-                        "example_structure": [
-                            "tests/",
-                            "├── main-test.rec         # Main test file",
-                            "├── login-sequence.recb   # Block in same directory", 
-                            "└── auth/",
-                            "    └── admin-login.recb  # Block in subdirectory"
+                    "step_types": {
+                        "input": {
+                            "purpose": "Command to execute in the test environment",
+                            "structure": {
+                                "statement": "input",
+                                "args": "Always empty array []",
+                                "content": "Command string to execute"
+                            },
+                            "example": {
+                                "statement": "input",
+                                "args": [],
+                                "content": "ls -la /tmp"
+                            }
+                        },
+                        "output": {
+                            "purpose": "Expected result from the previous command",
+                            "structure": {
+                                "statement": "output",
+                                "args": "Empty [] or [\"checker-name\"] for custom validation",
+                                "content": "Expected output string (can contain patterns)"
+                            },
+                            "examples": {
+                                "basic": {
+                                    "statement": "output",
+                                    "args": [],
+                                    "content": "total 0"
+                                },
+                                "with_patterns": {
+                                    "statement": "output",
+                                    "args": [],
+                                    "content": "Process started with PID %{NUMBER}"
+                                },
+                                "with_custom_checker": {
+                                    "statement": "output",
+                                    "args": ["json-validator"],
+                                    "content": "{\"status\": \"success\"}"
+                                }
+                            }
+                        },
+                        "comment": {
+                            "purpose": "Documentation and notes within the test (ignored during execution)",
+                            "structure": {
+                                "statement": "comment",
+                                "args": "Always empty array []",
+                                "content": "Comment text"
+                            },
+                            "example": {
+                                "statement": "comment",
+                                "args": [],
+                                "content": "This test validates the file listing functionality"
+                            }
+                        },
+                        "block": {
+                            "purpose": "Reference to reusable test sequence from another file",
+                            "structure": {
+                                "statement": "block",
+                                "args": "[\"relative/path/to/block\"]",
+                                "content": "Always null",
+                                "steps": "Array of resolved steps from the block file"
+                            },
+                            "example": {
+                                "statement": "block",
+                                "args": ["auth/login"],
+                                "content": null,
+                                "steps": [
+                                    {
+                                        "statement": "input",
+                                        "args": [],
+                                        "content": "login admin"
+                                    },
+                                    {
+                                        "statement": "output",
+                                        "args": [],
+                                        "content": "Login successful"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "complete_examples": {
+                        "simple_test": {
+                            "description": "Basic command test with description",
+                            "test": {
+                                "description": "Test the echo command functionality",
+                                "steps": [
+                                    {
+                                        "statement": "comment",
+                                        "args": [],
+                                        "content": "Test basic echo command"
+                                    },
+                                    {
+                                        "statement": "input",
+                                        "args": [],
+                                        "content": "echo 'Hello CLT'"
+                                    },
+                                    {
+                                        "statement": "output",
+                                        "args": [],
+                                        "content": "Hello CLT"
+                                    }
+                                ]
+                            }
+                        },
+                        "test_with_patterns": {
+                            "description": "Test using patterns for dynamic content",
+                            "test": {
+                                "description": "Application startup test with dynamic content",
+                                "steps": [
+                                    {
+                                        "statement": "input",
+                                        "args": [],
+                                        "content": "./myapp --version"
+                                    },
+                                    {
+                                        "statement": "output",
+                                        "args": [],
+                                        "content": "MyApp version %{SEMVER}"
+                                    },
+                                    {
+                                        "statement": "input",
+                                        "args": [],
+                                        "content": "./myapp start"
+                                    },
+                                    {
+                                        "statement": "output",
+                                        "args": [],
+                                        "content": "Server started on %{IPADDR}:%{NUMBER}"
+                                    }
+                                ]
+                            }
+                        },
+                        "test_with_blocks": {
+                            "description": "Test using reusable blocks",
+                            "test": {
+                                "description": "Database integration test",
+                                "steps": [
+                                    {
+                                        "statement": "comment",
+                                        "args": [],
+                                        "content": "Setup database connection"
+                                    },
+                                    {
+                                        "statement": "block",
+                                        "args": ["database/connect"],
+                                        "content": null,
+                                        "steps": [
+                                            {
+                                                "statement": "input",
+                                                "args": [],
+                                                "content": "mysql -u testuser -p"
+                                            },
+                                            {
+                                                "statement": "output",
+                                                "args": [],
+                                                "content": "Enter password:"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "statement": "input",
+                                        "args": [],
+                                        "content": "SELECT COUNT(*) FROM users;"
+                                    },
+                                    {
+                                        "statement": "output",
+                                        "args": [],
+                                        "content": "%{NUMBER}"
+                                    }
+                                ]
+                            }
+                        },
+                        "test_with_custom_checker": {
+                            "description": "Test using custom output validation",
+                            "test": {
+                                "description": "API response validation test",
+                                "steps": [
+                                    {
+                                        "statement": "input",
+                                        "args": [],
+                                        "content": "curl -s http://api.example.com/status"
+                                    },
+                                    {
+                                        "statement": "output",
+                                        "args": ["json-validator"],
+                                        "content": "{\"status\": \"healthy\", \"timestamp\": \"%{NUMBER}\"}"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "workflow_example": {
+                        "description": "Complete workflow from creation to execution",
+                        "steps": [
+                            "1. Create test structure using JSON format",
+                            "2. Use write_test tool to save as test file",
+                            "3. Use run_test tool to execute the test",
+                            "4. Use read_test tool to load existing tests for modification",
+                            "5. Use get_patterns tool to see available patterns for dynamic content"
                         ],
-                        "usage_in_rec": [
-                            "––– block: login-sequence –––      # Same directory",
-                            "––– block: auth/admin-login –––    # Subdirectory"
+                        "example_workflow": {
+                            "step1_create": {
+                                "description": "Create test structure",
+                                "json": {
+                                    "description": "Test file operations",
+                                    "steps": [
+                                        {
+                                            "statement": "input",
+                                            "args": [],
+                                            "content": "touch /tmp/testfile.txt"
+                                        },
+                                        {
+                                            "statement": "output",
+                                            "args": [],
+                                            "content": ""
+                                        },
+                                        {
+                                            "statement": "input",
+                                            "args": [],
+                                            "content": "ls -la /tmp/testfile.txt"
+                                        },
+                                        {
+                                            "statement": "output",
+                                            "args": [],
+                                            "content": "-rw-r--r-- 1 %{USERNAME} %{USERNAME} 0 %{DATE} %{TIME} /tmp/testfile.txt"
+                                        }
+                                    ]
+                                }
+                            },
+                            "step2_write": "Use write_test with test_file='/tmp/mytest.rec' and test_structure=<json_above>",
+                            "step3_run": "Use run_test with test_file='/tmp/mytest.rec' and image='ubuntu:20.04'",
+                            "step4_modify": "Use read_test with test_file='/tmp/mytest.rec' to load for modifications"
+                        }
+                    },
+                    "best_practices": {
+                        "structure": [
+                            "Always include a descriptive 'description' field for your tests",
+                            "Use comment statements to document complex test sections",
+                            "Group related commands and outputs together logically",
+                            "Use meaningful names for block references"
+                        ],
+                        "patterns": [
+                            "Use %{PATTERN_NAME} for common dynamic content (dates, numbers, IPs)",
+                            "Prefer named patterns over custom regex when available",
+                            "Use get_patterns tool to see all available patterns",
+                            "Test pattern matching with test_match tool before using in tests"
+                        ],
+                        "blocks": [
+                            "Create reusable blocks for common sequences (login, setup, cleanup)",
+                            "Use relative paths for block references",
+                            "Keep block files focused on single responsibilities",
+                            "Document block purposes with comments"
+                        ],
+                        "validation": [
+                            "Use custom checkers for complex output validation (JSON, XML, etc.)",
+                            "Test your structured format with write_test before execution",
+                            "Use read_test to verify your written tests parse correctly"
                         ]
                     },
-                    "important_notes": [
-                        "Use en dashes (–) not regular hyphens (-) in section markers",
-                        "Each input section should have a corresponding output section",
-                        "Patterns can be used in output sections for dynamic content"
-                    ]
+                    "common_patterns": {
+                        "test_sequence": "input → output → input → output (commands and their expected results)",
+                        "setup_test_cleanup": "block(setup) → test_steps → block(cleanup)",
+                        "documented_test": "comment → input → output (with documentation)",
+                        "conditional_validation": "input → output(with_custom_checker) (for complex validation)"
+                    },
+                    "troubleshooting": {
+                        "invalid_structure": {
+                            "symptom": "write_test fails with structure errors",
+                            "solutions": [
+                                "Ensure all steps have required 'statement' and 'args' fields",
+                                "Check that 'statement' values are: input, output, comment, or block",
+                                "Verify 'args' is always an array (even if empty)",
+                                "For blocks: ensure 'content' is null and 'args' contains path"
+                            ]
+                        },
+                        "block_resolution": {
+                            "symptom": "Block references not working",
+                            "solutions": [
+                                "Check block path is relative to the test file location",
+                                "Ensure block file exists at the specified path",
+                                "Verify block file contains valid test structure",
+                                "Use forward slashes (/) in paths on all platforms"
+                            ]
+                        },
+                        "pattern_issues": {
+                            "symptom": "Patterns not matching as expected",
+                            "solutions": [
+                                "Use get_patterns to see available pattern names",
+                                "Test patterns with test_match tool first",
+                                "Ensure pattern syntax is %{PATTERN_NAME}",
+                                "Check pattern is appropriate for the content type"
+                            ]
+                        }
+                    }
                 }
             }),
             "patterns" => json!({
@@ -837,26 +1288,123 @@ impl McpServer {
                     ]
                 }
             }),
+            "structured_tests" => json!({
+                "topic": "Structured Test Format",
+                "description": "AI-friendly JSON format for creating and modifying CLT tests",
+                "content": {
+                    "overview": "The structured test format provides a JSON representation of CLT tests that's easier for AI to work with than the raw .rec format",
+                    "new_tools": {
+                        "get_patterns": {
+                            "purpose": "Get all available patterns for the current project",
+                            "description": "Returns patterns from both system (.clt/patterns in CLT binary directory) and project (.clt/patterns in current directory)",
+                            "usage": "Use to see what patterns are available for dynamic content matching"
+                        },
+                        "read_test": {
+                            "purpose": "Convert .rec file to structured JSON format",
+                            "description": "Parses CLT .rec files and converts them to AI-friendly JSON with nested block resolution",
+                            "usage": "Use to analyze existing tests or prepare them for modification"
+                        },
+                        "write_test": {
+                            "purpose": "Convert structured JSON to .rec file",
+                            "description": "Takes JSON test structure and writes proper .rec file with CLT syntax. Automatically creates parent directories if needed.",
+                            "usage": "Use to create new tests or save modified tests after working with JSON structure"
+                        }
+                    },
+                    "json_structure": {
+                        "root": {
+                            "description": "Optional description text for the test file (appears before statements)",
+                            "steps": "Array of test steps to execute"
+                        },
+                        "step_object": {
+                            "type": "Step type: 'input', 'output', 'comment', or 'block'",
+                            "args": "Array of arguments (checker names for output, block paths for block)",
+                            "content": "Step content (commands, expected output, comment text, null for blocks)",
+                            "steps": "Nested steps array (only for block types with resolved content)"
+                        }
+                    },
+                    "workflow": [
+                        "1. Use 'read_test' to convert existing .rec file to JSON",
+                        "2. Modify the JSON structure as needed",
+                        "3. Use 'write_test' to save the JSON back to .rec format", 
+                        "4. Use 'run_test' to execute the .rec file",
+                        "5. Use 'get_patterns' to see available patterns for dynamic content"
+                    ],
+                    "advantages": [
+                        "No need to learn CLT's en-dash syntax",
+                        "Easy programmatic generation and modification",
+                        "Structured representation of nested blocks",
+                        "Full compatibility with existing CLT infrastructure"
+                    ],
+                    "examples": {
+                        "simple_test": {
+                            "description": "A simple test with description",
+                            "steps": [
+                                {
+                                    "type": "input",
+                                    "args": [],
+                                    "content": "echo 'Hello World'"
+                                },
+                                {
+                                    "type": "output", 
+                                    "args": [],
+                                    "content": "Hello World"
+                                }
+                            ]
+                        },
+                        "with_checker": {
+                            "steps": [
+                                {
+                                    "type": "output",
+                                    "args": ["custom-checker"],
+                                    "content": "Expected output"
+                                }
+                            ]
+                        },
+                        "with_block": {
+                            "steps": [
+                                {
+                                    "type": "block",
+                                    "args": ["setup/database"],
+                                    "content": null,
+                                    "steps": [
+                                        {
+                                            "type": "input",
+                                            "args": [],
+                                            "content": "setup database"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                }
+            }),
             _ => json!({
                 "error": "Unknown help topic",
-                "available_topics": ["overview", "rec_format", "patterns", "workflow", "examples", "troubleshooting"],
+                "available_topics": ["overview", "test_format", "patterns", "blocks", "workflow", "examples", "troubleshooting", "structured_tests"],
                 "usage": "Use clt_help tool with one of the available topics to get detailed information"
             })
         }
     }
 
     fn execute_test_match(&self, expected: &str, actual: &str) -> Result<TestMatchOutput> {
-        // Use the existing PatternMatcher from cmp crate with patterns file
-        // Try to find patterns file in current directory or parent directory
-        let patterns_path = if std::path::Path::new(".clt/patterns").exists() {
-            Some(".clt/patterns".to_string())
-        } else if std::path::Path::new("../.clt/patterns").exists() {
-            Some("../.clt/patterns".to_string())
+        // Use the same pattern loading logic as get_patterns tool
+        let patterns = structured_test::get_patterns(self.clt_binary_path.as_deref())?;
+        
+        // Create a temporary patterns file for the cmp crate
+        let temp_patterns_file = if !patterns.is_empty() {
+            let temp_file = std::env::temp_dir().join("clt_patterns_temp");
+            let mut pattern_lines = Vec::new();
+            for (name, regex) in &patterns {
+                pattern_lines.push(format!("{} {}", name, regex));
+            }
+            fs::write(&temp_file, pattern_lines.join("\n"))?;
+            Some(temp_file.to_string_lossy().to_string())
         } else {
             None
         };
         
-        let pattern_matcher = cmp::PatternMatcher::new(patterns_path)
+        let pattern_matcher = cmp::PatternMatcher::new(temp_patterns_file)
             .map_err(|e| anyhow::anyhow!("Failed to create pattern matcher: {}", e))?;
 
         let has_diff = pattern_matcher.has_diff(expected.to_string(), actual.to_string());
@@ -913,7 +1461,6 @@ async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     
     if args.len() < 3 {
-        eprintln!("Usage: clt-mcp --docker-image <image> [--bin <clt-binary-path>]");
         std::process::exit(1);
     }
     
@@ -925,7 +1472,6 @@ async fn main() -> Result<()> {
         match args[i].as_str() {
             "--docker-image" => {
                 if i + 1 >= args.len() {
-                    eprintln!("Error: --docker-image requires a value");
                     std::process::exit(1);
                 }
                 docker_image = Some(args[i + 1].clone());
@@ -933,15 +1479,12 @@ async fn main() -> Result<()> {
             }
             "--bin" => {
                 if i + 1 >= args.len() {
-                    eprintln!("Error: --bin requires a value");
                     std::process::exit(1);
                 }
                 clt_binary_path = Some(args[i + 1].clone());
                 i += 2;
             }
             _ => {
-                eprintln!("Error: Unknown argument: {}", args[i]);
-                eprintln!("Usage: clt-mcp --docker-image <image> [--bin <clt-binary-path>]");
                 std::process::exit(1);
             }
         }
@@ -1035,7 +1578,7 @@ mod tests {
         
         let result = response.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 4);
+        assert_eq!(tools.len(), 7);
         
         let tool_names: Vec<&str> = tools.iter()
             .map(|t| t["name"].as_str().unwrap())
@@ -1044,6 +1587,9 @@ mod tests {
         assert!(tool_names.contains(&"refine_output"));
         assert!(tool_names.contains(&"test_match"));
         assert!(tool_names.contains(&"clt_help"));
+        assert!(tool_names.contains(&"get_patterns"));
+        assert!(tool_names.contains(&"read_test"));
+        assert!(tool_names.contains(&"write_test"));
     }
 
     #[tokio::test]
@@ -1129,7 +1675,7 @@ mod tests {
         ).unwrap();
 
         let args = json!({
-            "test_path": "/nonexistent/test.rec"
+            "test_file": "/nonexistent/test.rec"
         });
 
         let result = server.execute_tool("run_test", Some(args)).await.unwrap();

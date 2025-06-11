@@ -111,7 +111,7 @@ pub struct ToolContent {
 
 #[derive(Debug, Deserialize)]
 pub struct RunTestInput {
-    pub test_path: String,
+    pub test_file: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -169,6 +169,53 @@ pub struct Mismatch {
     pub expected_char: String,
     pub actual_char: String,
     pub context: String,
+}
+
+/// New structured test format input/output structures
+
+#[derive(Debug, Deserialize)]
+pub struct ReadTestInput {
+    pub test_file: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReadTestOutput {
+    pub steps: Vec<TestStep>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WriteTestInput {
+    pub test_file: String,
+    pub test_structure: TestStructure,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WriteTestOutput {
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GetPatternsOutput {
+    pub patterns: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TestStructure {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub steps: Vec<TestStep>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TestStep {
+    #[serde(rename = "type")]
+    pub step_type: String,
+    pub args: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steps: Option<Vec<TestStep>>, // For nested blocks
 }
 
 impl McpResponse {

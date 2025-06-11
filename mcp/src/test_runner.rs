@@ -60,9 +60,9 @@ impl TestRunner {
             .context("Failed to execute CLT test command")?;
 
         let exit_success = output.status.success();
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
+        
+        // Ignore stderr output as it may contain platform warnings
+        // We only care about the exit code for success/failure determination
         if exit_success {
             Ok(RunTestOutput {
                 success: true,
@@ -71,9 +71,10 @@ impl TestRunner {
             })
         } else {
             // Parse failures from .rep file comparison
-            let errors = self.parse_test_failures(test_path, &stdout, &stderr)?;
+            // Read the .rep file to get the actual test results
+            let errors = self.parse_test_failures_from_rep_file(test_path)?;
             let summary = if errors.is_empty() {
-                format!("Test failed: {}", stderr.trim())
+                "Test failed".to_string()
             } else {
                 format!("Test failed with {} error(s)", errors.len())
             };
@@ -86,7 +87,7 @@ impl TestRunner {
         }
     }
 
-    fn parse_test_failures(&self, test_path: &Path, _stdout: &str, stderr: &str) -> Result<Vec<TestError>> {
+    fn parse_test_failures_from_rep_file(&self, test_path: &Path) -> Result<Vec<TestError>> {
         let mut errors = Vec::new();
 
         // Try to find and parse .rep file
@@ -94,16 +95,6 @@ impl TestRunner {
         if rep_path.exists() {
             // Parse .rep file and compare with compiled .rec file
             errors.extend(self.parse_rep_file_errors(&rep_path, test_path)?);
-        }
-
-        // If no specific errors found, create a general error from stderr
-        if errors.is_empty() && !stderr.trim().is_empty() {
-            errors.push(TestError {
-                command: "test_execution".to_string(),
-                expected: "Test should pass".to_string(),
-                actual: stderr.trim().to_string(),
-                line_number: 0,
-            });
         }
 
         Ok(errors)
