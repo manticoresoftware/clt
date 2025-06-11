@@ -159,16 +159,8 @@ pub struct TestMatchInput {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TestMatchOutput {
     pub matches: bool,
-    pub mismatches: Vec<Mismatch>,
+    pub diff_lines: Vec<String>,
     pub summary: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Mismatch {
-    pub position: usize,
-    pub expected_char: String,
-    pub actual_char: String,
-    pub context: String,
 }
 
 /// New structured test format input/output structures

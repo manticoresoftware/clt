@@ -173,7 +173,7 @@ impl McpServer {
             },
             McpTool {
                 name: "test_match".to_string(),
-                description: "Compare expected vs actual output strings using pattern matching. This tool understands pattern syntax and performs intelligent matching that can handle dynamic content. It returns detailed mismatch information showing exactly where and why strings don't match, including character positions and context. Use this to validate if test outputs match expectations, especially when they contain patterns for dynamic data.".to_string(),
+                description: "Compare expected vs actual output strings using pattern matching. This tool understands pattern syntax and performs intelligent matching that can handle dynamic content. It returns a clear line-by-line diff showing exactly what differs between expected and actual output, similar to git diff format. Use this to validate if test outputs match expectations, especially when they contain patterns for dynamic data.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -254,7 +254,7 @@ impl McpServer {
                                     "items": {
                                         "type": "object",
                                         "properties": {
-                                            "statement": {
+                                            "type": {
                                                 "type": "string",
                                                 "enum": ["input", "output", "comment", "block"],
                                                 "description": "Type of step: input (command to execute), output (expected result), comment (documentation), block (reusable test sequence)"
@@ -273,7 +273,7 @@ impl McpServer {
                                                 "description": "Nested steps for block types (resolved block content)"
                                             }
                                         },
-                                        "required": ["statement", "args"]
+                                        "required": ["type", "args"]
                                     }
                                 }
                             },
@@ -391,9 +391,9 @@ impl McpServer {
                     "result": output,
                     "help": {
                         "matches_meaning": "true = strings match (considering patterns), false = mismatch found",
-                        "mismatches_details": "Character-by-character differences with position and context",
+                        "diff_lines_details": "Git-style diff showing line-by-line differences between expected and actual output",
                         "pattern_support": "Understands %{PATTERN} and #!/regex/!# syntax for dynamic content",
-                        "next_steps": "If match fails, check mismatches array for specific differences, then use 'refine_output' to suggest patterns"
+                        "next_steps": "If match fails, check diff_lines array for specific differences, then use 'refine_output' to suggest patterns"
                     }
                 });
                 
@@ -523,12 +523,12 @@ impl McpServer {
                             "description": "Simple test with one command",
                             "steps": [
                                 {
-                                    "statement": "input",
+                                    "type": "input",
                                     "args": [],
                                     "content": "echo 'Hello World'"
                                 },
                                 {
-                                    "statement": "output",
+                                    "type": "output",
                                     "args": [],
                                     "content": "Hello World"
                                 }
@@ -539,12 +539,12 @@ impl McpServer {
                         "input": {
                             "purpose": "Command to execute in the test environment",
                             "structure": {
-                                "statement": "input",
+                                "type": "input",
                                 "args": "Always empty array []",
                                 "content": "Command string to execute"
                             },
                             "example": {
-                                "statement": "input",
+                                "type": "input",
                                 "args": [],
                                 "content": "ls -la /tmp"
                             }
@@ -552,23 +552,23 @@ impl McpServer {
                         "output": {
                             "purpose": "Expected result from the previous command",
                             "structure": {
-                                "statement": "output",
+                                "type": "output",
                                 "args": "Empty [] or [\"checker-name\"] for custom validation",
                                 "content": "Expected output string (can contain patterns)"
                             },
                             "examples": {
                                 "basic": {
-                                    "statement": "output",
+                                    "type": "output",
                                     "args": [],
                                     "content": "total 0"
                                 },
                                 "with_patterns": {
-                                    "statement": "output",
+                                    "type": "output",
                                     "args": [],
                                     "content": "Process started with PID %{NUMBER}"
                                 },
                                 "with_custom_checker": {
-                                    "statement": "output",
+                                    "type": "output",
                                     "args": ["json-validator"],
                                     "content": "{\"status\": \"success\"}"
                                 }
@@ -577,12 +577,12 @@ impl McpServer {
                         "comment": {
                             "purpose": "Documentation and notes within the test (ignored during execution)",
                             "structure": {
-                                "statement": "comment",
+                                "type": "comment",
                                 "args": "Always empty array []",
                                 "content": "Comment text"
                             },
                             "example": {
-                                "statement": "comment",
+                                "type": "comment",
                                 "args": [],
                                 "content": "This test validates the file listing functionality"
                             }
@@ -590,23 +590,23 @@ impl McpServer {
                         "block": {
                             "purpose": "Reference to reusable test sequence from another file",
                             "structure": {
-                                "statement": "block",
+                                "type": "block",
                                 "args": "[\"relative/path/to/block\"]",
                                 "content": "Always null",
                                 "steps": "Array of resolved steps from the block file"
                             },
                             "example": {
-                                "statement": "block",
+                                "type": "block",
                                 "args": ["auth/login"],
                                 "content": null,
                                 "steps": [
                                     {
-                                        "statement": "input",
+                                        "type": "input",
                                         "args": [],
                                         "content": "login admin"
                                     },
                                     {
-                                        "statement": "output",
+                                        "type": "output",
                                         "args": [],
                                         "content": "Login successful"
                                     }
@@ -621,17 +621,17 @@ impl McpServer {
                                 "description": "Test the echo command functionality",
                                 "steps": [
                                     {
-                                        "statement": "comment",
+                                        "type": "comment",
                                         "args": [],
                                         "content": "Test basic echo command"
                                     },
                                     {
-                                        "statement": "input",
+                                        "type": "input",
                                         "args": [],
                                         "content": "echo 'Hello CLT'"
                                     },
                                     {
-                                        "statement": "output",
+                                        "type": "output",
                                         "args": [],
                                         "content": "Hello CLT"
                                     }
@@ -644,22 +644,22 @@ impl McpServer {
                                 "description": "Application startup test with dynamic content",
                                 "steps": [
                                     {
-                                        "statement": "input",
+                                        "type": "input",
                                         "args": [],
                                         "content": "./myapp --version"
                                     },
                                     {
-                                        "statement": "output",
+                                        "type": "output",
                                         "args": [],
                                         "content": "MyApp version %{SEMVER}"
                                     },
                                     {
-                                        "statement": "input",
+                                        "type": "input",
                                         "args": [],
                                         "content": "./myapp start"
                                     },
                                     {
-                                        "statement": "output",
+                                        "type": "output",
                                         "args": [],
                                         "content": "Server started on %{IPADDR}:%{NUMBER}"
                                     }
@@ -672,34 +672,34 @@ impl McpServer {
                                 "description": "Database integration test",
                                 "steps": [
                                     {
-                                        "statement": "comment",
+                                        "type": "comment",
                                         "args": [],
                                         "content": "Setup database connection"
                                     },
                                     {
-                                        "statement": "block",
+                                        "type": "block",
                                         "args": ["database/connect"],
                                         "content": null,
                                         "steps": [
                                             {
-                                                "statement": "input",
+                                                "type": "input",
                                                 "args": [],
                                                 "content": "mysql -u testuser -p"
                                             },
                                             {
-                                                "statement": "output",
+                                                "type": "output",
                                                 "args": [],
                                                 "content": "Enter password:"
                                             }
                                         ]
                                     },
                                     {
-                                        "statement": "input",
+                                        "type": "input",
                                         "args": [],
                                         "content": "SELECT COUNT(*) FROM users;"
                                     },
                                     {
-                                        "statement": "output",
+                                        "type": "output",
                                         "args": [],
                                         "content": "%{NUMBER}"
                                     }
@@ -712,12 +712,12 @@ impl McpServer {
                                 "description": "API response validation test",
                                 "steps": [
                                     {
-                                        "statement": "input",
+                                        "type": "input",
                                         "args": [],
                                         "content": "curl -s http://api.example.com/status"
                                     },
                                     {
-                                        "statement": "output",
+                                        "type": "output",
                                         "args": ["json-validator"],
                                         "content": "{\"status\": \"healthy\", \"timestamp\": \"%{NUMBER}\"}"
                                     }
@@ -741,22 +741,22 @@ impl McpServer {
                                     "description": "Test file operations",
                                     "steps": [
                                         {
-                                            "statement": "input",
+                                            "type": "input",
                                             "args": [],
                                             "content": "touch /tmp/testfile.txt"
                                         },
                                         {
-                                            "statement": "output",
+                                            "type": "output",
                                             "args": [],
                                             "content": ""
                                         },
                                         {
-                                            "statement": "input",
+                                            "type": "input",
                                             "args": [],
                                             "content": "ls -la /tmp/testfile.txt"
                                         },
                                         {
-                                            "statement": "output",
+                                            "type": "output",
                                             "args": [],
                                             "content": "-rw-r--r-- 1 %{USERNAME} %{USERNAME} 0 %{DATE} %{TIME} /tmp/testfile.txt"
                                         }
@@ -1387,6 +1387,107 @@ impl McpServer {
         }
     }
 
+    /// Helper function to create a line-based diff similar to git diff format
+    /// This makes the output much more AI-friendly than character-level mismatches
+    fn create_line_diff(&self, expected: &str, actual: &str, pattern_matcher: &cmp::PatternMatcher) -> Vec<String> {
+        let expected_lines: Vec<&str> = expected.lines().collect();
+        let actual_lines: Vec<&str> = actual.lines().collect();
+        let mut diff_lines = Vec::new();
+        
+        // Check if we have any differences at all
+        let has_any_diff = expected_lines.len() != actual_lines.len() || 
+            expected_lines.iter().zip(actual_lines.iter())
+                .any(|(exp, act)| pattern_matcher.has_diff(exp.to_string(), act.to_string()));
+        
+        if !has_any_diff {
+            return diff_lines; // No differences
+        }
+        
+        // Add diff header
+        diff_lines.push("--- expected".to_string());
+        diff_lines.push("+++ actual".to_string());
+        
+        let max_lines = expected_lines.len().max(actual_lines.len());
+        
+        for i in 0..max_lines {
+            match (expected_lines.get(i), actual_lines.get(i)) {
+                (Some(exp_line), Some(act_line)) => {
+                    // Both lines exist - check if they differ
+                    if pattern_matcher.has_diff(exp_line.to_string(), act_line.to_string()) {
+                        diff_lines.push(format!("-{}", exp_line));
+                        diff_lines.push(format!("+{}", act_line));
+                    } else {
+                        // Lines match (considering patterns) - show as context
+                        diff_lines.push(format!(" {}", exp_line));
+                    }
+                },
+                (Some(exp_line), None) => {
+                    // Line only in expected (deletion)
+                    diff_lines.push(format!("-{}", exp_line));
+                },
+                (None, Some(act_line)) => {
+                    // Line only in actual (addition)
+                    diff_lines.push(format!("+{}", act_line));
+                },
+                (None, None) => break, // Should not happen given max_lines logic
+            }
+        }
+        
+        diff_lines
+    }
+
+    /// Generate a clear, human-readable summary of what differs
+    fn create_diff_summary(&self, expected: &str, actual: &str, pattern_matcher: &cmp::PatternMatcher) -> String {
+        let expected_lines: Vec<&str> = expected.lines().collect();
+        let actual_lines: Vec<&str> = actual.lines().collect();
+        
+        let mut mismatched_lines = 0;
+        let mut extra_lines_in_actual = 0;
+        let mut missing_lines_in_actual = 0;
+        
+        let max_lines = expected_lines.len().max(actual_lines.len());
+        
+        for i in 0..max_lines {
+            match (expected_lines.get(i), actual_lines.get(i)) {
+                (Some(exp_line), Some(act_line)) => {
+                    if pattern_matcher.has_diff(exp_line.to_string(), act_line.to_string()) {
+                        mismatched_lines += 1;
+                    }
+                },
+                (Some(_), None) => missing_lines_in_actual += 1,
+                (None, Some(_)) => extra_lines_in_actual += 1,
+                (None, None) => break,
+            }
+        }
+        
+        let mut summary_parts = Vec::new();
+        
+        if mismatched_lines > 0 {
+            summary_parts.push(format!("{} line(s) with content differences", mismatched_lines));
+        }
+        if missing_lines_in_actual > 0 {
+            summary_parts.push(format!("{} line(s) missing in actual output", missing_lines_in_actual));
+        }
+        if extra_lines_in_actual > 0 {
+            summary_parts.push(format!("{} extra line(s) in actual output", extra_lines_in_actual));
+        }
+        
+        if summary_parts.is_empty() {
+            "Output matches expected pattern".to_string()
+        } else {
+            format!("Output differences found: {}", summary_parts.join(", "))
+        }
+    }
+
+    /// Execute test_match tool with improved diff-based output
+    /// 
+    /// This function compares expected vs actual strings using CLT's pattern matching
+    /// and returns a clear, AI-friendly diff format instead of complex character-level mismatches.
+    /// 
+    /// Returns:
+    /// - matches: boolean indicating if strings match (considering patterns)
+    /// - diff_lines: git-style diff showing line-by-line differences
+    /// - summary: human-readable explanation of differences
     fn execute_test_match(&self, expected: &str, actual: &str) -> Result<TestMatchOutput> {
         // Use the same pattern loading logic as get_patterns tool
         let patterns = structured_test::get_patterns(self.clt_binary_path.as_deref())?;
@@ -1409,48 +1510,17 @@ impl McpServer {
 
         let has_diff = pattern_matcher.has_diff(expected.to_string(), actual.to_string());
         
-        let mut mismatches = Vec::new();
-
-        let summary = if has_diff {
-            // Find specific mismatches by comparing character by character
-            let expected_chars: Vec<char> = expected.chars().collect();
-            let actual_chars: Vec<char> = actual.chars().collect();
-            
-            let max_len = expected_chars.len().max(actual_chars.len());
-            for i in 0..max_len {
-                let expected_char = expected_chars.get(i).copied().unwrap_or('\0');
-                let actual_char = actual_chars.get(i).copied().unwrap_or('\0');
-                
-                if expected_char != actual_char {
-                    // Get context around the mismatch
-                    let context_start = i.saturating_sub(10);
-                    let context_end = (i + 10).min(max_len);
-                    let context = expected_chars[context_start..context_end.min(expected_chars.len())]
-                        .iter()
-                        .collect::<String>();
-                    
-                    mismatches.push(Mismatch {
-                        position: i,
-                        expected_char: if expected_char == '\0' { "EOF".to_string() } else { expected_char.to_string() },
-                        actual_char: if actual_char == '\0' { "EOF".to_string() } else { actual_char.to_string() },
-                        context,
-                    });
-                    
-                    // Only report first few mismatches to avoid overwhelming output
-                    if mismatches.len() >= 5 {
-                        break;
-                    }
-                }
-            }
-            
-            format!("Output does not match. Found {} mismatch(es)", mismatches.len())
+        let (diff_lines, summary) = if has_diff {
+            let diff = self.create_line_diff(expected, actual, &pattern_matcher);
+            let summary = self.create_diff_summary(expected, actual, &pattern_matcher);
+            (diff, summary)
         } else {
-            "Output matches expected pattern".to_string()
+            (Vec::new(), "Output matches expected pattern".to_string())
         };
 
         Ok(TestMatchOutput {
             matches: !has_diff,
-            mismatches,
+            diff_lines,
             summary,
         })
     }
@@ -1612,7 +1682,7 @@ mod tests {
         let test_result = &parsed["result"];
         
         assert!(test_result["matches"].as_bool().unwrap());
-        assert!(test_result["mismatches"].as_array().unwrap().is_empty());
+        assert!(test_result["diff_lines"].as_array().unwrap().is_empty());
         assert_eq!(test_result["summary"], "Output matches expected pattern");
     }
 
@@ -1636,8 +1706,8 @@ mod tests {
         let test_result = &parsed["result"];
         
         assert!(!test_result["matches"].as_bool().unwrap());
-        assert!(!test_result["mismatches"].as_array().unwrap().is_empty());
-        assert!(test_result["summary"].as_str().unwrap().contains("mismatch"));
+        assert!(!test_result["diff_lines"].as_array().unwrap().is_empty());
+        assert!(test_result["summary"].as_str().unwrap().contains("differences"));
     }
 
     #[tokio::test]
