@@ -37,12 +37,42 @@ Start the MCP server with a Docker image:
 ./target/release/clt-mcp --docker-image ghcr.io/manticoresoftware/manticore:test-kit-latest --bin /path/to/clt
 ```
 
+The `--docker-image` parameter sets the **default** Docker image that will be used for all test executions. However, this can be overridden on a per-test basis by specifying the `docker_image` parameter when calling the `run_test` tool.
+
 ### Command Line Arguments
 
 - `--docker-image <image>` (required) - Docker image to use for test execution
 - `--bin <path>` (optional) - Path to CLT binary. If not provided, CLT will be auto-discovered in PATH
 
 The server reads JSON-RPC 2.0 messages from stdin and writes responses to stdout.
+
+### Docker Image Configuration
+
+The MCP server supports flexible Docker image configuration:
+
+1. **Default Image**: Set with `--docker-image` when starting the server
+2. **Per-Test Override**: Specify `docker_image` parameter in individual `run_test` calls
+
+**Examples:**
+
+```json
+// Use default image (set at server startup)
+{
+  "name": "run_test",
+  "arguments": {
+    "test_file": "/path/to/test.rec"
+  }
+}
+
+// Override with specific image for this test
+{
+  "name": "run_test", 
+  "arguments": {
+    "test_file": "/path/to/test.rec",
+    "docker_image": "ubuntu:22.04"
+  }
+}
+```
 
 ## MCP Protocol Implementation
 
@@ -91,16 +121,20 @@ The server reads JSON-RPC 2.0 messages from stdin and writes responses to stdout
     "tools": [
       {
         "name": "run_test",
-        "description": "Execute a CLT test file and return results with error details",
+        "description": "Execute a CLT test file and return results with error details. The docker_image parameter is optional and defaults to the image configured when starting the MCP server.",
         "input_schema": {
           "type": "object",
           "properties": {
-            "test_path": {
+            "test_file": {
               "type": "string",
-              "description": "Absolute path to the .rec test file"
+              "description": "Path to the .rec test file"
+            },
+            "docker_image": {
+              "type": "string",
+              "description": "Docker image to use for test execution (optional, defaults to server startup image)"
             }
           },
-          "required": ["test_path"]
+          "required": ["test_file"]
         }
       },
       {
@@ -159,7 +193,25 @@ Executes a CLT test file and returns detailed results with comprehensive context
   "params": {
     "name": "run_test",
     "arguments": {
-      "test_path": "/absolute/path/to/test.rec"
+      "test_file": "/absolute/path/to/test.rec",
+      "docker_image": "ubuntu:20.04"
+    }
+  }
+}
+```
+
+**Note:** The `docker_image` parameter is optional. If not provided, it defaults to the image specified when starting the MCP server with `--docker-image`.
+
+**Input (using default image):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "run_test",
+    "arguments": {
+      "test_file": "/absolute/path/to/test.rec"
     }
   }
 }
@@ -171,6 +223,7 @@ Executes a CLT test file and returns detailed results with comprehensive context
   "tool": "run_test",
   "description": "CLT test execution results",
   "test_file": "/path/to/test.rec",
+  "docker_image": "ubuntu:20.04",
   "result": {
     "success": true,
     "errors": [],
@@ -179,7 +232,8 @@ Executes a CLT test file and returns detailed results with comprehensive context
   "help": {
     "success_meaning": "true = test passed, all commands executed and outputs matched expectations",
     "errors_meaning": "Array of specific mismatches between expected and actual outputs",
-    "next_steps": "If test failed, use 'refine_output' tool to suggest patterns for dynamic content"
+    "next_steps": "If test failed, use 'refine_output' tool to suggest patterns for dynamic content",
+    "docker_image_info": "Test executed in Docker image: ubuntu:20.04 (default: ubuntu:18.04)"
   }
 }
 ```

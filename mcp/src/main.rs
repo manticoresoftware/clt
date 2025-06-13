@@ -139,13 +139,18 @@ impl McpServer {
         let tools = vec![
             McpTool {
                 name: "run_test".to_string(),
-                description: "Execute a CLT test file in a Docker container and return the results. Compares actual output with expected output and reports success/failure. The Docker image is configured when the MCP server is started.".to_string(),
+                description: format!("Execute a CLT test file in a Docker container and return the results. Compares actual output with expected output and reports success/failure. The docker_image parameter is optional and defaults to '{}' (configured when the MCP server was started).", self.docker_image),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
                         "test_file": {
                             "type": "string",
                             "description": "Path to the test file to execute"
+                        },
+                        "docker_image": {
+                            "type": "string",
+                            "description": format!("Docker image to use for test execution. Optional - defaults to '{}' if not specified.", self.docker_image),
+                            "default": self.docker_image
                         }
                     },
                     "required": ["test_file"],
@@ -330,18 +335,21 @@ impl McpServer {
                 let input: RunTestInput = serde_json::from_value(
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
-                let output = self.test_runner.run_test(&input.test_file)?;
+                let output = self.test_runner.run_test(&input.test_file, input.docker_image.as_deref())?;
                 
                 // Add helpful context to the output
+                let docker_image_used = input.docker_image.as_deref().unwrap_or(&self.docker_image);
                 let enhanced_output = json!({
                     "tool": "run_test",
                     "description": "CLT test execution results",
                     "test_file": input.test_file,
+                    "docker_image": docker_image_used,
                     "result": output,
                     "help": {
                         "success_meaning": "true = test passed, all commands executed and outputs matched expectations",
-                        "errors_meaning": "Array of specific mismatches between expected and actual outputs",
-                        "next_steps": "If test failed, use 'refine_output' tool to suggest patterns for dynamic content"
+                        "errors_meaning": "Array of specific mismatches between expected and actual outputs. step refers to the position in the test steps array (0-based)",
+                        "next_steps": "If test failed, use 'refine_output' tool to suggest patterns for dynamic content",
+                        "docker_image_info": format!("Test executed in Docker image: {} (default: {})", docker_image_used, self.docker_image)
                     }
                 });
                 
@@ -421,8 +429,7 @@ impl McpServer {
                     "patterns": patterns,
                     "help": {
                         "usage": "Use these patterns in test outputs like %{PATTERN_NAME}",
-                        "example": "Replace '1.2.3' with '%{SEMVER}' to match any semantic version",
-                        "custom_patterns": "Add custom patterns to .clt/patterns file with format: PATTERN_NAME REGEX"
+                        "example": "Replace '1.2.3' with '%{SEMVER}' to match any semantic version"
                     }
                 });
                 
@@ -462,13 +469,10 @@ impl McpServer {
                     "description": "CLT test file written successfully",
                     "test_file": input.test_file,
                     "result": {
-                        "success": true,
-                        "message": format!("Test file written to {}", input.test_file)
+                        "success": true
                     },
                     "help": {
-                        "next_steps": "Use 'run_test' to execute the written test file",
-                        "file_format": "File saved in CLT .rec format with proper en dash syntax",
-                        "blocks": "Block references preserved as references (not inlined content)"
+                        "next_steps": "Use 'run_test' to execute the written test file"
                     }
                 });
                 
@@ -764,7 +768,7 @@ impl McpServer {
                                 }
                             },
                             "step2_write": "Use write_test with test_file='/tmp/mytest.rec' and test_structure=<json_above>",
-                            "step3_run": "Use run_test with test_file='/tmp/mytest.rec' and image='ubuntu:20.04'",
+                            "step3_run": "Use run_test with test_file='/tmp/mytest.rec' and docker_image='ubuntu:20.04' (or omit docker_image to use server default)",
                             "step4_modify": "Use read_test with test_file='/tmp/mytest.rec' to load for modifications"
                         }
                     },
@@ -1833,5 +1837,53 @@ mod tests {
         assert!(error_response.result.is_none());
         assert!(error_response.error.is_some());
         assert_eq!(error_response.error.unwrap().code, -32602);
+    }
+
+    #[tokio::test]
+    async fn test_run_test_with_custom_docker_image() {
+        let temp_file = create_fake_clt_binary();
+        let temp_path = temp_file.path().to_string_lossy().to_string();
+        
+        let mut server = McpServer::new(
+            "default-image".to_string(),
+            Some(temp_path)
+        ).unwrap();
+
+        // Test with custom docker_image parameter
+        let args = json!({
+            "test_file": "/nonexistent/test.rec",
+            "docker_image": "custom-image"
+        });
+
+        let result = server.execute_tool("run_test", Some(args)).await.unwrap();
+        let parsed: Value = serde_json::from_str(&result).unwrap();
+        
+        // Verify the custom docker image is used
+        assert_eq!(parsed["docker_image"], "custom-image");
+        assert!(parsed["help"]["docker_image_info"].as_str().unwrap().contains("custom-image"));
+        assert!(parsed["help"]["docker_image_info"].as_str().unwrap().contains("default: default-image"));
+    }
+
+    #[tokio::test]
+    async fn test_run_test_with_default_docker_image() {
+        let temp_file = create_fake_clt_binary();
+        let temp_path = temp_file.path().to_string_lossy().to_string();
+        
+        let mut server = McpServer::new(
+            "default-image".to_string(),
+            Some(temp_path)
+        ).unwrap();
+
+        // Test without docker_image parameter (should use default)
+        let args = json!({
+            "test_file": "/nonexistent/test.rec"
+        });
+
+        let result = server.execute_tool("run_test", Some(args)).await.unwrap();
+        let parsed: Value = serde_json::from_str(&result).unwrap();
+        
+        // Verify the default docker image is used
+        assert_eq!(parsed["docker_image"], "default-image");
+        assert!(parsed["help"]["docker_image_info"].as_str().unwrap().contains("default-image"));
     }
 }

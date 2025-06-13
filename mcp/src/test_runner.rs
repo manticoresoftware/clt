@@ -37,7 +37,7 @@ impl TestRunner {
         })
     }
 
-    pub fn run_test(&self, test_path: &str) -> Result<RunTestOutput> {
+    pub fn run_test(&self, test_path: &str, docker_image: Option<&str>) -> Result<RunTestOutput> {
         let test_path = Path::new(test_path);
         
         if !test_path.exists() {
@@ -47,15 +47,18 @@ impl TestRunner {
                     command: "file_check".to_string(),
                     expected: "Test file should exist".to_string(),
                     actual: format!("File not found: {}", test_path.display()),
-                    line_number: 0,
+                    step: 0,
                 }],
                 summary: "Test file not found".to_string(),
             });
         }
 
+        // Use provided docker_image or fall back to the default from server startup
+        let image_to_use = docker_image.unwrap_or(&self.docker_image);
+
         // Execute CLT test command
         let output = Command::new(&self.clt_path)
-            .args(["test", "-t", &test_path.to_string_lossy(), "-d", &self.docker_image])
+            .args(["test", "-t", &test_path.to_string_lossy(), "-d", image_to_use])
             .output()
             .context("Failed to execute CLT test command")?;
 
@@ -96,7 +99,7 @@ impl TestRunner {
                 command: "test_execution".to_string(),
                 expected: "Test should generate .rep file".to_string(),
                 actual: "No .rep file found after test execution".to_string(),
-                line_number: 0,
+                step: 0,
             });
             return Ok(errors);
         }
@@ -155,38 +158,40 @@ impl TestRunner {
 
     fn extract_all_outputs_from_structured(&self, test_structure: &TestStructure) -> Vec<OutputExpectation> {
         let mut outputs = Vec::new();
-        let mut command_index = 0;
+        let mut global_step_index = 0;
         
-        self.extract_outputs_from_steps(&test_structure.steps, &mut outputs, &mut command_index);
+        self.extract_outputs_from_steps(&test_structure.steps, &mut outputs, &mut global_step_index);
         outputs
     }
 
-    fn extract_outputs_from_steps(&self, steps: &[crate::mcp_protocol::TestStep], outputs: &mut Vec<OutputExpectation>, command_index: &mut usize) {
+    fn extract_outputs_from_steps(&self, steps: &[crate::mcp_protocol::TestStep], outputs: &mut Vec<OutputExpectation>, global_step_index: &mut usize) {
         let mut current_input: Option<(String, usize)> = None;
         
         for step in steps {
+            let current_step_index = *global_step_index;
+            *global_step_index += 1;
+            
             match step.step_type.as_str() {
                 "input" => {
                     if let Some(content) = &step.content {
-                        current_input = Some((content.clone(), *command_index));
-                        *command_index += 1;
+                        current_input = Some((content.clone(), current_step_index));
                     }
                 }
                 "output" => {
                     if let Some(content) = &step.content {
-                        if let Some((input_command, cmd_idx)) = &current_input {
+                        if let Some((input_command, input_step_index)) = &current_input {
                             outputs.push(OutputExpectation {
                                 expected_content: content.clone(),
                                 command: input_command.clone(),
-                                command_index: *cmd_idx,
+                                command_index: *input_step_index, // Use the step index of the input command
                             });
                         }
                     }
                 }
                 "block" => {
-                    // Handle nested steps from blocks
+                    // Handle nested steps from blocks - they get their own step indices
                     if let Some(nested_steps) = &step.steps {
-                        self.extract_outputs_from_steps(nested_steps, outputs, command_index);
+                        self.extract_outputs_from_steps(nested_steps, outputs, global_step_index);
                     }
                 }
                 _ => {} // Skip comments and other types
@@ -245,7 +250,7 @@ impl TestRunner {
                     command: "pattern_matcher_init".to_string(),
                     expected: "Pattern matcher should initialize".to_string(),
                     actual: format!("Failed to create pattern matcher: {}", e),
-                    line_number: 0,
+                    step: 0,
                 });
                 return Ok(errors);
             }
@@ -259,7 +264,7 @@ impl TestRunner {
                     command: exp.command.clone(), // The input command that produced this output
                     expected: exp.expected_content.clone(),
                     actual: act.actual_content.clone(),
-                    line_number: exp.command_index + 1, // Use command index as line reference
+                    step: exp.command_index, // Use the actual step index from the structured test
                 });
             }
         }
@@ -270,7 +275,7 @@ impl TestRunner {
                 command: "output_count_mismatch".to_string(),
                 expected: format!("{} outputs expected", expected.len()),
                 actual: format!("{} outputs found", actual.len()),
-                line_number: 0,
+                step: 0,
             });
         }
 
@@ -282,7 +287,7 @@ impl TestRunner {
 struct OutputExpectation {
     expected_content: String,
     command: String,        // The input command that should produce this output
-    command_index: usize,   // Index of the command for error reporting
+    command_index: usize,   // Index of the step in the test structure (for error reporting)
 }
 
 #[derive(Debug, Clone)]
@@ -350,7 +355,7 @@ mod tests {
         }
 
         let runner = runner.unwrap();
-        let result = runner.run_test("/nonexistent/test.rec").unwrap();
+        let result = runner.run_test("/nonexistent/test.rec", None).unwrap();
 
         assert!(!result.success);
         assert_eq!(result.errors.len(), 1);
@@ -415,10 +420,10 @@ mod tests {
         assert_eq!(outputs.len(), 2);
         assert_eq!(outputs[0].expected_content, "hello");
         assert_eq!(outputs[0].command, "echo hello");
-        assert_eq!(outputs[0].command_index, 0);
+        assert_eq!(outputs[0].command_index, 0); // Input was at step 0
         assert_eq!(outputs[1].expected_content, "world");
         assert_eq!(outputs[1].command, "echo world");
-        assert_eq!(outputs[1].command_index, 1);
+        assert_eq!(outputs[1].command_index, 3); // Input was at step 3 (inside the block)
     }
 
     #[test]
