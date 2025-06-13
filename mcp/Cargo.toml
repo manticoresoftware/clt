@@ -1,0 +1,43 @@
+[package]
+name = "mcp"
+version = "0.1.0"
+edition = "2021"
+authors = ["Manticore Software Ltd <contact@manticoresearch.com>"]
+license = "Apache-2.0"
+
+[[bin]]
+name = "clt-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# Existing CLT crates
+parser = { path = "../parser" }
+cmp = { path = "../cmp" }
+
+# MCP protocol and JSON handling
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+
+# Diff detection for pattern refinement
+similar = "2.0"
+
+# Regex for pattern matching
+regex = "1.9"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Process execution
+which = "4.0"
+
+[dev-dependencies]
+tempfile = "3.0"
+tokio-test = "0.4"
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
+codegen-units = 1
