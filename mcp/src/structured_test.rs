@@ -191,6 +191,118 @@ pub fn write_test_file(test_file_path: &str, test_structure: &TestStructure) -> 
     Ok(())
 }
 
+/// Replace old test structure with new test structure in existing file
+pub fn replace_test_structure(test_file_path: &str, old_structure: &TestStructure, new_structure: &TestStructure) -> Result<()> {
+    // Read the current test file
+    let current_structure = read_test_file(test_file_path)?;
+    
+    // Find the old structure in the current structure
+    let replacement_result = find_and_replace_structure(&current_structure, old_structure, new_structure)?;
+    
+    // Write the modified structure back to the file
+    write_test_file(test_file_path, &replacement_result)?;
+    Ok(())
+}
+
+/// Append test structure to existing file
+pub fn append_test_structure(test_file_path: &str, append_structure: &TestStructure) -> Result<usize> {
+    // Read the current test file
+    let mut current_structure = read_test_file(test_file_path)?;
+    
+    // If append_structure has a description and current doesn't, use the append description
+    if current_structure.description.is_none() && append_structure.description.is_some() {
+        current_structure.description = append_structure.description.clone();
+    }
+    
+    // Count steps being added
+    let steps_added = append_structure.steps.len();
+    
+    // Append the new steps
+    current_structure.steps.extend(append_structure.steps.clone());
+    
+    // Write the modified structure back to the file
+    write_test_file(test_file_path, &current_structure)?;
+    
+    Ok(steps_added)
+}
+
+/// Find and replace a test structure within another test structure
+fn find_and_replace_structure(current: &TestStructure, old: &TestStructure, new: &TestStructure) -> Result<TestStructure> {
+    // Simple approach: find exact sequence match in steps
+    let old_steps = &old.steps;
+    let current_steps = &current.steps;
+    
+    if old_steps.is_empty() {
+        return Err(anyhow!("Old test structure cannot be empty"));
+    }
+    
+    // Look for the sequence of old steps in current steps
+    let mut found_at = None;
+    for i in 0..=current_steps.len().saturating_sub(old_steps.len()) {
+        if steps_match_sequence(&current_steps[i..i + old_steps.len()], old_steps) {
+            if found_at.is_some() {
+                return Err(anyhow!("Ambiguous replacement: old test structure matches multiple locations in the file"));
+            }
+            found_at = Some(i);
+        }
+    }
+    
+    let start_idx = found_at.ok_or_else(|| anyhow!("Old test structure not found in the current file"))?;
+    
+    // Create new structure with replacement
+    let mut new_steps = Vec::new();
+    
+    // Add steps before the match
+    new_steps.extend_from_slice(&current_steps[..start_idx]);
+    
+    // Add the new steps
+    new_steps.extend(new.steps.clone());
+    
+    // Add steps after the match
+    new_steps.extend_from_slice(&current_steps[start_idx + old_steps.len()..]);
+    
+    // Handle description replacement logic
+    let final_description = if new.description.is_some() {
+        // If new structure has description, use it
+        new.description.clone()
+    } else {
+        // Otherwise keep current description
+        current.description.clone()
+    };
+    
+    Ok(TestStructure {
+        description: final_description,
+        steps: new_steps,
+    })
+}
+
+/// Check if two step sequences match exactly
+fn steps_match_sequence(seq1: &[TestStep], seq2: &[TestStep]) -> bool {
+    if seq1.len() != seq2.len() {
+        return false;
+    }
+    
+    for (step1, step2) in seq1.iter().zip(seq2.iter()) {
+        if !steps_match(step1, step2) {
+            return false;
+        }
+    }
+    
+    true
+}
+
+/// Check if two test steps match exactly
+fn steps_match(step1: &TestStep, step2: &TestStep) -> bool {
+    step1.step_type == step2.step_type &&
+    step1.args == step2.args &&
+    step1.content == step2.content &&
+    match (&step1.steps, &step2.steps) {
+        (None, None) => true,
+        (Some(s1), Some(s2)) => steps_match_sequence(s1, s2),
+        _ => false,
+    }
+}
+
 /// Convert TestStructure to .rec file format
 fn convert_structure_to_rec(test_structure: &TestStructure) -> Result<String> {
     let mut lines = Vec::new();
@@ -408,5 +520,176 @@ hello
         assert!(content.starts_with("Test with nested directory"));
         assert!(content.contains("––– input –––"));
         assert!(content.contains("echo \"test\""));
+    }
+    #[test]
+    fn update_test_test_structure() {
+        let temp_dir = tempdir().unwrap();
+        let test_file_path = temp_dir.path().join("test.rec");
+        
+        // Create initial test file
+        let initial_structure = TestStructure {
+            description: Some("Initial test".to_string()),
+            steps: vec![
+                TestStep {
+                    step_type: "input".to_string(),
+                    args: vec![],
+                    content: Some("echo \"hello\"".to_string()),
+                    steps: None,
+                },
+                TestStep {
+                    step_type: "output".to_string(),
+                    args: vec![],
+                    content: Some("hello".to_string()),
+                    steps: None,
+                },
+                TestStep {
+                    step_type: "input".to_string(),
+                    args: vec![],
+                    content: Some("echo \"world\"".to_string()),
+                    steps: None,
+                },
+            ],
+        };
+        
+        write_test_file(test_file_path.to_str().unwrap(), &initial_structure).unwrap();
+        
+        // Define old structure to replace (middle step)
+        let old_structure = TestStructure {
+            description: None,
+            steps: vec![
+                TestStep {
+                    step_type: "output".to_string(),
+                    args: vec![],
+                    content: Some("hello".to_string()),
+                    steps: None,
+                },
+            ],
+        };
+        
+        // Define new structure
+        let new_structure = TestStructure {
+            description: None,
+            steps: vec![
+                TestStep {
+                    step_type: "output".to_string(),
+                    args: vec![],
+                    content: Some("HELLO WORLD".to_string()),
+                    steps: None,
+                },
+                TestStep {
+                    step_type: "comment".to_string(),
+                    args: vec![],
+                    content: Some("This was replaced".to_string()),
+                    steps: None,
+                },
+            ],
+        };
+        
+        // Perform replacement
+        replace_test_structure(test_file_path.to_str().unwrap(), &old_structure, &new_structure).unwrap();
+        
+        // Verify the result
+        let result = read_test_file(test_file_path.to_str().unwrap()).unwrap();
+        assert_eq!(result.steps.len(), 4); // Original 3 steps, but middle replaced with 2
+        assert_eq!(result.steps[0].content, Some("echo \"hello\"".to_string()));
+        assert_eq!(result.steps[1].content, Some("HELLO WORLD".to_string()));
+        assert_eq!(result.steps[2].content, Some("This was replaced".to_string()));
+        assert_eq!(result.steps[3].content, Some("echo \"world\"".to_string()));
+    }
+
+    #[test]
+    fn update_test_test_structure_not_found() {
+        let temp_dir = tempdir().unwrap();
+        let test_file_path = temp_dir.path().join("test.rec");
+        
+        // Create initial test file
+        let initial_structure = TestStructure {
+            description: None,
+            steps: vec![
+                TestStep {
+                    step_type: "input".to_string(),
+                    args: vec![],
+                    content: Some("echo \"hello\"".to_string()),
+                    steps: None,
+                },
+            ],
+        };
+        
+        write_test_file(test_file_path.to_str().unwrap(), &initial_structure).unwrap();
+        
+        // Define old structure that doesn't exist
+        let old_structure = TestStructure {
+            description: None,
+            steps: vec![
+                TestStep {
+                    step_type: "output".to_string(),
+                    args: vec![],
+                    content: Some("nonexistent".to_string()),
+                    steps: None,
+                },
+            ],
+        };
+        
+        let new_structure = TestStructure {
+            description: None,
+            steps: vec![],
+        };
+        
+        // Should return error
+        let result = replace_test_structure(test_file_path.to_str().unwrap(), &old_structure, &new_structure);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn append_test_test_structure() {
+        let temp_dir = tempdir().unwrap();
+        let test_file_path = temp_dir.path().join("test.rec");
+        
+        // Create initial test file
+        let initial_structure = TestStructure {
+            description: Some("Initial test".to_string()),
+            steps: vec![
+                TestStep {
+                    step_type: "input".to_string(),
+                    args: vec![],
+                    content: Some("echo \"hello\"".to_string()),
+                    steps: None,
+                },
+            ],
+        };
+        
+        write_test_file(test_file_path.to_str().unwrap(), &initial_structure).unwrap();
+        
+        // Define structure to append
+        let append_structure = TestStructure {
+            description: None,
+            steps: vec![
+                TestStep {
+                    step_type: "output".to_string(),
+                    args: vec![],
+                    content: Some("hello".to_string()),
+                    steps: None,
+                },
+                TestStep {
+                    step_type: "comment".to_string(),
+                    args: vec![],
+                    content: Some("This was appended".to_string()),
+                    steps: None,
+                },
+            ],
+        };
+        
+        // Perform append
+        let steps_added = append_test_structure(test_file_path.to_str().unwrap(), &append_structure).unwrap();
+        
+        // Verify the result
+        assert_eq!(steps_added, 2);
+        let result = read_test_file(test_file_path.to_str().unwrap()).unwrap();
+        assert_eq!(result.steps.len(), 3); // Original 1 + 2 appended
+        assert_eq!(result.description, Some("Initial test".to_string())); // Original description preserved
+        assert_eq!(result.steps[0].content, Some("echo \"hello\"".to_string()));
+        assert_eq!(result.steps[1].content, Some("hello".to_string()));
+        assert_eq!(result.steps[2].content, Some("This was appended".to_string()));
     }
 }

@@ -187,20 +187,45 @@ pub struct WriteTestInput {
 pub struct WriteTestOutput {
     pub success: bool,
 }
+#[derive(Debug, Deserialize)]
+pub struct TestReplaceInput {
+    pub test_file: String,
+    pub old_test_structure: TestStructure,
+    pub new_test_structure: TestStructure,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TestReplaceOutput {
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TestAppendInput {
+    pub test_file: String,
+    pub test_structure: TestStructure,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TestAppendOutput {
+    pub success: bool,
+    pub message: String,
+    pub steps_added: usize,
+}
 
 #[derive(Debug, Serialize)]
 pub struct GetPatternsOutput {
     pub patterns: std::collections::HashMap<String, String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TestStructure {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub steps: Vec<TestStep>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TestStep {
     #[serde(rename = "type")]
     pub step_type: String,

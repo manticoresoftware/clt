@@ -289,6 +289,153 @@ impl McpServer {
                     "additionalProperties": false
                 }),
             },
+            McpTool {
+                name: "update_test".to_string(),
+                description: "Replace specific test steps in an existing CLT test file. Finds the old test structure and replaces it with the new test structure. Returns error if old structure is not found or matches multiple locations.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "test_file": {
+                            "type": "string",
+                            "description": "Path to the test file to modify"
+                        },
+                        "old_test_structure": {
+                            "type": "object",
+                            "description": "Test structure to find and replace. Must match exactly in the original file.",
+                            "properties": {
+                                "description": {
+                                    "type": "string",
+                                    "description": "Optional description text (not used for matching, only for context)"
+                                },
+                                "steps": {
+                                    "type": "array",
+                                    "description": "Sequence of test steps to find and replace. Must match exactly.",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "type": {
+                                                "type": "string",
+                                                "enum": ["input", "output", "comment", "block"],
+                                                "description": "Type of step"
+                                            },
+                                            "args": {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                                "description": "Arguments for the step"
+                                            },
+                                            "content": {
+                                                "type": ["string", "null"],
+                                                "description": "Content of the step"
+                                            },
+                                            "steps": {
+                                                "type": "array",
+                                                "description": "Nested steps for block types"
+                                            }
+                                        },
+                                        "required": ["type", "args"]
+                                    }
+                                }
+                            },
+                            "required": ["steps"]
+                        },
+                        "new_test_structure": {
+                            "type": "object",
+                            "description": "Test structure to replace the old structure with",
+                            "properties": {
+                                "description": {
+                                    "type": "string",
+                                    "description": "Optional description text. If provided, will replace the file's description."
+                                },
+                                "steps": {
+                                    "type": "array",
+                                    "description": "New sequence of test steps",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "type": {
+                                                "type": "string",
+                                                "enum": ["input", "output", "comment", "block"],
+                                                "description": "Type of step"
+                                            },
+                                            "args": {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                                "description": "Arguments for the step"
+                                            },
+                                            "content": {
+                                                "type": ["string", "null"],
+                                                "description": "Content of the step"
+                                            },
+                                            "steps": {
+                                                "type": "array",
+                                                "description": "Nested steps for block types"
+                                            }
+                                        },
+                                        "required": ["type", "args"]
+                                    }
+                                }
+                            },
+                            "required": ["steps"]
+                        }
+                    },
+                    "required": ["test_file", "old_test_structure", "new_test_structure"],
+                    "additionalProperties": false
+                }),
+            },
+            McpTool {
+                name: "append_test".to_string(),
+                description: "Append new test steps to an existing CLT test file. Adds the new steps to the end of the existing test file while preserving the original content.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "test_file": {
+                            "type": "string",
+                            "description": "Path to the test file to modify"
+                        },
+                        "test_structure": {
+                            "type": "object",
+                            "description": "Test structure to append to the existing file",
+                            "properties": {
+                                "description": {
+                                    "type": "string",
+                                    "description": "Optional description text. Only used if the original file has no description."
+                                },
+                                "steps": {
+                                    "type": "array",
+                                    "description": "Sequence of test steps to append",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "type": {
+                                                "type": "string",
+                                                "enum": ["input", "output", "comment", "block"],
+                                                "description": "Type of step"
+                                            },
+                                            "args": {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                                "description": "Arguments for the step"
+                                            },
+                                            "content": {
+                                                "type": ["string", "null"],
+                                                "description": "Content of the step"
+                                            },
+                                            "steps": {
+                                                "type": "array",
+                                                "description": "Nested steps for block types"
+                                            }
+                                        },
+                                        "required": ["type", "args"]
+                                    }
+                                }
+                            },
+                            "required": ["steps"]
+                        }
+                    },
+                    "required": ["test_file", "test_structure"],
+                    "additionalProperties": false
+                }),
+            },
         ];
 
         let result = json!({
@@ -478,8 +625,97 @@ impl McpServer {
                 
                 Ok(serde_json::to_string_pretty(&enhanced_output)?)
             }
+            "update_test" => {
+                let input: mcp_protocol::TestReplaceInput = serde_json::from_value(
+                    arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
+                )?;
+
+                match structured_test::replace_test_structure(&input.test_file, &input.old_test_structure, &input.new_test_structure) {
+                    Ok(()) => {
+                        let enhanced_output = json!({
+                            "tool": "update_test",
+                            "description": "Test structure replaced successfully",
+                            "test_file": input.test_file,
+                            "result": {
+                                "success": true,
+                                "message": "Old test structure found and replaced with new structure"
+                            },
+                            "help": {
+                                "next_steps": "Use 'run_test' to execute the modified test file",
+                                "replacement_info": "The old test structure was found and replaced exactly once"
+                            }
+                        });
+                        Ok(serde_json::to_string_pretty(&enhanced_output)?)
+                    },
+                    Err(e) => {
+                        let enhanced_output = json!({
+                            "tool": "update_test",
+                            "description": "Test structure replacement failed",
+                            "test_file": input.test_file,
+                            "result": {
+                                "success": false,
+                                "message": e.to_string()
+                            },
+                            "help": {
+                                "common_errors": {
+                                    "not_found": "Old test structure not found in file - check exact match of steps, content, and args",
+                                    "ambiguous": "Old test structure matches multiple locations - make it more specific",
+                                    "file_not_found": "Test file doesn't exist - check the path"
+                                },
+                                "matching_rules": "Steps must match exactly: type, args, content, and nested steps (if any)"
+                            }
+                        });
+                        Ok(serde_json::to_string_pretty(&enhanced_output)?)
+                    }
+                }
+            }
+            "append_test" => {
+                let input: mcp_protocol::TestAppendInput = serde_json::from_value(
+                    arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
+                )?;
+
+                match structured_test::append_test_structure(&input.test_file, &input.test_structure) {
+                    Ok(steps_added) => {
+                        let enhanced_output = json!({
+                            "tool": "append_test",
+                            "description": "Test steps appended successfully",
+                            "test_file": input.test_file,
+                            "result": {
+                                "success": true,
+                                "message": format!("Successfully appended {} test steps to the file", steps_added),
+                                "steps_added": steps_added
+                            },
+                            "help": {
+                                "next_steps": "Use 'run_test' to execute the updated test file",
+                                "append_info": "New steps were added to the end of the existing test file"
+                            }
+                        });
+                        Ok(serde_json::to_string_pretty(&enhanced_output)?)
+                    },
+                    Err(e) => {
+                        let enhanced_output = json!({
+                            "tool": "append_test",
+                            "description": "Test append operation failed",
+                            "test_file": input.test_file,
+                            "result": {
+                                "success": false,
+                                "message": e.to_string(),
+                                "steps_added": 0
+                            },
+                            "help": {
+                                "common_errors": {
+                                    "file_not_found": "Test file doesn't exist - check the path",
+                                    "permission_denied": "Cannot write to file - check file permissions",
+                                    "invalid_structure": "Test structure is invalid - check step format"
+                                }
+                            }
+                        });
+                        Ok(serde_json::to_string_pretty(&enhanced_output)?)
+                    }
+                }
+            }
             _ => {
-                anyhow::bail!("Unknown tool: {}. Available tools: run_test, refine_output, test_match, clt_help, get_patterns, read_test, write_test", tool_name);
+                anyhow::bail!("Unknown tool: {}. Available tools: run_test, refine_output, test_match, clt_help, get_patterns, read_test, write_test, update_test, append_test", tool_name);
             }
         }
     }
@@ -1652,7 +1888,7 @@ mod tests {
         
         let result = response.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 7);
+        assert_eq!(tools.len(), 9);
         
         let tool_names: Vec<&str> = tools.iter()
             .map(|t| t["name"].as_str().unwrap())
@@ -1664,6 +1900,8 @@ mod tests {
         assert!(tool_names.contains(&"get_patterns"));
         assert!(tool_names.contains(&"read_test"));
         assert!(tool_names.contains(&"write_test"));
+        assert!(tool_names.contains(&"update_test"));
+        assert!(tool_names.contains(&"append_test"));
     }
 
     #[tokio::test]
