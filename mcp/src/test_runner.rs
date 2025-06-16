@@ -63,11 +63,39 @@ impl TestRunner {
             });
         }
 
+        // Validate test file is readable
+        if let Err(e) = fs::metadata(test_path) {
+            return Ok(RunTestOutput {
+                success: false,
+                errors: vec![TestError {
+                    command: "file_access".to_string(),
+                    expected: "Test file should be accessible".to_string(),
+                    actual: format!("Cannot access file {}: {}", test_path.display(), e),
+                    step: 0,
+                }],
+                summary: "Test file access error".to_string(),
+            });
+        }
+
         // Use provided docker_image or fall back to the default from server startup
         let image_to_use = docker_image.unwrap_or(&self.docker_image);
 
         // Convert absolute test path to relative path from working directory for docker execution
         let workdir = Path::new(&self.workdir_path);
+
+        // Validate working directory exists
+        if !workdir.exists() {
+            return Ok(RunTestOutput {
+                success: false,
+                errors: vec![TestError {
+                    command: "workdir_check".to_string(),
+                    expected: "Working directory should exist".to_string(),
+                    actual: format!("Working directory not found: {}", workdir.display()),
+                    step: 0,
+                }],
+                summary: "Working directory not found".to_string(),
+            });
+        }
         let relative_test_path = if test_path.is_absolute() {
             match test_path.strip_prefix(workdir) {
                 Ok(rel_path) => rel_path.to_string_lossy().to_string(),
@@ -93,12 +121,26 @@ impl TestRunner {
             test_path.to_string_lossy().to_string()
         };
 
-        // Execute CLT test command with working directory set
-        let output = Command::new(&self.clt_path)
+        // Execute CLT test command with working directory set and proper error handling
+        let output = match Command::new(&self.clt_path)
             .args(["test", "-t", &relative_test_path, "-d", image_to_use])
             .current_dir(&self.workdir_path) // Set working directory for CLT execution
             .output()
-            .context("Failed to execute CLT test command")?;
+        {
+            Ok(output) => output,
+            Err(e) => {
+                return Ok(RunTestOutput {
+                    success: false,
+                    errors: vec![TestError {
+                        command: "clt_execution".to_string(),
+                        expected: "CLT command should execute successfully".to_string(),
+                        actual: format!("Failed to execute CLT: {}", e),
+                        step: 0,
+                    }],
+                    summary: format!("CLT execution failed: {}", e),
+                });
+            }
+        };
 
         let exit_success = output.status.success();
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -110,8 +152,20 @@ impl TestRunner {
                 summary: "Test passed successfully".to_string(),
             })
         } else {
-            // Parse failures from .rep file comparison
-            let errors = self.parse_test_failures_from_rep_file(test_path)?;
+            // Parse failures from .rep file comparison with error handling
+            let errors = match self.parse_test_failures_from_rep_file(test_path) {
+                Ok(errors) => errors,
+                Err(e) => {
+                    // If we can't parse the rep file, create a generic error
+                    vec![TestError {
+                        command: "rep_file_parsing".to_string(),
+                        expected: "Should be able to parse test results".to_string(),
+                        actual: format!("Failed to parse test results: {}", e),
+                        step: 0,
+                    }]
+                }
+            };
+
             let summary = if errors.is_empty() {
                 format!("Test failed: {}", stderr.trim())
             } else {
@@ -142,9 +196,22 @@ impl TestRunner {
             return Ok(errors);
         }
 
-        // Use CLT's cmp tool to compare .rec and .rep files
+        // Use CLT's cmp tool to compare .rec and .rep files with error handling
         // This ensures we use the same comparison logic as the native CLT test
-        errors.extend(self.compare_rec_rep_files(test_path, &rep_path)?);
+        match self.compare_rec_rep_files(test_path, &rep_path) {
+            Ok(comparison_errors) => {
+                errors.extend(comparison_errors);
+            }
+            Err(e) => {
+                // If comparison fails, add a generic comparison error
+                errors.push(TestError {
+                    command: "file_comparison".to_string(),
+                    expected: "Should be able to compare test files".to_string(),
+                    actual: format!("File comparison failed: {}", e),
+                    step: 0,
+                });
+            }
+        }
 
         Ok(errors)
     }
@@ -152,31 +219,69 @@ impl TestRunner {
     fn compare_rec_rep_files(&self, rec_path: &Path, rep_path: &Path) -> Result<Vec<TestError>> {
         let mut errors = Vec::new();
 
-        // Read both files
-        let rec_content = fs::read_to_string(rec_path).context("Failed to read .rec file")?;
-        let rep_content = fs::read_to_string(rep_path).context("Failed to read .rep file")?;
+        // Read both files with proper error handling
+        let rec_content = fs::read_to_string(rec_path)
+            .with_context(|| format!("Failed to read .rec file: {}", rec_path.display()))?;
+        let rep_content = fs::read_to_string(rep_path)
+            .with_context(|| format!("Failed to read .rep file: {}", rep_path.display()))?;
 
         // Parse REC file into structured format (reuse existing logic)
-        let base_dir = rec_path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("Cannot determine parent directory of .rec file"))?;
-        let test_structure = crate::structured_test::parse_rec_content(&rec_content, base_dir)?;
+        let base_dir = rec_path.parent().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Cannot determine parent directory of .rec file: {}",
+                rec_path.display()
+            )
+        })?;
+
+        let test_structure = match crate::structured_test::parse_rec_content(&rec_content, base_dir)
+        {
+            Ok(structure) => structure,
+            Err(e) => {
+                // If we can't parse the REC file, return a parsing error
+                errors.push(TestError {
+                    command: "rec_file_parsing".to_string(),
+                    expected: "Valid .rec file format".to_string(),
+                    actual: format!("Failed to parse .rec file: {}", e),
+                    step: 0,
+                });
+                return Ok(errors);
+            }
+        };
 
         // Extract all expected outputs from structured REC (handles blocks, nesting, etc.)
         let expected_outputs = self.extract_all_outputs_from_structured(&test_structure);
 
         // Extract all actual outputs from flat REP file
-        let actual_outputs = self.extract_all_outputs_from_rep(&rep_content)?;
+        let actual_outputs = match self.extract_all_outputs_from_rep(&rep_content) {
+            Ok(outputs) => outputs,
+            Err(e) => {
+                errors.push(TestError {
+                    command: "rep_file_parsing".to_string(),
+                    expected: "Valid .rep file format".to_string(),
+                    actual: format!("Failed to parse .rep file: {}", e),
+                    step: 0,
+                });
+                return Ok(errors);
+            }
+        };
 
         // Find pattern file for comparison (same logic as CLT)
         let pattern_file = self.find_pattern_file(rec_path);
 
         // Compare output sequences using existing pattern matching logic
-        errors.extend(self.compare_output_sequences(
-            &expected_outputs,
-            &actual_outputs,
-            pattern_file,
-        )?);
+        match self.compare_output_sequences(&expected_outputs, &actual_outputs, pattern_file) {
+            Ok(comparison_errors) => {
+                errors.extend(comparison_errors);
+            }
+            Err(e) => {
+                errors.push(TestError {
+                    command: "output_comparison".to_string(),
+                    expected: "Successful output comparison".to_string(),
+                    actual: format!("Output comparison failed: {}", e),
+                    step: 0,
+                });
+            }
+        }
 
         Ok(errors)
     }

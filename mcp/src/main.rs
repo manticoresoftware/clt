@@ -561,15 +561,73 @@ impl McpServer {
     }
 
     async fn execute_tool(&mut self, tool_name: &str, arguments: Option<Value>) -> Result<String> {
-        match tool_name {
+        // Wrap the entire tool execution in a comprehensive error handler
+        let result = match tool_name {
             "run_test" => {
                 let input: RunTestInput = serde_json::from_value(
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
-                let resolved_test_path = self.resolve_test_path(&input.test_file)?;
-                let output = self
+
+                // Safely resolve test path with proper error handling
+                let resolved_test_path = match self.resolve_test_path(&input.test_file) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        // Return a structured error response instead of crashing
+                        let error_output = json!({
+                            "tool": "run_test",
+                            "description": "CLT test execution failed during path resolution",
+                            "test_file": input.test_file,
+                            "result": {
+                                "success": false,
+                                "errors": [{
+                                    "command": "path_resolution",
+                                    "expected": "Valid test file path",
+                                    "actual": format!("Path resolution failed: {}", e),
+                                    "step": 0
+                                }],
+                                "summary": format!("Path resolution error: {}", e)
+                            },
+                            "help": {
+                                "error_type": "path_resolution",
+                                "suggestion": "Check that the test file path is correct and accessible",
+                                "working_directory": self.workdir_path
+                            }
+                        });
+                        return Ok(serde_json::to_string_pretty(&error_output)?);
+                    }
+                };
+
+                // Safely execute test with proper error handling
+                let output = match self
                     .test_runner
-                    .run_test(&resolved_test_path, input.docker_image.as_deref())?;
+                    .run_test(&resolved_test_path, input.docker_image.as_deref())
+                {
+                    Ok(result) => result,
+                    Err(e) => {
+                        // Convert test runner errors to structured output
+                        let error_output = json!({
+                            "tool": "run_test",
+                            "description": "CLT test execution failed",
+                            "test_file": input.test_file,
+                            "result": {
+                                "success": false,
+                                "errors": [{
+                                    "command": "test_execution",
+                                    "expected": "Successful test execution",
+                                    "actual": format!("Test execution failed: {}", e),
+                                    "step": 0
+                                }],
+                                "summary": format!("Test execution error: {}", e)
+                            },
+                            "help": {
+                                "error_type": "test_execution",
+                                "suggestion": "Check CLT binary path, Docker availability, and test file format",
+                                "working_directory": self.workdir_path
+                            }
+                        });
+                        return Ok(serde_json::to_string_pretty(&error_output)?);
+                    }
+                };
 
                 // Add helpful context to the output
                 let docker_image_used = input.docker_image.as_deref().unwrap_or(&self.docker_image);
@@ -699,32 +757,92 @@ impl McpServer {
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
 
-                structured_test::write_test_file(
-                    &self.resolve_test_path(&input.test_file)?,
-                    &input.test_structure,
-                )?;
-
-                let enhanced_output = json!({
-                    "tool": "write_test",
-                    "description": "CLT test file written successfully",
-                    "test_file": input.test_file,
-                    "result": {
-                        "success": true
-                    },
-                    "help": {
-                        "next_steps": "Use 'run_test' to execute the written test file"
+                // Safely resolve test path with proper error handling
+                let resolved_test_path = match self.resolve_test_path(&input.test_file) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        let error_output = json!({
+                            "tool": "write_test",
+                            "description": "CLT test file write failed during path resolution",
+                            "test_file": input.test_file,
+                            "result": {
+                                "success": false,
+                                "error": format!("Path resolution failed: {}", e)
+                            },
+                            "help": {
+                                "error_type": "path_resolution",
+                                "suggestion": "Check that the test file path is valid and the directory is writable",
+                                "working_directory": self.workdir_path
+                            }
+                        });
+                        return Ok(serde_json::to_string_pretty(&error_output)?);
                     }
-                });
+                };
 
-                Ok(serde_json::to_string_pretty(&enhanced_output)?)
+                // Safely write test file with proper error handling
+                match structured_test::write_test_file(&resolved_test_path, &input.test_structure) {
+                    Ok(()) => {
+                        let enhanced_output = json!({
+                            "tool": "write_test",
+                            "description": "CLT test file written successfully",
+                            "test_file": input.test_file,
+                            "result": {
+                                "success": true
+                            },
+                            "help": {
+                                "next_steps": "Use 'run_test' to execute the written test file"
+                            }
+                        });
+                        Ok(serde_json::to_string_pretty(&enhanced_output)?)
+                    }
+                    Err(e) => {
+                        let error_output = json!({
+                            "tool": "write_test",
+                            "description": "CLT test file write failed",
+                            "test_file": input.test_file,
+                            "result": {
+                                "success": false,
+                                "error": format!("Write operation failed: {}", e)
+                            },
+                            "help": {
+                                "error_type": "write_failure",
+                                "suggestion": "Check file permissions and disk space",
+                                "working_directory": self.workdir_path
+                            }
+                        });
+                        Ok(serde_json::to_string_pretty(&error_output)?)
+                    }
+                }
             }
             "update_test" => {
                 let input: mcp_protocol::TestReplaceInput = serde_json::from_value(
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
 
+                // Safely resolve test path with proper error handling
+                let resolved_test_path = match self.resolve_test_path(&input.test_file) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        let error_output = json!({
+                            "tool": "update_test",
+                            "description": "Test structure update failed during path resolution",
+                            "test_file": input.test_file,
+                            "result": {
+                                "success": false,
+                                "message": format!("Path resolution failed: {}", e)
+                            },
+                            "help": {
+                                "error_type": "path_resolution",
+                                "suggestion": "Check that the test file path is correct and accessible",
+                                "working_directory": self.workdir_path
+                            }
+                        });
+                        return Ok(serde_json::to_string_pretty(&error_output)?);
+                    }
+                };
+
                 match structured_test::replace_test_structure(
-                    &self.resolve_test_path(&input.test_file)?,
+                    &resolved_test_path,
                     &input.old_test_structure,
                     &input.new_test_structure,
                 ) {
@@ -815,9 +933,28 @@ impl McpServer {
                 }
             }
             _ => {
-                anyhow::bail!("Unknown tool: {}. Available tools: run_test, refine_output, test_match, clt_help, get_patterns, read_test, write_test, update_test, append_test", tool_name);
+                // Return a proper error response instead of panicking
+                let error_output = json!({
+                    "tool": tool_name,
+                    "description": "Unknown tool requested",
+                    "result": {
+                        "success": false,
+                        "error": format!("Unknown tool: {}", tool_name)
+                    },
+                    "help": {
+                        "available_tools": [
+                            "run_test", "refine_output", "test_match", "clt_help",
+                            "get_patterns", "read_test", "write_test", "update_test", "append_test"
+                        ],
+                        "suggestion": "Use one of the available tools listed above"
+                    }
+                });
+                return Ok(serde_json::to_string_pretty(&error_output)?);
             }
-        }
+        };
+
+        // If we get here, one of the tools above should have returned a result
+        result
     }
 
     fn get_help_content(&self, topic: &str) -> Value {
@@ -1891,12 +2028,45 @@ impl McpServer {
         let test_path = std::path::Path::new(test_file);
 
         if test_path.is_absolute() {
-            // Already absolute, return as-is
-            Ok(test_file.to_string())
+            // Already absolute, validate it exists or can be created
+            let canonical_path = match std::fs::canonicalize(test_path) {
+                Ok(path) => path,
+                Err(_) => {
+                    // If canonicalize fails, check if parent directory exists
+                    if let Some(parent) = test_path.parent() {
+                        if !parent.exists() {
+                            return Err(anyhow::anyhow!(
+                                "Parent directory does not exist for test file: {}",
+                                test_path.display()
+                            ));
+                        }
+                    }
+                    test_path.to_path_buf()
+                }
+            };
+            Ok(canonical_path.to_string_lossy().to_string())
         } else {
             // Resolve relative to working directory
             let workdir = std::path::Path::new(&self.workdir_path);
+
+            // Ensure working directory exists
+            if !workdir.exists() {
+                return Err(anyhow::anyhow!(
+                    "Working directory does not exist: {}",
+                    workdir.display()
+                ));
+            }
+
             let resolved = workdir.join(test_path);
+
+            // For relative paths, we need to ensure the parent directory exists for write operations
+            if let Some(parent) = resolved.parent() {
+                if !parent.exists() {
+                    // This is not necessarily an error for read operations, but we should note it
+                    // The actual file operations will handle this appropriately
+                }
+            }
+
             Ok(resolved.to_string_lossy().to_string())
         }
     }

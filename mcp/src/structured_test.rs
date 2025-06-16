@@ -184,17 +184,35 @@ fn resolve_block(block_path: &str, base_dir: &Path) -> Result<Vec<TestStep>> {
 
 /// Convert structured JSON format back to .rec file content
 pub fn write_test_file(test_file_path: &str, test_structure: &TestStructure) -> Result<()> {
+    // Validate test file path
+    let test_path = Path::new(test_file_path);
+
     // Create parent directories if they don't exist
-    if let Some(parent_dir) = Path::new(test_file_path).parent() {
+    if let Some(parent_dir) = test_path.parent() {
         if !parent_dir.exists() {
             fs::create_dir_all(parent_dir).map_err(|e| {
                 anyhow!("Failed to create directory {}: {}", parent_dir.display(), e)
             })?;
         }
+
+        // Validate that parent directory is writable
+        if let Err(e) = fs::metadata(parent_dir) {
+            return Err(anyhow!(
+                "Cannot access parent directory {}: {}",
+                parent_dir.display(),
+                e
+            ));
+        }
     }
 
-    let rec_content = convert_structure_to_rec(test_structure)?;
-    fs::write(test_file_path, rec_content)?;
+    // Convert structure to REC format with error handling
+    let rec_content = convert_structure_to_rec(test_structure)
+        .map_err(|e| anyhow!("Failed to convert test structure to .rec format: {}", e))?;
+
+    // Write file with proper error handling
+    fs::write(test_file_path, rec_content)
+        .map_err(|e| anyhow!("Failed to write test file {}: {}", test_file_path, e))?;
+
     Ok(())
 }
 
