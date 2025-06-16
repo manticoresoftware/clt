@@ -8,10 +8,15 @@ use std::process::Command;
 pub struct TestRunner {
     docker_image: String,
     clt_path: String,
+    workdir_path: String,
 }
 
 impl TestRunner {
-    pub fn new(docker_image: String, clt_binary_path: Option<String>) -> Result<Self> {
+    pub fn new(
+        docker_image: String,
+        clt_binary_path: Option<String>,
+        workdir_path: String,
+    ) -> Result<Self> {
         let clt_path = match clt_binary_path {
             Some(path) => {
                 let path_buf = std::path::Path::new(&path);
@@ -38,6 +43,7 @@ impl TestRunner {
         Ok(Self {
             docker_image,
             clt_path,
+            workdir_path,
         })
     }
 
@@ -60,15 +66,37 @@ impl TestRunner {
         // Use provided docker_image or fall back to the default from server startup
         let image_to_use = docker_image.unwrap_or(&self.docker_image);
 
-        // Execute CLT test command
+        // Convert absolute test path to relative path from working directory for docker execution
+        let workdir = Path::new(&self.workdir_path);
+        let relative_test_path = if test_path.is_absolute() {
+            match test_path.strip_prefix(workdir) {
+                Ok(rel_path) => rel_path.to_string_lossy().to_string(),
+                Err(_) => {
+                    // Test file is outside working directory, this might be an issue
+                    return Ok(RunTestOutput {
+                        success: false,
+                        errors: vec![TestError {
+                            command: "path_resolution".to_string(),
+                            expected: "Test file should be within working directory".to_string(),
+                            actual: format!(
+                                "Test file {} is outside working directory {}",
+                                test_path.display(),
+                                workdir.display()
+                            ),
+                            step: 0,
+                        }],
+                        summary: "Test file path issue".to_string(),
+                    });
+                }
+            }
+        } else {
+            test_path.to_string_lossy().to_string()
+        };
+
+        // Execute CLT test command with working directory set
         let output = Command::new(&self.clt_path)
-            .args([
-                "test",
-                "-t",
-                &test_path.to_string_lossy(),
-                "-d",
-                image_to_use,
-            ])
+            .args(["test", "-t", &relative_test_path, "-d", image_to_use])
+            .current_dir(&self.workdir_path) // Set working directory for CLT execution
             .output()
             .context("Failed to execute CLT test command")?;
 
@@ -338,7 +366,15 @@ mod tests {
         writeln!(temp_file, "#!/bin/bash\necho 'fake clt'").unwrap();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let runner = TestRunner::new("test-image".to_string(), Some(temp_path.clone())).unwrap();
+        let runner = TestRunner::new(
+            "test-image".to_string(),
+            Some(temp_path.clone()),
+            std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+        )
+        .unwrap();
 
         assert_eq!(runner.get_clt_path(), &temp_path);
         assert_eq!(runner.docker_image, "test-image");
@@ -349,6 +385,10 @@ mod tests {
         let result = TestRunner::new(
             "test-image".to_string(),
             Some("/nonexistent/path".to_string()),
+            std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
         );
 
         assert!(result.is_err());
@@ -363,7 +403,14 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let dir_path = temp_dir.path().to_string_lossy().to_string();
 
-        let result = TestRunner::new("test-image".to_string(), Some(dir_path));
+        let result = TestRunner::new(
+            "test-image".to_string(),
+            Some(dir_path),
+            std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+        );
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not a file"));
@@ -371,7 +418,14 @@ mod tests {
 
     #[test]
     fn test_run_test_with_nonexistent_file() {
-        let runner = TestRunner::new("test-image".to_string(), None);
+        let runner = TestRunner::new(
+            "test-image".to_string(),
+            None,
+            std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+        );
 
         // Skip this test if CLT is not available
         if runner.is_err() {
@@ -389,7 +443,14 @@ mod tests {
 
     #[test]
     fn test_extract_all_outputs_from_structured() {
-        let runner = TestRunner::new("test-image".to_string(), None);
+        let runner = TestRunner::new(
+            "test-image".to_string(),
+            None,
+            std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+        );
 
         // Skip this test if CLT is not available
         if runner.is_err() {
@@ -449,7 +510,14 @@ mod tests {
 
     #[test]
     fn test_extract_all_outputs_from_rep() {
-        let runner = TestRunner::new("test-image".to_string(), None);
+        let runner = TestRunner::new(
+            "test-image".to_string(),
+            None,
+            std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+        );
 
         // Skip this test if CLT is not available
         if runner.is_err() {

@@ -40,6 +40,14 @@ struct Args {
         value_name = "PATH"
     )]
     clt_binary_path: Option<String>,
+
+    /// Working directory path for test resolution (defaults to current directory)
+    #[arg(
+        long = "workdir-path",
+        help = "Working directory path for test file resolution. If not specified, uses current working directory",
+        value_name = "PATH"
+    )]
+    workdir_path: Option<String>,
 }
 
 #[derive(Debug)]
@@ -47,18 +55,61 @@ struct McpServer {
     #[allow(dead_code)]
     docker_image: String,
     clt_binary_path: Option<String>,
+    workdir_path: String,
     test_runner: TestRunner,
     pattern_refiner: PatternRefiner,
 }
 
 impl McpServer {
-    fn new(docker_image: String, clt_binary_path: Option<String>) -> Result<Self> {
-        let test_runner = TestRunner::new(docker_image.clone(), clt_binary_path.clone())?;
+    fn new(
+        docker_image: String,
+        clt_binary_path: Option<String>,
+        workdir_path: Option<String>,
+    ) -> Result<Self> {
+        // Resolve working directory - use provided path or current directory
+        let workdir_path = match workdir_path {
+            Some(path) => {
+                let path_buf = std::path::PathBuf::from(&path);
+                if !path_buf.exists() {
+                    return Err(anyhow::anyhow!(
+                        "Working directory does not exist: {}",
+                        path
+                    ));
+                }
+                if !path_buf.is_dir() {
+                    return Err(anyhow::anyhow!(
+                        "Working directory path is not a directory: {}",
+                        path
+                    ));
+                }
+                // Convert to absolute path
+                std::fs::canonicalize(path_buf)
+                    .map_err(|e| {
+                        anyhow::anyhow!("Failed to resolve working directory path: {}", e)
+                    })?
+                    .to_string_lossy()
+                    .to_string()
+            }
+            None => {
+                // Use current working directory
+                std::env::current_dir()
+                    .map_err(|e| anyhow::anyhow!("Failed to get current working directory: {}", e))?
+                    .to_string_lossy()
+                    .to_string()
+            }
+        };
+
+        let test_runner = TestRunner::new(
+            docker_image.clone(),
+            clt_binary_path.clone(),
+            workdir_path.clone(),
+        )?;
         let pattern_refiner = PatternRefiner::new()?;
 
         Ok(Self {
             docker_image,
             clt_binary_path,
+            workdir_path,
             test_runner,
             pattern_refiner,
         })
@@ -515,9 +566,10 @@ impl McpServer {
                 let input: RunTestInput = serde_json::from_value(
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
+                let resolved_test_path = self.resolve_test_path(&input.test_file)?;
                 let output = self
                     .test_runner
-                    .run_test(&input.test_file, input.docker_image.as_deref())?;
+                    .run_test(&resolved_test_path, input.docker_image.as_deref())?;
 
                 // Add helpful context to the output
                 let docker_image_used = input.docker_image.as_deref().unwrap_or(&self.docker_image);
@@ -624,7 +676,8 @@ impl McpServer {
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
 
-                let test_structure = structured_test::read_test_file(&input.test_file)?;
+                let test_structure =
+                    structured_test::read_test_file(&self.resolve_test_path(&input.test_file)?)?;
 
                 let enhanced_output = json!({
                     "tool": "read_test",
@@ -646,7 +699,10 @@ impl McpServer {
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
 
-                structured_test::write_test_file(&input.test_file, &input.test_structure)?;
+                structured_test::write_test_file(
+                    &self.resolve_test_path(&input.test_file)?,
+                    &input.test_structure,
+                )?;
 
                 let enhanced_output = json!({
                     "tool": "write_test",
@@ -668,7 +724,7 @@ impl McpServer {
                 )?;
 
                 match structured_test::replace_test_structure(
-                    &input.test_file,
+                    &self.resolve_test_path(&input.test_file)?,
                     &input.old_test_structure,
                     &input.new_test_structure,
                 ) {
@@ -716,7 +772,7 @@ impl McpServer {
                 )?;
 
                 match structured_test::append_test_structure(
-                    &input.test_file,
+                    &self.resolve_test_path(&input.test_file)?,
                     &input.test_structure,
                 ) {
                     Ok(steps_added) => {
@@ -1829,13 +1885,28 @@ impl McpServer {
             summary,
         })
     }
+
+    /// Resolve test file path to absolute path based on working directory
+    fn resolve_test_path(&self, test_file: &str) -> Result<String> {
+        let test_path = std::path::Path::new(test_file);
+
+        if test_path.is_absolute() {
+            // Already absolute, return as-is
+            Ok(test_file.to_string())
+        } else {
+            // Resolve relative to working directory
+            let workdir = std::path::Path::new(&self.workdir_path);
+            let resolved = workdir.join(test_path);
+            Ok(resolved.to_string_lossy().to_string())
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let mut server = McpServer::new(args.docker_image, args.clt_binary_path)?;
+    let mut server = McpServer::new(args.docker_image, args.clt_binary_path, args.workdir_path)?;
 
     server.run().await?;
 
@@ -1860,7 +1931,7 @@ mod tests {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let server = McpServer::new("test-image".to_string(), Some(temp_path));
+        let server = McpServer::new("test-image".to_string(), Some(temp_path), None);
 
         assert!(server.is_ok());
     }
@@ -1870,6 +1941,7 @@ mod tests {
         let server = McpServer::new(
             "test-image".to_string(),
             Some("/nonexistent/path".to_string()),
+            None,
         );
 
         assert!(server.is_err());
@@ -1884,7 +1956,7 @@ mod tests {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
+        let server = McpServer::new("test-image".to_string(), Some(temp_path), None).unwrap();
 
         let response = server.handle_initialize(Some(json!(1)), None);
 
@@ -1903,7 +1975,7 @@ mod tests {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
+        let server = McpServer::new("test-image".to_string(), Some(temp_path), None).unwrap();
 
         let response = server.handle_tools_list(Some(json!(2)));
 
@@ -1932,7 +2004,7 @@ mod tests {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let mut server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
+        let mut server = McpServer::new("test-image".to_string(), Some(temp_path), None).unwrap();
 
         let args = json!({
             "expected": "Hello World",
@@ -1953,7 +2025,7 @@ mod tests {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let mut server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
+        let mut server = McpServer::new("test-image".to_string(), Some(temp_path), None).unwrap();
 
         let args = json!({
             "expected": "Hello World",
@@ -1977,7 +2049,7 @@ mod tests {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let mut server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
+        let mut server = McpServer::new("test-image".to_string(), Some(temp_path), None).unwrap();
 
         let args = json!({
             "expected": "Version: 1.2.3",
@@ -2006,7 +2078,7 @@ mod tests {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let mut server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
+        let mut server = McpServer::new("test-image".to_string(), Some(temp_path), None).unwrap();
 
         let args = json!({
             "test_file": "/nonexistent/test.rec"
@@ -2030,7 +2102,7 @@ mod tests {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let mut server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
+        let mut server = McpServer::new("test-image".to_string(), Some(temp_path), None).unwrap();
 
         let result = server.execute_tool("unknown_tool", None).await;
 
@@ -2043,7 +2115,7 @@ mod tests {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let mut server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
+        let mut server = McpServer::new("test-image".to_string(), Some(temp_path), None).unwrap();
 
         let args = json!({
             "topic": "overview"
@@ -2062,7 +2134,7 @@ mod tests {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let mut server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
+        let mut server = McpServer::new("test-image".to_string(), Some(temp_path), None).unwrap();
 
         let request = McpRequest {
             jsonrpc: "2.0".to_string(),
@@ -2099,7 +2171,8 @@ mod tests {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let mut server = McpServer::new("default-image".to_string(), Some(temp_path)).unwrap();
+        let mut server =
+            McpServer::new("default-image".to_string(), Some(temp_path), None).unwrap();
 
         // Test with custom docker_image parameter
         let args = json!({
@@ -2127,7 +2200,8 @@ mod tests {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let mut server = McpServer::new("default-image".to_string(), Some(temp_path)).unwrap();
+        let mut server =
+            McpServer::new("default-image".to_string(), Some(temp_path), None).unwrap();
 
         // Test without docker_image parameter (should use default)
         let args = json!({
