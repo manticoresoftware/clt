@@ -1,11 +1,11 @@
 mod mcp_protocol;
-mod test_runner;
 mod pattern_refiner;
 mod structured_test;
+mod test_runner;
 
 use mcp_protocol::*;
-use test_runner::TestRunner;
 use pattern_refiner::PatternRefiner;
+use test_runner::TestRunner;
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -44,16 +44,17 @@ impl McpServer {
         let mut line = String::new();
         loop {
             line.clear();
-            
+
             // Handle EOF or read errors gracefully
             let bytes_read = match reader.read_line(&mut line).await {
                 Ok(0) => break, // EOF - client disconnected
                 Ok(n) => n,
                 Err(e) => {
                     // Check if it's a broken pipe or connection reset
-                    if e.kind() == std::io::ErrorKind::BrokenPipe 
-                        || e.kind() == std::io::ErrorKind::ConnectionReset 
-                        || e.kind() == std::io::ErrorKind::ConnectionAborted {
+                    if e.kind() == std::io::ErrorKind::BrokenPipe
+                        || e.kind() == std::io::ErrorKind::ConnectionReset
+                        || e.kind() == std::io::ErrorKind::ConnectionAborted
+                    {
                         // Client disconnected - exit gracefully
                         break;
                     }
@@ -71,20 +72,17 @@ impl McpServer {
                 Ok(request) => self.handle_request(request).await,
                 Err(_) => {
                     // Send error response for malformed JSON
-                    McpResponse::error(
-                        None,
-                        -32700,
-                        "Parse error: Invalid JSON".to_string(),
-                    )
+                    McpResponse::error(None, -32700, "Parse error: Invalid JSON".to_string())
                 }
             };
 
             // Send response with proper error handling
             if let Err(e) = self.send_response(&mut stdout, &response).await {
                 // Check if it's a broken pipe or connection issue
-                if e.kind() == std::io::ErrorKind::BrokenPipe 
-                    || e.kind() == std::io::ErrorKind::ConnectionReset 
-                    || e.kind() == std::io::ErrorKind::ConnectionAborted {
+                if e.kind() == std::io::ErrorKind::BrokenPipe
+                    || e.kind() == std::io::ErrorKind::ConnectionReset
+                    || e.kind() == std::io::ErrorKind::ConnectionAborted
+                {
                     // Client disconnected - exit gracefully
                     break;
                 }
@@ -96,14 +94,18 @@ impl McpServer {
         Ok(())
     }
 
-    async fn send_response(&self, stdout: &mut tokio::io::Stdout, response: &McpResponse) -> std::io::Result<()> {
+    async fn send_response(
+        &self,
+        stdout: &mut tokio::io::Stdout,
+        response: &McpResponse,
+    ) -> std::io::Result<()> {
         let response_json = serde_json::to_string(response)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        
+
         stdout.write_all(response_json.as_bytes()).await?;
         stdout.write_all(b"\n").await?;
         stdout.flush().await?;
-        
+
         Ok(())
     }
 
@@ -456,7 +458,10 @@ impl McpServer {
             Err(e) => return McpResponse::error(id, -32602, format!("Invalid parameters: {}", e)),
         };
 
-        let result = match self.execute_tool(&tool_call.name, tool_call.arguments).await {
+        let result = match self
+            .execute_tool(&tool_call.name, tool_call.arguments)
+            .await
+        {
             Ok(content) => ToolCallResult {
                 content: vec![ToolContent {
                     content_type: "text".to_string(),
@@ -482,8 +487,10 @@ impl McpServer {
                 let input: RunTestInput = serde_json::from_value(
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
-                let output = self.test_runner.run_test(&input.test_file, input.docker_image.as_deref())?;
-                
+                let output = self
+                    .test_runner
+                    .run_test(&input.test_file, input.docker_image.as_deref())?;
+
                 // Add helpful context to the output
                 let docker_image_used = input.docker_image.as_deref().unwrap_or(&self.docker_image);
                 let enhanced_output = json!({
@@ -499,15 +506,17 @@ impl McpServer {
                         "docker_image_info": format!("Test executed in Docker image: {} (default: {})", docker_image_used, self.docker_image)
                     }
                 });
-                
+
                 Ok(serde_json::to_string_pretty(&enhanced_output)?)
             }
             "refine_output" => {
                 let input: RefineOutputInput = serde_json::from_value(
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
-                let output = self.pattern_refiner.refine_output(&input.expected, &input.actual)?;
-                
+                let output = self
+                    .pattern_refiner
+                    .refine_output(&input.expected, &input.actual)?;
+
                 // Add helpful context and examples
                 let enhanced_output = json!({
                     "tool": "refine_output",
@@ -526,7 +535,7 @@ impl McpServer {
                         "usage": "Copy the 'refined_output' and use it as the expected output in your .rec test file"
                     }
                 });
-                
+
                 Ok(serde_json::to_string_pretty(&enhanced_output)?)
             }
             "test_match" => {
@@ -534,7 +543,7 @@ impl McpServer {
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
                 let output = self.execute_test_match(&input.expected, &input.actual)?;
-                
+
                 // Add helpful context
                 let enhanced_output = json!({
                     "tool": "test_match",
@@ -551,7 +560,7 @@ impl McpServer {
                         "next_steps": "If match fails, check diff_lines array for specific differences, then use 'refine_output' to suggest patterns"
                     }
                 });
-                
+
                 Ok(serde_json::to_string_pretty(&enhanced_output)?)
             }
             "clt_help" => {
@@ -559,17 +568,17 @@ impl McpServer {
                 struct HelpInput {
                     topic: String,
                 }
-                
+
                 let input: HelpInput = serde_json::from_value(
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
-                
+
                 let help_content = self.get_help_content(&input.topic);
                 Ok(serde_json::to_string_pretty(&help_content)?)
             }
             "get_patterns" => {
                 let patterns = structured_test::get_patterns(self.clt_binary_path.as_deref())?;
-                
+
                 let enhanced_output = json!({
                     "tool": "get_patterns",
                     "description": "Available patterns for CLT tests",
@@ -579,16 +588,16 @@ impl McpServer {
                         "example": "Replace '1.2.3' with '%{SEMVER}' to match any semantic version"
                     }
                 });
-                
+
                 Ok(serde_json::to_string_pretty(&enhanced_output)?)
             }
             "read_test" => {
                 let input: mcp_protocol::ReadTestInput = serde_json::from_value(
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
-                
+
                 let test_structure = structured_test::read_test_file(&input.test_file)?;
-                
+
                 let enhanced_output = json!({
                     "tool": "read_test",
                     "description": "Structured representation of CLT test file",
@@ -601,16 +610,16 @@ impl McpServer {
                         "usage": "Modify this structure and use 'write_test' to save changes"
                     }
                 });
-                
+
                 Ok(serde_json::to_string_pretty(&enhanced_output)?)
             }
             "write_test" => {
                 let input: mcp_protocol::WriteTestInput = serde_json::from_value(
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
-                
+
                 structured_test::write_test_file(&input.test_file, &input.test_structure)?;
-                
+
                 let enhanced_output = json!({
                     "tool": "write_test",
                     "description": "CLT test file written successfully",
@@ -622,7 +631,7 @@ impl McpServer {
                         "next_steps": "Use 'run_test' to execute the written test file"
                     }
                 });
-                
+
                 Ok(serde_json::to_string_pretty(&enhanced_output)?)
             }
             "update_test" => {
@@ -630,7 +639,11 @@ impl McpServer {
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
 
-                match structured_test::replace_test_structure(&input.test_file, &input.old_test_structure, &input.new_test_structure) {
+                match structured_test::replace_test_structure(
+                    &input.test_file,
+                    &input.old_test_structure,
+                    &input.new_test_structure,
+                ) {
                     Ok(()) => {
                         let enhanced_output = json!({
                             "tool": "update_test",
@@ -646,7 +659,7 @@ impl McpServer {
                             }
                         });
                         Ok(serde_json::to_string_pretty(&enhanced_output)?)
-                    },
+                    }
                     Err(e) => {
                         let enhanced_output = json!({
                             "tool": "update_test",
@@ -674,7 +687,10 @@ impl McpServer {
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
 
-                match structured_test::append_test_structure(&input.test_file, &input.test_structure) {
+                match structured_test::append_test_structure(
+                    &input.test_file,
+                    &input.test_structure,
+                ) {
                     Ok(steps_added) => {
                         let enhanced_output = json!({
                             "tool": "append_test",
@@ -691,7 +707,7 @@ impl McpServer {
                             }
                         });
                         Ok(serde_json::to_string_pretty(&enhanced_output)?)
-                    },
+                    }
                     Err(e) => {
                         let enhanced_output = json!({
                             "tool": "append_test",
@@ -743,7 +759,7 @@ impl McpServer {
                     ],
                     "file_types": {
                         "test_files": "Test recording files with input/output sections",
-                        "result_files": "Test replay results (generated during test execution)", 
+                        "result_files": "Test replay results (generated during test execution)",
                         "block_files": "Reusable test blocks that can be included in test files"
                     }
                 }
@@ -1565,7 +1581,7 @@ impl McpServer {
                     "workflow": [
                         "1. Use 'read_test' to convert existing .rec file to JSON",
                         "2. Modify the JSON structure as needed",
-                        "3. Use 'write_test' to save the JSON back to .rec format", 
+                        "3. Use 'write_test' to save the JSON back to .rec format",
                         "4. Use 'run_test' to execute the .rec file",
                         "5. Use 'get_patterns' to see available patterns for dynamic content"
                     ],
@@ -1585,7 +1601,7 @@ impl McpServer {
                                     "content": "echo 'Hello World'"
                                 },
                                 {
-                                    "type": "output", 
+                                    "type": "output",
                                     "args": [],
                                     "content": "Hello World"
                                 }
@@ -1623,32 +1639,39 @@ impl McpServer {
                 "error": "Unknown help topic",
                 "available_topics": ["overview", "test_format", "patterns", "blocks", "workflow", "examples", "troubleshooting", "structured_tests"],
                 "usage": "Use clt_help tool with one of the available topics to get detailed information"
-            })
+            }),
         }
     }
 
     /// Helper function to create a line-based diff similar to git diff format
     /// This makes the output much more AI-friendly than character-level mismatches
-    fn create_line_diff(&self, expected: &str, actual: &str, pattern_matcher: &cmp::PatternMatcher) -> Vec<String> {
+    fn create_line_diff(
+        &self,
+        expected: &str,
+        actual: &str,
+        pattern_matcher: &cmp::PatternMatcher,
+    ) -> Vec<String> {
         let expected_lines: Vec<&str> = expected.lines().collect();
         let actual_lines: Vec<&str> = actual.lines().collect();
         let mut diff_lines = Vec::new();
-        
+
         // Check if we have any differences at all
-        let has_any_diff = expected_lines.len() != actual_lines.len() || 
-            expected_lines.iter().zip(actual_lines.iter())
+        let has_any_diff = expected_lines.len() != actual_lines.len()
+            || expected_lines
+                .iter()
+                .zip(actual_lines.iter())
                 .any(|(exp, act)| pattern_matcher.has_diff(exp.to_string(), act.to_string()));
-        
+
         if !has_any_diff {
             return diff_lines; // No differences
         }
-        
+
         // Add diff header
         diff_lines.push("--- expected".to_string());
         diff_lines.push("+++ actual".to_string());
-        
+
         let max_lines = expected_lines.len().max(actual_lines.len());
-        
+
         for i in 0..max_lines {
             match (expected_lines.get(i), actual_lines.get(i)) {
                 (Some(exp_line), Some(act_line)) => {
@@ -1660,58 +1683,72 @@ impl McpServer {
                         // Lines match (considering patterns) - show as context
                         diff_lines.push(format!(" {}", exp_line));
                     }
-                },
+                }
                 (Some(exp_line), None) => {
                     // Line only in expected (deletion)
                     diff_lines.push(format!("-{}", exp_line));
-                },
+                }
                 (None, Some(act_line)) => {
                     // Line only in actual (addition)
                     diff_lines.push(format!("+{}", act_line));
-                },
+                }
                 (None, None) => break, // Should not happen given max_lines logic
             }
         }
-        
+
         diff_lines
     }
 
     /// Generate a clear, human-readable summary of what differs
-    fn create_diff_summary(&self, expected: &str, actual: &str, pattern_matcher: &cmp::PatternMatcher) -> String {
+    fn create_diff_summary(
+        &self,
+        expected: &str,
+        actual: &str,
+        pattern_matcher: &cmp::PatternMatcher,
+    ) -> String {
         let expected_lines: Vec<&str> = expected.lines().collect();
         let actual_lines: Vec<&str> = actual.lines().collect();
-        
+
         let mut mismatched_lines = 0;
         let mut extra_lines_in_actual = 0;
         let mut missing_lines_in_actual = 0;
-        
+
         let max_lines = expected_lines.len().max(actual_lines.len());
-        
+
         for i in 0..max_lines {
             match (expected_lines.get(i), actual_lines.get(i)) {
                 (Some(exp_line), Some(act_line)) => {
                     if pattern_matcher.has_diff(exp_line.to_string(), act_line.to_string()) {
                         mismatched_lines += 1;
                     }
-                },
+                }
                 (Some(_), None) => missing_lines_in_actual += 1,
                 (None, Some(_)) => extra_lines_in_actual += 1,
                 (None, None) => break,
             }
         }
-        
+
         let mut summary_parts = Vec::new();
-        
+
         if mismatched_lines > 0 {
-            summary_parts.push(format!("{} line(s) with content differences", mismatched_lines));
+            summary_parts.push(format!(
+                "{} line(s) with content differences",
+                mismatched_lines
+            ));
         }
         if missing_lines_in_actual > 0 {
-            summary_parts.push(format!("{} line(s) missing in actual output", missing_lines_in_actual));
+            summary_parts.push(format!(
+                "{} line(s) missing in actual output",
+                missing_lines_in_actual
+            ));
         }
         if extra_lines_in_actual > 0 {
-            summary_parts.push(format!("{} extra line(s) in actual output", extra_lines_in_actual));
+            summary_parts.push(format!(
+                "{} extra line(s) in actual output",
+                extra_lines_in_actual
+            ));
         }
-        
+
         if summary_parts.is_empty() {
             "Output matches expected pattern".to_string()
         } else {
@@ -1720,10 +1757,10 @@ impl McpServer {
     }
 
     /// Execute test_match tool with improved diff-based output
-    /// 
+    ///
     /// This function compares expected vs actual strings using CLT's pattern matching
     /// and returns a clear, AI-friendly diff format instead of complex character-level mismatches.
-    /// 
+    ///
     /// Returns:
     /// - matches: boolean indicating if strings match (considering patterns)
     /// - diff_lines: git-style diff showing line-by-line differences
@@ -1731,7 +1768,7 @@ impl McpServer {
     fn execute_test_match(&self, expected: &str, actual: &str) -> Result<TestMatchOutput> {
         // Use the same pattern loading logic as get_patterns tool
         let patterns = structured_test::get_patterns(self.clt_binary_path.as_deref())?;
-        
+
         // Create a temporary patterns file for the cmp crate
         let temp_patterns_file = if !patterns.is_empty() {
             let temp_file = std::env::temp_dir().join("clt_patterns_temp");
@@ -1744,12 +1781,12 @@ impl McpServer {
         } else {
             None
         };
-        
+
         let pattern_matcher = cmp::PatternMatcher::new(temp_patterns_file)
             .map_err(|e| anyhow::anyhow!("Failed to create pattern matcher: {}", e))?;
 
         let has_diff = pattern_matcher.has_diff(expected.to_string(), actual.to_string());
-        
+
         let (diff_lines, summary) = if has_diff {
             let diff = self.create_line_diff(expected, actual, &pattern_matcher);
             let summary = self.create_diff_summary(expected, actual, &pattern_matcher);
@@ -1769,15 +1806,15 @@ impl McpServer {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    
+
     if args.len() < 3 {
         std::process::exit(1);
     }
-    
+
     let mut docker_image = None;
     let mut clt_binary_path = None;
     let mut i = 1;
-    
+
     while i < args.len() {
         match args[i].as_str() {
             "--docker-image" => {
@@ -1799,23 +1836,21 @@ async fn main() -> Result<()> {
             }
         }
     }
-    
-    let docker_image = docker_image.ok_or_else(|| {
-        anyhow::anyhow!("--docker-image is required")
-    })?;
-    
+
+    let docker_image = docker_image.ok_or_else(|| anyhow::anyhow!("--docker-image is required"))?;
+
     let mut server = McpServer::new(docker_image, clt_binary_path)?;
-    
+
     server.run().await?;
-    
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
     use tokio_test;
 
     fn create_fake_clt_binary() -> NamedTempFile {
@@ -1829,10 +1864,7 @@ mod tests {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let server = McpServer::new(
-            "test-image".to_string(),
-            Some(temp_path)
-        );
+        let server = McpServer::new("test-image".to_string(), Some(temp_path));
 
         assert!(server.is_ok());
     }
@@ -1841,30 +1873,30 @@ mod tests {
     fn test_mcp_server_new_with_invalid_bin() {
         let server = McpServer::new(
             "test-image".to_string(),
-            Some("/nonexistent/path".to_string())
+            Some("/nonexistent/path".to_string()),
         );
 
         assert!(server.is_err());
-        assert!(server.unwrap_err().to_string().contains("CLT binary not found"));
+        assert!(server
+            .unwrap_err()
+            .to_string()
+            .contains("CLT binary not found"));
     }
 
     #[test]
     fn test_handle_initialize() {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
-        
-        let server = McpServer::new(
-            "test-image".to_string(),
-            Some(temp_path)
-        ).unwrap();
+
+        let server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
 
         let response = server.handle_initialize(Some(json!(1)), None);
-        
+
         assert_eq!(response.jsonrpc, "2.0");
         assert_eq!(response.id, Some(json!(1)));
         assert!(response.result.is_some());
         assert!(response.error.is_none());
-        
+
         let result = response.result.unwrap();
         assert_eq!(result["protocolVersion"], "2024-11-05");
         assert_eq!(result["serverInfo"]["name"], "CLT MCP Server");
@@ -1874,25 +1906,20 @@ mod tests {
     fn test_handle_tools_list() {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
-        
-        let server = McpServer::new(
-            "test-image".to_string(),
-            Some(temp_path)
-        ).unwrap();
+
+        let server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
 
         let response = server.handle_tools_list(Some(json!(2)));
-        
+
         assert_eq!(response.jsonrpc, "2.0");
         assert_eq!(response.id, Some(json!(2)));
         assert!(response.result.is_some());
-        
+
         let result = response.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 9);
-        
-        let tool_names: Vec<&str> = tools.iter()
-            .map(|t| t["name"].as_str().unwrap())
-            .collect();
+
+        let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert!(tool_names.contains(&"run_test"));
         assert!(tool_names.contains(&"refine_output"));
         assert!(tool_names.contains(&"test_match"));
@@ -1908,11 +1935,8 @@ mod tests {
     async fn test_execute_test_match_tool() {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
-        
-        let mut server = McpServer::new(
-            "test-image".to_string(),
-            Some(temp_path)
-        ).unwrap();
+
+        let mut server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
 
         let args = json!({
             "expected": "Hello World",
@@ -1922,7 +1946,7 @@ mod tests {
         let result = server.execute_tool("test_match", Some(args)).await.unwrap();
         let parsed: Value = serde_json::from_str(&result).unwrap();
         let test_result = &parsed["result"];
-        
+
         assert!(test_result["matches"].as_bool().unwrap());
         assert!(test_result["diff_lines"].as_array().unwrap().is_empty());
         assert_eq!(test_result["summary"], "Output matches expected pattern");
@@ -1932,11 +1956,8 @@ mod tests {
     async fn test_execute_test_match_tool_with_mismatch() {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
-        
-        let mut server = McpServer::new(
-            "test-image".to_string(),
-            Some(temp_path)
-        ).unwrap();
+
+        let mut server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
 
         let args = json!({
             "expected": "Hello World",
@@ -1946,45 +1967,50 @@ mod tests {
         let result = server.execute_tool("test_match", Some(args)).await.unwrap();
         let parsed: Value = serde_json::from_str(&result).unwrap();
         let test_result = &parsed["result"];
-        
+
         assert!(!test_result["matches"].as_bool().unwrap());
         assert!(!test_result["diff_lines"].as_array().unwrap().is_empty());
-        assert!(test_result["summary"].as_str().unwrap().contains("differences"));
+        assert!(test_result["summary"]
+            .as_str()
+            .unwrap()
+            .contains("differences"));
     }
 
     #[tokio::test]
     async fn test_execute_refine_output_tool() {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
-        
-        let mut server = McpServer::new(
-            "test-image".to_string(),
-            Some(temp_path)
-        ).unwrap();
+
+        let mut server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
 
         let args = json!({
             "expected": "Version: 1.2.3",
             "actual": "Version: 2.4.6"
         });
 
-        let result = server.execute_tool("refine_output", Some(args)).await.unwrap();
+        let result = server
+            .execute_tool("refine_output", Some(args))
+            .await
+            .unwrap();
         let parsed: Value = serde_json::from_str(&result).unwrap();
         let refine_result = &parsed["result"];
-        
+
         // Should provide some suggestions or patterns
-        assert!(!refine_result["suggestions"].as_array().unwrap().is_empty() || 
-                !refine_result["patterns_applied"].as_array().unwrap().is_empty());
+        assert!(
+            !refine_result["suggestions"].as_array().unwrap().is_empty()
+                || !refine_result["patterns_applied"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+        );
     }
 
     #[tokio::test]
     async fn test_execute_run_test_tool_with_nonexistent_file() {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
-        
-        let mut server = McpServer::new(
-            "test-image".to_string(),
-            Some(temp_path)
-        ).unwrap();
+
+        let mut server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
 
         let args = json!({
             "test_file": "/nonexistent/test.rec"
@@ -1993,25 +2019,25 @@ mod tests {
         let result = server.execute_tool("run_test", Some(args)).await.unwrap();
         let parsed: Value = serde_json::from_str(&result).unwrap();
         let test_result = &parsed["result"];
-        
+
         assert!(!test_result["success"].as_bool().unwrap());
         assert_eq!(test_result["errors"].as_array().unwrap().len(), 1);
         assert_eq!(test_result["errors"][0]["command"], "file_check");
-        assert!(test_result["errors"][0]["actual"].as_str().unwrap().contains("File not found"));
+        assert!(test_result["errors"][0]["actual"]
+            .as_str()
+            .unwrap()
+            .contains("File not found"));
     }
 
     #[tokio::test]
     async fn test_execute_unknown_tool() {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
-        
-        let mut server = McpServer::new(
-            "test-image".to_string(),
-            Some(temp_path)
-        ).unwrap();
+
+        let mut server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
 
         let result = server.execute_tool("unknown_tool", None).await;
-        
+
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Unknown tool"));
     }
@@ -2020,11 +2046,8 @@ mod tests {
     async fn test_execute_clt_help_tool() {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
-        
-        let mut server = McpServer::new(
-            "test-image".to_string(),
-            Some(temp_path)
-        ).unwrap();
+
+        let mut server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
 
         let args = json!({
             "topic": "overview"
@@ -2032,7 +2055,7 @@ mod tests {
 
         let result = server.execute_tool("clt_help", Some(args)).await.unwrap();
         let parsed: Value = serde_json::from_str(&result).unwrap();
-        
+
         assert_eq!(parsed["topic"], "CLT Overview");
         assert!(parsed["content"]["what_is_clt"].is_string());
         assert!(parsed["content"]["key_features"].is_array());
@@ -2042,11 +2065,8 @@ mod tests {
     fn test_handle_request_unknown_method() {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
-        
-        let mut server = McpServer::new(
-            "test-image".to_string(),
-            Some(temp_path)
-        ).unwrap();
+
+        let mut server = McpServer::new("test-image".to_string(), Some(temp_path)).unwrap();
 
         let request = McpRequest {
             jsonrpc: "2.0".to_string(),
@@ -2056,7 +2076,7 @@ mod tests {
         };
 
         let response = tokio_test::block_on(server.handle_request(request));
-        
+
         assert!(response.error.is_some());
         assert_eq!(response.error.unwrap().code, -32601);
     }
@@ -2069,7 +2089,8 @@ mod tests {
         assert!(success_response.result.is_some());
         assert!(success_response.error.is_none());
 
-        let error_response = McpResponse::error(Some(json!(2)), -32602, "Invalid params".to_string());
+        let error_response =
+            McpResponse::error(Some(json!(2)), -32602, "Invalid params".to_string());
         assert_eq!(error_response.jsonrpc, "2.0");
         assert_eq!(error_response.id, Some(json!(2)));
         assert!(error_response.result.is_none());
@@ -2081,11 +2102,8 @@ mod tests {
     async fn test_run_test_with_custom_docker_image() {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
-        
-        let mut server = McpServer::new(
-            "default-image".to_string(),
-            Some(temp_path)
-        ).unwrap();
+
+        let mut server = McpServer::new("default-image".to_string(), Some(temp_path)).unwrap();
 
         // Test with custom docker_image parameter
         let args = json!({
@@ -2095,22 +2113,25 @@ mod tests {
 
         let result = server.execute_tool("run_test", Some(args)).await.unwrap();
         let parsed: Value = serde_json::from_str(&result).unwrap();
-        
+
         // Verify the custom docker image is used
         assert_eq!(parsed["docker_image"], "custom-image");
-        assert!(parsed["help"]["docker_image_info"].as_str().unwrap().contains("custom-image"));
-        assert!(parsed["help"]["docker_image_info"].as_str().unwrap().contains("default: default-image"));
+        assert!(parsed["help"]["docker_image_info"]
+            .as_str()
+            .unwrap()
+            .contains("custom-image"));
+        assert!(parsed["help"]["docker_image_info"]
+            .as_str()
+            .unwrap()
+            .contains("default: default-image"));
     }
 
     #[tokio::test]
     async fn test_run_test_with_default_docker_image() {
         let temp_file = create_fake_clt_binary();
         let temp_path = temp_file.path().to_string_lossy().to_string();
-        
-        let mut server = McpServer::new(
-            "default-image".to_string(),
-            Some(temp_path)
-        ).unwrap();
+
+        let mut server = McpServer::new("default-image".to_string(), Some(temp_path)).unwrap();
 
         // Test without docker_image parameter (should use default)
         let args = json!({
@@ -2119,9 +2140,12 @@ mod tests {
 
         let result = server.execute_tool("run_test", Some(args)).await.unwrap();
         let parsed: Value = serde_json::from_str(&result).unwrap();
-        
+
         // Verify the default docker image is used
         assert_eq!(parsed["docker_image"], "default-image");
-        assert!(parsed["help"]["docker_image_info"].as_str().unwrap().contains("default-image"));
+        assert!(parsed["help"]["docker_image_info"]
+            .as_str()
+            .unwrap()
+            .contains("default-image"));
     }
 }

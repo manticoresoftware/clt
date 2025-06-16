@@ -36,7 +36,7 @@ pub struct McpError {
 pub struct McpTool {
     pub name: String,
     pub description: String,
-		#[serde(rename = "inputSchema")]
+    #[serde(rename = "inputSchema")]
     pub input_schema: serde_json::Value,
 }
 

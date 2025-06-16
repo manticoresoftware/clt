@@ -1,8 +1,8 @@
 use crate::mcp_protocol::{RunTestOutput, TestError, TestStructure};
 use anyhow::{Context, Result};
+use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::fs;
 
 #[derive(Debug)]
 pub struct TestRunner {
@@ -16,19 +16,23 @@ impl TestRunner {
             Some(path) => {
                 let path_buf = std::path::Path::new(&path);
                 if !path_buf.exists() {
-                    return Err(anyhow::anyhow!("CLT binary not found at specified path: {}", path));
+                    return Err(anyhow::anyhow!(
+                        "CLT binary not found at specified path: {}",
+                        path
+                    ));
                 }
                 if !path_buf.is_file() {
-                    return Err(anyhow::anyhow!("Specified CLT path is not a file: {}", path));
+                    return Err(anyhow::anyhow!(
+                        "Specified CLT path is not a file: {}",
+                        path
+                    ));
                 }
                 path
             }
-            None => {
-                which::which("clt")
-                    .context("CLT executable not found in PATH. Use --bin to specify path.")?
-                    .to_string_lossy()
-                    .to_string()
-            }
+            None => which::which("clt")
+                .context("CLT executable not found in PATH. Use --bin to specify path.")?
+                .to_string_lossy()
+                .to_string(),
         };
 
         Ok(Self {
@@ -39,7 +43,7 @@ impl TestRunner {
 
     pub fn run_test(&self, test_path: &str, docker_image: Option<&str>) -> Result<RunTestOutput> {
         let test_path = Path::new(test_path);
-        
+
         if !test_path.exists() {
             return Ok(RunTestOutput {
                 success: false,
@@ -58,13 +62,19 @@ impl TestRunner {
 
         // Execute CLT test command
         let output = Command::new(&self.clt_path)
-            .args(["test", "-t", &test_path.to_string_lossy(), "-d", image_to_use])
+            .args([
+                "test",
+                "-t",
+                &test_path.to_string_lossy(),
+                "-d",
+                image_to_use,
+            ])
             .output()
             .context("Failed to execute CLT test command")?;
 
         let exit_success = output.status.success();
         let stderr = String::from_utf8_lossy(&output.stderr);
-        
+
         if exit_success {
             Ok(RunTestOutput {
                 success: true,
@@ -115,13 +125,12 @@ impl TestRunner {
         let mut errors = Vec::new();
 
         // Read both files
-        let rec_content = fs::read_to_string(rec_path)
-            .context("Failed to read .rec file")?;
-        let rep_content = fs::read_to_string(rep_path)
-            .context("Failed to read .rep file")?;
+        let rec_content = fs::read_to_string(rec_path).context("Failed to read .rec file")?;
+        let rep_content = fs::read_to_string(rep_path).context("Failed to read .rep file")?;
 
         // Parse REC file into structured format (reuse existing logic)
-        let base_dir = rec_path.parent()
+        let base_dir = rec_path
+            .parent()
             .ok_or_else(|| anyhow::anyhow!("Cannot determine parent directory of .rec file"))?;
         let test_structure = crate::structured_test::parse_rec_content(&rec_content, base_dir)?;
 
@@ -135,7 +144,11 @@ impl TestRunner {
         let pattern_file = self.find_pattern_file(rec_path);
 
         // Compare output sequences using existing pattern matching logic
-        errors.extend(self.compare_output_sequences(&expected_outputs, &actual_outputs, pattern_file)?);
+        errors.extend(self.compare_output_sequences(
+            &expected_outputs,
+            &actual_outputs,
+            pattern_file,
+        )?);
 
         Ok(errors)
     }
@@ -156,21 +169,33 @@ impl TestRunner {
         &self.clt_path
     }
 
-    fn extract_all_outputs_from_structured(&self, test_structure: &TestStructure) -> Vec<OutputExpectation> {
+    fn extract_all_outputs_from_structured(
+        &self,
+        test_structure: &TestStructure,
+    ) -> Vec<OutputExpectation> {
         let mut outputs = Vec::new();
         let mut global_step_index = 0;
-        
-        self.extract_outputs_from_steps(&test_structure.steps, &mut outputs, &mut global_step_index);
+
+        self.extract_outputs_from_steps(
+            &test_structure.steps,
+            &mut outputs,
+            &mut global_step_index,
+        );
         outputs
     }
 
-    fn extract_outputs_from_steps(&self, steps: &[crate::mcp_protocol::TestStep], outputs: &mut Vec<OutputExpectation>, global_step_index: &mut usize) {
+    fn extract_outputs_from_steps(
+        &self,
+        steps: &[crate::mcp_protocol::TestStep],
+        outputs: &mut Vec<OutputExpectation>,
+        global_step_index: &mut usize,
+    ) {
         let mut current_input: Option<(String, usize)> = None;
-        
+
         for step in steps {
             let current_step_index = *global_step_index;
             *global_step_index += 1;
-            
+
             match step.step_type.as_str() {
                 "input" => {
                     if let Some(content) = &step.content {
@@ -239,9 +264,14 @@ impl TestRunner {
         Ok(outputs)
     }
 
-    fn compare_output_sequences(&self, expected: &[OutputExpectation], actual: &[ActualOutput], pattern_file: Option<String>) -> Result<Vec<TestError>> {
+    fn compare_output_sequences(
+        &self,
+        expected: &[OutputExpectation],
+        actual: &[ActualOutput],
+        pattern_file: Option<String>,
+    ) -> Result<Vec<TestError>> {
         let mut errors = Vec::new();
-        
+
         // Create pattern matcher (reuse existing CLT logic)
         let pattern_matcher = match cmp::PatternMatcher::new(pattern_file) {
             Ok(matcher) => matcher,
@@ -286,8 +316,8 @@ impl TestRunner {
 #[derive(Debug, Clone)]
 struct OutputExpectation {
     expected_content: String,
-    command: String,        // The input command that should produce this output
-    command_index: usize,   // Index of the step in the test structure (for error reporting)
+    command: String,      // The input command that should produce this output
+    command_index: usize, // Index of the step in the test structure (for error reporting)
 }
 
 #[derive(Debug, Clone)]
@@ -298,8 +328,8 @@ struct ActualOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_new_with_valid_bin_path() {
@@ -308,10 +338,7 @@ mod tests {
         writeln!(temp_file, "#!/bin/bash\necho 'fake clt'").unwrap();
         let temp_path = temp_file.path().to_string_lossy().to_string();
 
-        let runner = TestRunner::new(
-            "test-image".to_string(),
-            Some(temp_path.clone())
-        ).unwrap();
+        let runner = TestRunner::new("test-image".to_string(), Some(temp_path.clone())).unwrap();
 
         assert_eq!(runner.get_clt_path(), &temp_path);
         assert_eq!(runner.docker_image, "test-image");
@@ -321,11 +348,14 @@ mod tests {
     fn test_new_with_invalid_bin_path() {
         let result = TestRunner::new(
             "test-image".to_string(),
-            Some("/nonexistent/path".to_string())
+            Some("/nonexistent/path".to_string()),
         );
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("CLT binary not found"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("CLT binary not found"));
     }
 
     #[test]
@@ -333,10 +363,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let dir_path = temp_dir.path().to_string_lossy().to_string();
 
-        let result = TestRunner::new(
-            "test-image".to_string(),
-            Some(dir_path)
-        );
+        let result = TestRunner::new("test-image".to_string(), Some(dir_path));
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not a file"));
@@ -344,10 +371,7 @@ mod tests {
 
     #[test]
     fn test_run_test_with_nonexistent_file() {
-        let runner = TestRunner::new(
-            "test-image".to_string(),
-            None
-        );
+        let runner = TestRunner::new("test-image".to_string(), None);
 
         // Skip this test if CLT is not available
         if runner.is_err() {
@@ -365,10 +389,7 @@ mod tests {
 
     #[test]
     fn test_extract_all_outputs_from_structured() {
-        let runner = TestRunner::new(
-            "test-image".to_string(),
-            None
-        );
+        let runner = TestRunner::new("test-image".to_string(), None);
 
         // Skip this test if CLT is not available
         if runner.is_err() {
@@ -376,7 +397,7 @@ mod tests {
         }
 
         let runner = runner.unwrap();
-        
+
         // Create a test structure with nested blocks
         let test_structure = TestStructure {
             description: Some("Test with blocks".to_string()),
@@ -428,10 +449,7 @@ mod tests {
 
     #[test]
     fn test_extract_all_outputs_from_rep() {
-        let runner = TestRunner::new(
-            "test-image".to_string(),
-            None
-        );
+        let runner = TestRunner::new("test-image".to_string(), None);
 
         // Skip this test if CLT is not available
         if runner.is_err() {
@@ -440,7 +458,7 @@ mod tests {
 
         let runner = runner.unwrap();
         let rep_content = "––– input –––\necho hello\n––– output –––\nhello\n––– input –––\necho world\n––– output –––\nworld\n";
-        
+
         let outputs = runner.extract_all_outputs_from_rep(rep_content).unwrap();
 
         assert_eq!(outputs.len(), 2);
