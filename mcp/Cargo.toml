@@ -29,6 +29,9 @@ regex = "1.9"
 anyhow = "1.0"
 thiserror = "1.0"
 
+# CLI argument parsing
+clap = { version = "4.0", features = ["derive"] }
+
 # Process execution
 which = "4.0"
 

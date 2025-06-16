@@ -8,11 +8,39 @@ use pattern_refiner::PatternRefiner;
 use test_runner::TestRunner;
 
 use anyhow::Result;
+use clap::Parser;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
+
+/// CLT MCP Server - Model Context Protocol server for Command Line Tester
+#[derive(Parser, Debug)]
+#[command(
+    name = "clt-mcp",
+    version = "0.1.0",
+    about = "MCP server for CLT (Command Line Tester) integration",
+    long_about = "A Model Context Protocol server that provides tools for automated testing \
+                  of CLI applications in Docker containers with pattern matching support."
+)]
+struct Args {
+    /// Docker image to use for test execution
+    #[arg(
+        long = "docker-image",
+        help = "Docker image to use for test execution (e.g., ubuntu:20.04)",
+        value_name = "IMAGE"
+    )]
+    docker_image: String,
+
+    /// Path to CLT binary (optional, auto-discovered if not provided)
+    #[arg(
+        long = "bin",
+        help = "Path to CLT binary. If not provided, CLT will be auto-discovered in PATH",
+        value_name = "PATH"
+    )]
+    clt_binary_path: Option<String>,
+}
 
 #[derive(Debug)]
 struct McpServer {
@@ -1805,41 +1833,9 @@ impl McpServer {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
+    let args = Args::parse();
 
-    if args.len() < 3 {
-        std::process::exit(1);
-    }
-
-    let mut docker_image = None;
-    let mut clt_binary_path = None;
-    let mut i = 1;
-
-    while i < args.len() {
-        match args[i].as_str() {
-            "--docker-image" => {
-                if i + 1 >= args.len() {
-                    std::process::exit(1);
-                }
-                docker_image = Some(args[i + 1].clone());
-                i += 2;
-            }
-            "--bin" => {
-                if i + 1 >= args.len() {
-                    std::process::exit(1);
-                }
-                clt_binary_path = Some(args[i + 1].clone());
-                i += 2;
-            }
-            _ => {
-                std::process::exit(1);
-            }
-        }
-    }
-
-    let docker_image = docker_image.ok_or_else(|| anyhow::anyhow!("--docker-image is required"))?;
-
-    let mut server = McpServer::new(docker_image, clt_binary_path)?;
+    let mut server = McpServer::new(args.docker_image, args.clt_binary_path)?;
 
     server.run().await?;
 

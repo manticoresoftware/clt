@@ -49,14 +49,22 @@ Start the MCP server with a Docker image:
 
 # Use specific CLT binary path
 ./target/release/clt-mcp --docker-image ghcr.io/manticoresoftware/manticore:test-kit-latest --bin /path/to/clt
+
+# Get help and see all options
+./target/release/clt-mcp --help
+
+# Check version
+./target/release/clt-mcp --version
 ```
 
 The `--docker-image` parameter sets the **default** Docker image that will be used for all test executions. However, this can be overridden on a per-test basis by specifying the `docker_image` parameter when calling the `run_test` tool.
 
 ### Command Line Arguments
 
-- `--docker-image <image>` (required) - Docker image to use for test execution
-- `--bin <path>` (optional) - Path to CLT binary. If not provided, CLT will be auto-discovered in PATH
+- `--docker-image <IMAGE>` (required) - Docker image to use for test execution (e.g., ubuntu:20.04)
+- `--bin <PATH>` (optional) - Path to CLT binary. If not provided, CLT will be auto-discovered in PATH
+- `--help` - Show help information and usage
+- `--version` - Show version information
 
 The server reads JSON-RPC 2.0 messages from stdin and writes responses to stdout.
 
