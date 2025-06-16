@@ -5,12 +5,26 @@ A Model Context Protocol (MCP) server that exposes CLT (Command Line Tester) fun
 ## Features
 
 - **Full MCP Protocol Compliance**: JSON-RPC 2.0 over stdin/stdout
-- **Four Comprehensive Tools**: Run tests, match patterns, refine outputs, and get help
+- **Nine Comprehensive Tools**: Run tests, match patterns, refine outputs, get help, manage patterns, read/write/update/append structured tests
 - **Pattern Matching**: Support for CLT's pattern syntax including `%{PATTERN}` and `#!/regex/!#`
 - **Block Support**: Full support for reusable test blocks (`.recb` files) with relative paths
 - **Docker Integration**: Execute tests in isolated Docker containers
 - **Intelligent Error Reporting**: Detailed mismatch analysis and pattern suggestions
-3. **test_match** - Compare expected vs actual output using CLT pattern matching
+- **Structured Test Format**: AI-friendly JSON format for reading and writing test files
+
+## Available Tools
+
+The MCP server provides 9 comprehensive tools for CLT testing:
+
+1. **run_test** - Execute CLT test files in Docker containers
+2. **refine_output** - Suggest patterns for handling dynamic content
+3. **test_match** - Compare expected vs actual output with pattern matching
+4. **clt_help** - Get comprehensive CLT documentation and examples
+5. **get_patterns** - Retrieve all available patterns for the current project
+6. **read_test** - Convert .rec files to structured JSON format
+7. **write_test** - Create .rec files from structured JSON format
+8. **update_test** - Replace specific test steps in existing files
+9. **append_test** - Add new test steps to existing files
 
 ## Installation and Building
 
@@ -315,11 +329,13 @@ Comprehensive documentation about CLT concepts, file formats, and usage patterns
 
 **Available Topics:**
 - `overview` - CLT introduction and key concepts
-- `rec_format` - .rec file structure and syntax
+- `test_format` - Structured test format guide (AI-friendly JSON)
 - `patterns` - Pattern syntax guide with examples
+- `blocks` - Reusable test blocks (.recb files)
 - `workflow` - Step-by-step testing workflow
 - `examples` - Practical examples and use cases
 - `troubleshooting` - Common issues and solutions
+- `structured_tests` - AI-friendly JSON format for test creation
 
 **Output Example:**
 ```json
@@ -335,6 +351,159 @@ Comprehensive documentation about CLT concepts, file formats, and usage patterns
 }
 ```
 
+### 5. get_patterns
+
+Retrieve all available patterns for the current CLT project.
+
+**Input:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "method": "tools/call",
+  "params": {
+    "name": "get_patterns",
+    "arguments": {}
+  }
+}
+```
+
+### 6. read_test
+
+Read a CLT test file and return its structured representation as JSON.
+
+**Input:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "tools/call",
+  "params": {
+    "name": "read_test",
+    "arguments": {
+      "test_file": "/path/to/test.rec"
+    }
+  }
+}
+```
+
+### 7. write_test
+
+Write a CLT test file from structured JSON format.
+
+**Input:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "tools/call",
+  "params": {
+    "name": "write_test",
+    "arguments": {
+      "test_file": "/path/to/new_test.rec",
+      "test_structure": {
+        "description": "Simple hello world test",
+        "steps": [
+          {
+            "type": "input",
+            "args": [],
+            "content": "echo 'Hello World'"
+          },
+          {
+            "type": "output",
+            "args": [],
+            "content": "Hello World"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+### 8. update_test
+
+Replace specific test steps in an existing CLT test file.
+
+**Input:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "tools/call",
+  "params": {
+    "name": "update_test",
+    "arguments": {
+      "test_file": "/path/to/existing_test.rec",
+      "old_test_structure": {
+        "steps": [
+          {
+            "type": "input",
+            "args": [],
+            "content": "echo 'old command'"
+          },
+          {
+            "type": "output",
+            "args": [],
+            "content": "old command"
+          }
+        ]
+      },
+      "new_test_structure": {
+        "steps": [
+          {
+            "type": "input",
+            "args": [],
+            "content": "echo 'new command'"
+          },
+          {
+            "type": "output",
+            "args": [],
+            "content": "new command"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+### 9. append_test
+
+Append new test steps to an existing CLT test file.
+
+**Input:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "tools/call",
+  "params": {
+    "name": "append_test",
+    "arguments": {
+      "test_file": "/path/to/existing_test.rec",
+      "test_structure": {
+        "steps": [
+          {
+            "type": "comment",
+            "args": [],
+            "content": "Additional test steps"
+          },
+          {
+            "type": "input",
+            "args": [],
+            "content": "echo 'appended command'"
+          },
+          {
+            "type": "output",
+            "args": [],
+            "content": "appended command"
+          }
+        ]
+      }
+    }
+  }
+}
+```
 ## Pattern Support
 
 The MCP server supports CLT's pattern matching system:
