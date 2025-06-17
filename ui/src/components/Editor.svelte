@@ -100,6 +100,29 @@
 
   let commands: RecordingCommand[] = [];
   let autoSaveEnabled = true;
+
+  function duplicateCommand(index: number) {
+    if ($filesStore.currentFile) {
+      const command = commands[index];
+      filesStore.addCommand(index + 1, command.command, command.type || 'command');
+    }
+  }
+
+  function moveCommandUp(index: number) {
+    if (index > 0 && $filesStore.currentFile) {
+      const command = commands[index];
+      filesStore.deleteCommand(index);
+      filesStore.addCommand(index - 1, command.command, command.type || 'command');
+    }
+  }
+
+  function moveCommandDown(index: number) {
+    if (index < commands.length - 1 && $filesStore.currentFile) {
+      const command = commands[index];
+      filesStore.deleteCommand(index);
+      filesStore.addCommand(index + 1, command.command, command.type || 'command');
+    }
+  }
   $: commands = $filesStore.currentFile ? $filesStore.currentFile.commands : [];
 
   // Auto-resize action for textareas
@@ -563,19 +586,103 @@
                   <span class="command-duration">{formatDuration(command.duration)}</span>
                 {/if}
               </div>
-              <button
-                class="delete-button"
-                on:click={() => deleteCommand(i)}
-                aria-label="Delete command"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M3 6h18" />
-                  <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                  <path d="M10 11v6" />
-                  <path d="M14 11v6" />
-                </svg>
-                Delete
-              </button>
+              <div class="command-actions">
+                <!-- Move Up Button -->
+                <button
+                  class="action-button move-up"
+                  on:click={() => moveCommandUp(i)}
+                  title="Move up"
+                  aria-label="Move command up"
+                  disabled={i === 0}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M18 15l-6-6-6 6"></path>
+                  </svg>
+                </button>
+
+                <!-- Move Down Button -->
+                <button
+                  class="action-button move-down"
+                  on:click={() => moveCommandDown(i)}
+                  title="Move down"
+                  aria-label="Move command down"
+                  disabled={i === commands.length - 1}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M6 9l6 6 6-6"></path>
+                  </svg>
+                </button>
+
+                <div class="action-separator"></div>
+
+                <!-- Add Command Button -->
+                <button
+                  class="action-button add-command"
+                  on:click={() => addCommand(i + 1, 'command')}
+                  title="Add command"
+                  aria-label="Add command"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                </button>
+
+                <!-- Add Block Button -->
+                <button
+                  class="action-button add-block"
+                  on:click={() => addCommand(i + 1, 'block')}
+                  title="Add block reference"
+                  aria-label="Add block reference"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                  </svg>
+                </button>
+
+                <!-- Add Comment Button -->
+                <button
+                  class="action-button add-comment"
+                  on:click={() => addCommand(i + 1, 'comment')}
+                  title="Add comment"
+                  aria-label="Add comment"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                  </svg>
+                </button>
+
+                <!-- Duplicate Button -->
+                <button
+                  class="action-button duplicate"
+                  on:click={() => duplicateCommand(i)}
+                  title="Duplicate"
+                  aria-label="Duplicate command"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                  </svg>
+                </button>
+
+                <div class="action-separator"></div>
+
+                <!-- Delete Button -->
+                <button
+                  class="action-button delete"
+                  on:click={() => deleteCommand(i)}
+                  title="Delete"
+                  aria-label="Delete command"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 6h18" />
+                    <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                    <path d="M10 11v6" />
+                    <path d="M14 11v6" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             <!-- Command input -->
@@ -753,46 +860,6 @@
             </div>
           </div>
 
-          <!-- Add command button between items -->
-          <div class="add-commands-row">
-            <button
-              class="add-command-button"
-              on:click={() => addCommand(i + 1, 'command')}
-              title="Add command"
-              aria-label="Add command"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19"></line>
-                <line x1="5" y1="12" x2="19" y2="12"></line>
-              </svg>
-              <span>Command</span>
-            </button>
-
-            <button
-              class="add-block-button"
-              on:click={() => addCommand(i + 1, 'block')}
-              title="Add block reference"
-              aria-label="Add block reference"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-              </svg>
-              <span>Block</span>
-            </button>
-
-            <button
-              class="add-comment-button"
-              on:click={() => addCommand(i + 1, 'comment')}
-              title="Add comment"
-              aria-label="Add comment"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-              </svg>
-              <span>Comment</span>
-            </button>
-          </div>
         {/each}
 
         <!-- Add first command button if no commands -->

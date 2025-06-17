@@ -401,22 +401,91 @@ body {
   font-size: 11px;
 }
 
-.delete-button {
+/* Command Actions - Clean Icon-Only Design */
+.command-actions {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  background-color: transparent;
-  color: #e53e3e;
-  border: none;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background-color var(--transition-fast);
+  gap: 2px;
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
 }
 
-.delete-button:hover {
-  background-color: #fed7d7;
+.command-card:hover .command-actions {
+  opacity: 1;
+}
+
+.action-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background-color: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  color: var(--color-text-tertiary);
+}
+
+.action-button:hover:not(:disabled) {
+  background-color: var(--color-bg-hover);
+  color: var(--color-text-primary);
+  transform: scale(1.1);
+}
+
+.action-button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.action-button.add-command:hover:not(:disabled) {
+  color: #059669;
+  background-color: rgba(5, 150, 105, 0.1);
+}
+
+.action-button.add-block:hover:not(:disabled) {
+  color: #7c3aed;
+  background-color: rgba(124, 58, 237, 0.1);
+}
+
+.action-button.add-comment:hover:not(:disabled) {
+  color: #0ea5e9;
+  background-color: rgba(14, 165, 233, 0.1);
+}
+
+.action-button.move-up:hover:not(:disabled),
+.action-button.move-down:hover:not(:disabled) {
+  color: #6b7280;
+  background-color: rgba(107, 114, 128, 0.1);
+}
+
+.action-button.duplicate:hover:not(:disabled) {
+  color: #f59e0b;
+  background-color: rgba(245, 158, 11, 0.1);
+}
+
+.action-button.delete:hover:not(:disabled) {
+  color: #e53e3e;
+  background-color: rgba(229, 62, 62, 0.1);
+}
+
+/* Action Separator */
+.action-separator {
+  width: 1px;
+  height: 14px;
+  background-color: var(--color-border-light);
+  margin: 0 4px;
+  opacity: 0.5;
+}
+
+/* Legacy styles - remove */
+.delete-button,
+.dropdown-container,
+.dropdown-menu,
+.dropdown-item {
+  display: none;
 }
 
 .command-body {
