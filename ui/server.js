@@ -186,6 +186,9 @@ async function ensureGitRemoteWithToken(gitInstance, token) {
 // Store user tokens for repository operations
 global.userTokens = {};
 
+// Store for interactive sessions
+global.interactiveSessions = {};
+
 // Make the function available globally for the auth system
 global.ensureUserRepo = ensureUserRepo;
 
@@ -1456,6 +1459,214 @@ app.get('/api/get-patterns', isAuthenticated, async (req, res) => {
 	} catch (error) {
 		console.error('Error reading patterns file:', error);
 		res.status(500).json({ error: 'Failed to read patterns file' });
+	}
+});
+
+// Interactive session endpoints
+// Start a new interactive command session
+app.post('/api/interactive/start', isAuthenticated, async (req, res) => {
+	try {
+		const { input } = req.body;
+		
+		if (!input || !input.trim()) {
+			return res.status(400).json({ error: 'Input is required' });
+		}
+
+		// Check if user is authenticated
+		if (!req.user || !req.user.username) {
+			return res.status(401).json({ error: 'Authentication required' });
+		}
+
+		const username = req.user.username;
+
+		// Check if user already has a running session
+		if (global.interactiveSessions[username] && global.interactiveSessions[username].running) {
+			return res.status(409).json({ error: 'Another command is already running for this user' });
+		}
+
+		// Generate session ID
+		const sessionId = `${username}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+		// Get the interactive command from environment
+		const askAiCommand = process.env.ASK_AI_COMMAND || 'docker run --rm -i ubuntu:latest bash -c "echo \\"Input received:\\"; cat; echo \\"\\nSleeping for 2 seconds...\\"; sleep 2; echo \\"Done!\\""';
+		const askAiTimeout = parseInt(process.env.ASK_AI_TIMEOUT || '30000');
+		
+		console.log(`Starting interactive session ${sessionId} for user ${username}`);
+		console.log(`Command: ${askAiCommand}`);
+		console.log(`Input: ${input}`);
+		console.log(`Timeout: ${askAiTimeout}ms`);
+
+		// Initialize session
+		const session = {
+			id: sessionId,
+			username,
+			running: true,
+			completed: false,
+			logs: [],
+			output: '',
+			startTime: new Date(),
+			process: null,
+			timeout: null
+		};
+
+		global.interactiveSessions[username] = session;
+
+		// Import child_process
+		const { spawn } = await import('child_process');
+
+		// Start the process with shell to handle complex commands
+		const childProcess = spawn('sh', ['-c', askAiCommand], {
+			stdio: ['pipe', 'pipe', 'pipe']
+		});
+
+		session.process = childProcess;
+
+		// Set up timeout
+		session.timeout = setTimeout(() => {
+			if (session.running && childProcess) {
+				console.log(`Session ${sessionId} timed out after ${askAiTimeout}ms`);
+				childProcess.kill('SIGTERM');
+				session.logs.push(`\nTIMEOUT: Command timed out after ${askAiTimeout}ms`);
+			}
+		}, askAiTimeout);
+
+		// Send input to the process
+		childProcess.stdin.write(input);
+		childProcess.stdin.end();
+
+		// Handle stdout
+		childProcess.stdout.on('data', (data) => {
+			const output = data.toString();
+			session.logs.push(output);
+			console.log(`Session ${sessionId} stdout:`, output);
+		});
+
+		// Handle stderr
+		childProcess.stderr.on('data', (data) => {
+			const output = data.toString();
+			session.logs.push(`STDERR: ${output}`);
+			console.log(`Session ${sessionId} stderr:`, output);
+		});
+
+		// Handle process completion
+		childProcess.on('close', (code) => {
+			session.running = false;
+			session.completed = true;
+			session.exitCode = code;
+			session.output = session.logs.join('');
+			session.endTime = new Date();
+			
+			// Clear timeout
+			if (session.timeout) {
+				clearTimeout(session.timeout);
+				session.timeout = null;
+			}
+			
+			console.log(`Session ${sessionId} completed with exit code: ${code}`);
+			
+			// Clean up after 5 minutes
+			setTimeout(() => {
+				if (global.interactiveSessions[username] && global.interactiveSessions[username].id === sessionId) {
+					delete global.interactiveSessions[username];
+					console.log(`Cleaned up session ${sessionId}`);
+				}
+			}, 5 * 60 * 1000);
+		});
+
+		// Handle process error
+		childProcess.on('error', (error) => {
+			session.running = false;
+			session.completed = true;
+			session.error = error.message;
+			session.logs.push(`ERROR: ${error.message}`);
+			session.output = session.logs.join('');
+			
+			// Clear timeout
+			if (session.timeout) {
+				clearTimeout(session.timeout);
+				session.timeout = null;
+			}
+			
+			console.error(`Session ${sessionId} error:`, error);
+		});
+
+		res.json({ sessionId, status: 'started' });
+	} catch (error) {
+		console.error('Error starting interactive session:', error);
+		res.status(500).json({ error: 'Failed to start interactive session' });
+	}
+});
+
+// Get status of an interactive session
+app.get('/api/interactive/status/:sessionId', isAuthenticated, async (req, res) => {
+	try {
+		const { sessionId } = req.params;
+		
+		if (!req.user || !req.user.username) {
+			return res.status(401).json({ error: 'Authentication required' });
+		}
+
+		const username = req.user.username;
+		const session = global.interactiveSessions[username];
+
+		if (!session || session.id !== sessionId) {
+			return res.status(404).json({ error: 'Session not found' });
+		}
+
+		res.json({
+			sessionId,
+			running: session.running,
+			completed: session.completed,
+			logs: session.logs,
+			output: session.output,
+			exitCode: session.exitCode,
+			error: session.error,
+			startTime: session.startTime,
+			endTime: session.endTime
+		});
+	} catch (error) {
+		console.error('Error getting session status:', error);
+		res.status(500).json({ error: 'Failed to get session status' });
+	}
+});
+
+// Cancel an interactive session
+app.post('/api/interactive/cancel/:sessionId', isAuthenticated, async (req, res) => {
+	try {
+		const { sessionId } = req.params;
+		
+		if (!req.user || !req.user.username) {
+			return res.status(401).json({ error: 'Authentication required' });
+		}
+
+		const username = req.user.username;
+		const session = global.interactiveSessions[username];
+
+		if (!session || session.id !== sessionId) {
+			return res.status(404).json({ error: 'Session not found' });
+		}
+
+		if (session.process && session.running) {
+			session.process.kill('SIGTERM');
+			session.running = false;
+			session.completed = true;
+			session.cancelled = true;
+			session.logs.push('\nProcess cancelled by user');
+			session.output = session.logs.join('');
+			
+			// Clear timeout
+			if (session.timeout) {
+				clearTimeout(session.timeout);
+				session.timeout = null;
+			}
+			
+			console.log(`Session ${sessionId} cancelled by user`);
+		}
+
+		res.json({ status: 'cancelled' });
+	} catch (error) {
+		console.error('Error cancelling session:', error);
+		res.status(500).json({ error: 'Failed to cancel session' });
 	}
 });
 

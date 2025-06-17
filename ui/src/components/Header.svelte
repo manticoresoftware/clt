@@ -5,10 +5,12 @@
   import { branchStore } from '../stores/branchStore';
   import { onMount } from 'svelte';
   import { API_URL } from '../config.js';
+  import InteractiveSession from './InteractiveSession.svelte';
 
   let dockerImage = $filesStore.dockerImage;
   let hasGitChanges = false;
   let isGitStatusLoading = false;
+  let interactiveSession: any;
 
   function updateDockerImage() {
     filesStore.setDockerImage(dockerImage);
@@ -61,6 +63,10 @@
   function openCreatePrModal() {
     githubStore.showModal();
   }
+
+  function openInteractiveSession() {
+    interactiveSession?.openSession();
+  }
 </script>
 
 <div class="header">
@@ -99,6 +105,17 @@
 
   <div class="user-profile">
     {#if $authStore.isAuthenticated && !$authStore.isLoading}
+      <button
+        class="interactive-button"
+        on:click={openInteractiveSession}
+        title="Ask AI"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+        Ask AI
+      </button>
+      
       <button
         class="create-pr-button {!hasGitChanges ? 'disabled' : ''}"
         on:click={openCreatePrModal}
@@ -146,6 +163,9 @@
     {/if}
   </div>
 </div>
+
+<!-- Interactive Session Modal -->
+<InteractiveSession bind:this={interactiveSession} />
 
 <style>
   .loading-indicator {
@@ -234,5 +254,24 @@
 
   .create-pr-button.disabled:hover {
     background-color: var(--color-bg-accent);
+  }
+
+  .interactive-button {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    background-color: var(--color-bg-info, #0ea5e9);
+    color: white;
+    border: none;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin-right: var(--spacing-md);
+  }
+
+  .interactive-button:hover {
+    background-color: var(--color-bg-info-hover, #0284c7);
   }
 </style>
