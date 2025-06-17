@@ -41,8 +41,8 @@ Test options:
     Path to the .rec file containing inputs and outputs
   -d, --debug, --diff
     Show diff produced by cmp tool to stdout
-	-D, --delay=timeout-in-ms
-	  Delay between commands in ms (default: 5)
+  -D, --delay=timeout-in-ms
+    Delay between commands in ms (default: 5)
   [docker image]
     Docker image to run commands in
 

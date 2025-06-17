@@ -1,0 +1,18 @@
+[build]
+# Default to static linking
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.x86_64-unknown-linux-musl]
+linker = "x86_64-linux-musl-gcc"
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-unknown-linux-musl]
+linker = "aarch64-linux-musl-gcc"
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# For macOS static linking (as much as possible)
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-feature=+crt-static"]

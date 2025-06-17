@@ -126,7 +126,7 @@ fn compile_recursive(file_path: &Path, visited: &mut HashSet<PathBuf>) -> Result
 	// Remove this path from visited to allow it to be used in other branches
 	visited.remove(file_path);
 
-	Ok(result)
+	Ok(result.trim().to_string())
 }
 
 /// Create a fresh statement line to place in file with additional argument in case we need it
