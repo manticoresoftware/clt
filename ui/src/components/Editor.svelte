@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { PatternMatcher } from '../../pkg/wasm_diff';
   import { API_URL } from '../config.js';
+  import SimpleCodeMirror from './SimpleCodeMirror.svelte';
 
   // Add global TypeScript interface for window
   declare global {
@@ -689,17 +690,11 @@
             <div class="command-body">
               {#if command.type === 'block'}
                 <!-- Block reference input -->
-                <textarea
-                  class="command-input"
+                <SimpleCodeMirror
                   placeholder="Enter path to file (without .recb extension)"
-                  rows="1"
                   bind:value={command.command}
                   on:input={(e) => {
                     try {
-                      // Auto-resize textarea based on content
-                      e.target.style.height = 'auto';
-                      e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
-
                       // Create a local copy of the value to avoid direct store manipulation
                       const newValue = e.target.value;
 
@@ -711,21 +706,14 @@
                       console.error('Error updating block reference:', err);
                     }
                   }}
-                  use:initTextArea
-                ></textarea>
+                />
               {:else if command.type === 'comment'}
                 <!-- Comment input -->
-                <textarea
-                  class="command-input"
+                <SimpleCodeMirror
                   placeholder="Enter your comment here..."
-                  rows="1"
                   bind:value={command.command}
                   on:input={(e) => {
                     try {
-                      // Auto-resize textarea based on content
-                      e.target.style.height = 'auto';
-                      e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
-
                       // Create a local copy of the value to avoid direct store manipulation
                       const newValue = e.target.value;
 
@@ -737,21 +725,14 @@
                       console.error('Error updating comment:', err);
                     }
                   }}
-                  use:initTextArea
-                ></textarea>
+                />
               {:else}
-                <!-- Standard command input -->
-                <textarea
-                  class="command-input"
+                <!-- Standard command input with syntax highlighting -->
+                <SimpleCodeMirror
                   placeholder="Enter command..."
-                  rows="1"
                   bind:value={command.command}
                   on:input={(e) => {
                     try {
-                      // Auto-resize textarea based on content
-                      e.target.style.height = 'auto';
-                      e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
-
                       // Create a local copy of the value to avoid direct store manipulation
                       const newValue = e.target.value;
 
@@ -763,8 +744,7 @@
                       console.error('Error updating command:', err);
                     }
                   }}
-                  use:initTextArea
-                ></textarea>
+                />
 
                 <!-- Output section (only for regular commands) -->
                 {#if !command.initializing}
