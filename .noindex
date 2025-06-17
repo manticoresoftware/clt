@@ -1,0 +1,10 @@
+ui/node_modules/**
+ui/dist/**
+ui/workdir/**
+ui/pkg/**
+ui/public/**
+wasm-diff/**
+rec/target/**
+cmp/target/**
+parser/target/**
+mcp/target/**

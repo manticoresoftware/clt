@@ -1,24 +1,61 @@
-# Manticore Test Editor
+# CLT UI - Command Line Tool Test Interface
 
-A UI application for editing and validating Manticore test files with .rec extension. It provides a web-based interface for creating, editing, and running CLT tests with real-time feedback.
+A comprehensive Svelte-based web application for managing and testing Command Line Tool (CLT) test files with advanced Git integration and Docker support.
 
-## Features
+## 🏗️ Architecture Overview
 
-- File tree explorer for navigating and managing .rec files
-- Editor for test commands and expected outputs
-- Real-time pattern-based diff comparison using WebAssembly
-- Docker image configuration for test validation
-- Support for subdirectories and reusable blocks
-- GitHub authentication with user access control
+### Technology Stack
+- **Frontend**: Svelte 5.20.2 with TypeScript 5.7.2
+- **Build Tool**: Vite 6.2.0 with hot-reload development
+- **Styling**: TailwindCSS 4.1.3 with PostCSS processing
+- **Backend**: Express.js 4.18.3 with Node.js ES modules
+- **Authentication**: Passport.js with GitHub OAuth2 strategy
+- **Git Operations**: simple-git 3.27.0 for repository management
+- **File Management**: Native Node.js fs/promises with security validation
+- **WASM Module**: Custom Rust-based pattern matching engine (wasm_diff)
+- **Session Management**: express-session 1.18.1 with secure cookies
 
-## Getting Started
+## 📁 Project Structure
+
+```
+ui/
+├── src/                          # Frontend source code
+│   ├── components/               # Svelte components
+│   │   ├── Header.svelte        # Navigation, Docker settings, git status
+│   │   ├── FileExplorer.svelte  # File tree with drag-and-drop
+│   │   ├── Editor.svelte        # Main .rec file editor with WASM
+│   │   └── PullRequestModal.svelte # GitHub PR creation
+│   ├── stores/                   # Svelte state management
+│   │   ├── filesStore.ts        # File operations & test execution
+│   │   ├── authStore.ts         # GitHub authentication state
+│   │   ├── branchStore.ts       # Git branch operations
+│   │   └── githubStore.ts       # Pull request management
+│   ├── App.svelte               # Root component with auth flow
+│   ├── main.ts                  # Application entry point
+│   └── config.js                # API configuration
+├── pkg/                         # WASM module (Rust-compiled)
+│   ├── wasm_diff.js            # WASM JavaScript bindings
+│   ├── wasm_diff_bg.wasm       # Compiled WASM binary
+│   └── *.d.ts                  # TypeScript definitions
+├── public/                      # Static assets
+│   └── auth/login.html         # Login page
+├── config/                      # Server configuration
+│   └── auth.js                 # Authentication settings
+├── server.js                   # Express backend server
+├── auth.js                     # Passport.js authentication
+├── dev.js                      # Development server runner
+└── package.json                # Dependencies and scripts
+```
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
 - Node.js (v18 or higher recommended)
 - npm or yarn
 - GitHub OAuth application (for authentication)
-- [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/) (for building the wasm-diff module)
+- Docker (for test execution)
+- Git CLI tools
 
 ### Installation
 
@@ -34,16 +71,7 @@ cp .env.example .env
 
 # Edit the .env file with your GitHub OAuth credentials and allowed usernames
 
-# Build the wasm-diff module (if not already built)
-cd ../wasm-diff
-wasm-pack build --target web
-
-# Copy the built wasm module to the UI package directory
-mkdir -p ../ui/pkg
-cp -r pkg/* ../ui/pkg/
-
-# Return to the UI directory and start the development server
-cd ../ui
+# Start development servers (frontend + backend)
 npm run dev
 ```
 
@@ -160,7 +188,70 @@ This will create a production-ready build in the `dist` directory and start the 
 npm run test
 ```
 
-## Technical Details
+## 🔧 Backend Architecture (server.js)
+
+### Core Features
+
+1. **User Repository Management**
+   - Per-user Git repository cloning
+   - Secure directory isolation
+   - Token-based authentication for Git operations
+
+2. **File Operations API**
+   ```javascript
+   GET  /api/get-file-tree     # Hierarchical file listing
+   GET  /api/get-file          # File content retrieval
+   POST /api/save-file         # File content saving
+   POST /api/move-file         # File/directory movement
+   DELETE /api/delete-file     # File/directory deletion
+   ```
+
+3. **Test Execution Engine**
+   ```javascript
+   POST /api/run-test          # Execute CLT tests with Docker
+   ```
+   - Docker container orchestration
+   - .rec/.recb file processing
+   - Output comparison and status reporting
+   - Duration tracking and performance metrics
+
+4. **Git Integration**
+   ```javascript
+   GET  /api/git-status        # Repository status
+   GET  /api/current-branch    # Branch information
+   POST /api/reset-to-branch   # Branch reset operations
+   POST /api/create-pr         # Pull request creation
+   ```
+
+5. **Authentication System**
+   ```javascript
+   GET  /auth/github           # GitHub OAuth initiation
+   GET  /auth/github/callback  # OAuth callback handler
+   GET  /api/current-user      # User session validation
+   GET  /logout                # Session termination
+   ```
+
+### Security Model
+
+1. **Path Validation**: All file operations validate paths within user directories
+2. **Authentication**: GitHub OAuth with configurable user allowlist
+3. **Session Security**: Secure cookie configuration with SameSite protection
+4. **CORS Configuration**: Development-friendly CORS with production security
+
+## 📊 Performance Optimizations
+
+### Frontend Optimizations
+- **Debounced Auto-save**: Configurable delay to prevent excessive API calls
+- **Optimistic Updates**: Immediate UI feedback for file operations
+- **Batch Operations**: Efficient multi-file operations
+- **WASM Acceleration**: High-performance pattern matching
+
+### Backend Optimizations
+- **Streaming File Operations**: Efficient handling of large files
+- **Git Operation Caching**: Reduced redundant Git operations
+- **Process Isolation**: Secure and efficient Docker container management
+
+## 🔍 Technical Details
 
 ### Real-time Comparison
 
@@ -173,19 +264,24 @@ The UI performs real-time comparison between expected and actual output as you t
 
 The comparison is intelligent enough to ignore differences in variable values that match defined patterns, making test development much faster and less error-prone.
 
-### Server API Endpoints
+## 🚦 Deployment Considerations
 
-The UI server provides several API endpoints:
+### Production Build
+- **Asset Optimization**: Minified and compressed static assets
+- **Code Splitting**: Optimized bundle loading
+- **Security Headers**: Production-ready security configuration
 
-- `/api/get-file-tree` - Returns the file tree structure
-- `/api/get-file` - Gets the content of a specified file
-- `/api/save-file` - Saves content to a file
-- `/api/create-directory` - Creates a new directory
-- `/api/run-test` - Executes a test and returns results
-- `/api/get-patterns` - Retrieves and parses the patterns file
+### Environment Requirements
+- **Node.js**: ES modules support required
+- **Docker**: Container runtime for test execution
+- **Git**: Repository operations and CLI tools
+- **GitHub CLI**: Required for pull request creation
 
-## Limitations
+## ⚠️ Limitations
 
 - Performance may be affected when dealing with very large output files
 - Authentication is currently limited to GitHub OAuth
 - Wasm-diff module must be compiled and placed in the pkg directory
+- GitHub CLI must be installed for pull request creation functionality
+
+This architecture provides a robust, scalable foundation for CLT test management with modern web technologies and comprehensive Git integration.
