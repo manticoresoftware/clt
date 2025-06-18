@@ -20,6 +20,10 @@ interface RecordingCommand {
   duration?: number; // Command execution duration
   isOutputExpanded?: boolean; // Track whether outputs are expanded
   type?: 'command' | 'block' | 'comment'; // Type of the command
+  // New structured properties
+  isBlockCommand?: boolean; // Command from a block reference
+  blockSource?: string; // Source file for block commands
+  parentBlock?: { command: string; type: string }; // Reference to parent block
 }
 
 interface RecordingFile {
@@ -186,13 +190,8 @@ const checkFileLoaded = async (path: string) => {
 
     if (response.ok) {
       const data = await response.json();
-      const fileContent = data.content;
-
-      // Parse the file content into commands
-      const commands = parseRecFileContent(fileContent);
-
-      // Return the parsed commands
-      return { success: true, commands };
+      
+      // Check if we have structured data from backend (WASM-parsed)\n      if (data.uiCommands && data.wasmparsed) {\n        console.log('✅ Using WASM-parsed commands from backend');\n        return { \n          success: true, \n          commands: data.uiCommands, \n          structuredData: data.structuredData,\n          method: 'wasm'\n        };\n      } else if (data.uiCommands) {\n        console.log('✅ Using structured commands from backend');\n        return { \n          success: true, \n          commands: data.uiCommands, \n          structuredData: data.structuredData,\n          method: 'structured'\n        };\n      } else {\n        // Fallback to manual parsing for backward compatibility\n        console.log('⚠️ Using manual parsing fallback');\n        const fileContent = data.content;\n        const commands = parseRecFileContent(fileContent);\n        return { success: true, commands, method: 'manual' };\n      }
     } else {
       return { success: false, error: `Failed to load file: ${response.statusText}` };
     }
@@ -206,7 +205,129 @@ function createFilesStore() {
   const { subscribe, set, update } = writable<FilesState>(defaultState);
   let runModule: any; // Reference to the module itself for self-referencing
 
+  // Helper function to get patterns using WASM
+  const getWasmPatterns = async (): Promise<Record<string, string>> => {
+    try {
+      const patternsArray = await getPatterns();
+      const patterns: Record<string, string> = {};
+
+      patternsArray.forEach(pattern => {
+        patterns[pattern.name] = pattern.pattern;
+      });
+
+      return patterns;
+    } catch (error) {
+      console.warn('Failed to load patterns via WASM:', error);
+      return {};
+    }
+  };
+
   const saveFileToBackend = async (file: RecordingFile) => {
+    // Convert UI commands to structured format for WASM backend
+    const convertUIToStructured = (commands: RecordingCommand[]) => {
+      const testSteps = commands.map(cmd => {
+        if (cmd.type === 'block') {
+          return {
+            Block: {
+              path: cmd.command,
+              source_file: cmd.blockSource || null
+            }
+          };
+        } else if (cmd.type === 'comment') {
+          return {
+            Comment: cmd.command
+          };
+        } else {
+          return {
+            Command: {
+              input: cmd.command,
+              expected_output: cmd.expectedOutput || '',
+              actual_output: cmd.actualOutput || null
+            }
+          };
+        }
+      });
+
+      return {
+        steps: testSteps,
+        metadata: {
+          created_at: new Date().toISOString(),
+          version: "1.0"
+        }
+      };
+    };
+
+    // Format the file content according to the .rec format (manual fallback)
+    let content = '';
+    file.commands.forEach((cmd, index) => {
+      // Add newline before section if not the first command
+      if (index > 0) {
+        content += '\\n';
+      }
+
+      // Handle different command types
+      if (cmd.type === 'block') {
+        // Format as block reference - no extra newline after
+        content += `––– block: ${cmd.command} –––`;
+      } else if (cmd.type === 'comment') {
+        // Format as comment - no extra newline after
+        content += `––– comment –––\\n${cmd.command}`;
+      } else {
+        // Default - regular command (input/output format)
+        content += '––– input –––\\n';
+        content += cmd.command;
+        
+        // Don't add extra newline if command already ends with one
+        if (!cmd.command.endsWith('\\n')) {
+          content += '\\n';
+        }
+        
+        // Add output section marker - no extra newline for empty outputs
+        content += '––– output –––';
+
+        // Use the expected output if provided, otherwise use actual output if available
+        // Make sure to maintain all whitespace and newlines exactly as in the expected output
+        const outputToSave = cmd.expectedOutput || cmd.actualOutput || '';
+        
+        // Only add a newline before the output if there's actual content
+        if (outputToSave && outputToSave.trim() !== '') {
+          content += '\\n' + outputToSave;
+        }
+      }
+    });
+
+    try {
+      // Prepare structured data for WASM backend
+      const structuredData = convertUIToStructured(file.commands);
+      
+      const response = await fetch(`${API_URL}/api/save-file`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include', // Add credentials for cookie passing
+        body: JSON.stringify({
+          path: file.path,
+          content, // Manual format as fallback
+          structuredData // Structured format for WASM
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to save file: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      console.log('✅ File saved via WASM backend');
+      return result;
+    } catch (error) {
+      console.error('Error saving file:', error);
+      throw error;
+    }
+  };
+
+  // Fallback manual save function
+  const saveFileToBackendManual = async (file: RecordingFile) => {
     // Format the file content according to the .rec format
     let content = '';
 
@@ -227,19 +348,19 @@ function createFilesStore() {
         // Default - regular command (input/output format)
         content += '––– input –––\n';
         content += cmd.command;
-        
+
         // Don't add extra newline if command already ends with one
         if (!cmd.command.endsWith('\n')) {
           content += '\n';
         }
-        
+
         // Add output section marker - no extra newline for empty outputs
         content += '––– output –––';
 
         // Use the expected output if provided, otherwise use actual output if available
         // Make sure to maintain all whitespace and newlines exactly as in the expected output
         const outputToSave = cmd.expectedOutput || cmd.actualOutput || '';
-        
+
         // Only add a newline before the output if there's actual content
         if (outputToSave && outputToSave.trim() !== '') {
           content += '\n' + outputToSave;
@@ -434,7 +555,7 @@ function createFilesStore() {
 
         // Determine overall file status
         const exitCodeSuccess = result.exitCodeSuccess === true;
-        
+
         // Trust server's success value first, then exitCode status
         let allPassed = false;
         if (typeof result.success === 'boolean') {
@@ -450,24 +571,24 @@ function createFilesStore() {
           if (cmd.type === 'block') {
             // Log the specific block reference we're processing
             console.log(`Processing block reference: ${cmd.command}`);
-            
+
             // Find all commands from this block by checking isBlockCommand flag and parentBlock reference
             const blockCommands = mergedCommands.filter(c => {
-              return c.isBlockCommand && 
-                     c.parentBlock && 
+              return c.isBlockCommand &&
+                     c.parentBlock &&
                      cmd.command === c.parentBlock.command;
             });
-            
+
             console.log(`Found ${blockCommands.length} commands for this block`);
-            
+
             if (blockCommands.length > 0) {
               // If any block command failed, mark the block as failed
               const anyFailed = blockCommands.some(bc => bc.status === 'failed');
               // If any block command is matched, consider the block matched
               const anyMatched = blockCommands.some(bc => bc.status === 'matched');
-              
+
               console.log(`Block ${cmd.command}: anyFailed=${anyFailed}, anyMatched=${anyMatched}`);
-              
+
               // If no failures and at least one command matched, mark as matched
               return {
                 ...cmd,
@@ -1062,7 +1183,32 @@ function createFilesStore() {
         }
       }, 0);
     },
-    runTest: runCurrentTest
+    runTest: runCurrentTest,
+
+    // Add validation function
+    validateTest: async (filePath: string) => {
+      try {
+        const response = await fetch(`${API_URL}/api/validate-test`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include',
+          body: JSON.stringify({ filePath })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Validation failed: ${response.statusText}`);
+        }
+
+        const validationResult = await response.json();
+        console.log('✅ Test validation completed via WASM backend');
+        return validationResult;
+      } catch (error) {
+        console.error('Error validating test:', error);
+        throw error;
+      }
+    }
   };
 
   // Set the self-reference to allow calling other methods

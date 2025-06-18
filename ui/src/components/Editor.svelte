@@ -1,7 +1,7 @@
 <script lang="ts">
   import { filesStore, type RecordingCommand } from '../stores/filesStore';
   import { onMount } from 'svelte';
-  import { PatternMatcher } from '../../pkg/wasm_diff';
+  import { PatternMatcher } from '../../pkg/wasm';
   import { API_URL } from '../config.js';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
 
@@ -37,13 +37,13 @@
       console.error('Error fetching patterns:', err);
       return {};
     }
-  }
+  };
 
   // Initialize WASM module
   async function initWasm() {
     try {
       console.log('Initializing WASM diff module...');
-      const module = await import('../../pkg/wasm_diff');
+      const module = await import('../../pkg/wasm');
       await module.default();
 
       // Default patterns if API fails

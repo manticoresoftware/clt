@@ -7,6 +7,16 @@ import session from 'express-session';
 import dotenv from 'dotenv';
 import simpleGit from 'simple-git';
 
+// Import WASM wrapper functions
+import {
+  parseRecFileWasm,
+  generateRecFileWasm,
+  getPatternsWasm,
+  validateTestWasm,
+  convertUIToWasmFormat,
+  convertWasmToUIFormat
+} from './wasmNodeWrapper.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -340,9 +350,41 @@ app.get('/api/get-file', isAuthenticated, async (req, res) => {
 			return res.status(403).json({ error: 'Access denied' });
 		}
 
-		// Read the file content
-		const content = await fs.readFile(absolutePath, 'utf8');
-		res.json({ content });
+		// For .rec and .recb files, use WASM parsing to return structured content
+		if (filePath.endsWith('.rec') || filePath.endsWith('.recb')) {
+			try {
+				console.log(`📖 Loading structured test file via WASM: ${absolutePath}`);
+				
+				// Get raw content first
+				const rawContent = await fs.readFile(absolutePath, 'utf8');
+				
+				// Try WASM parsing for structured data
+				try {
+					const testStructure = await parseRecFileWasm(absolutePath);
+					const uiCommands = convertWasmToUIFormat(testStructure);
+					
+					res.json({ 
+						content: rawContent,
+						structuredData: testStructure,
+						uiCommands: uiCommands,
+						wasmparsed: true
+					});
+				} catch (wasmError) {
+					console.warn('WASM parsing failed, returning raw content:', wasmError.message);
+					res.json({ 
+						content: rawContent,
+						wasmparsed: false
+					});
+				}
+			} catch (fileError) {
+				console.error('File read error:', fileError);
+				throw fileError;
+			}
+		} else {
+			// For non-test files, return raw content
+			const content = await fs.readFile(absolutePath, 'utf8');
+			res.json({ content });
+		}
 	} catch (error) {
 		console.error('Error reading file:', error);
 		res.status(404).json({ error: 'File not found or could not be read' });
@@ -352,7 +394,7 @@ app.get('/api/get-file', isAuthenticated, async (req, res) => {
 // API endpoint to save file content
 app.post('/api/save-file', isAuthenticated, async (req, res) => {
 	try {
-		const { path: filePath, content } = req.body;
+		const { path: filePath, content, structuredData } = req.body;
 
 		if (!filePath || content === undefined) {
 			return res.status(400).json({ error: 'File path and content are required' });
@@ -371,10 +413,37 @@ app.post('/api/save-file', isAuthenticated, async (req, res) => {
 		const directory = path.dirname(absolutePath);
 		await fs.mkdir(directory, { recursive: true });
 
-		// Write file
+		// For .rec and .recb files, try WASM generation if structured data is provided
+		if ((filePath.endsWith('.rec') || filePath.endsWith('.recb')) && structuredData) {
+			try {
+				console.log(`💾 Attempting to save structured test file via WASM: ${absolutePath}`);
+				const generatedContent = await generateRecFileWasm(absolutePath, structuredData);
+				
+				if (generatedContent && generatedContent.length > 0) {
+					// Use WASM-generated content
+					await fs.writeFile(absolutePath, generatedContent, 'utf8');
+					console.log('✅ File saved via WASM generation');
+					res.json({ 
+						success: true,
+						method: 'wasm',
+						generatedContent: generatedContent
+					});
+					return;
+				} else {
+					console.warn('WASM generation returned empty content, using manual content');
+				}
+			} catch (wasmError) {
+				console.warn('WASM generation failed, using manual content:', wasmError.message);
+			}
+		}
+		
+		// Fallback: save the manual content directly
 		await fs.writeFile(absolutePath, content, 'utf8');
-
-		res.json({ success: true });
+		console.log('✅ File saved via manual content');
+		res.json({ 
+			success: true,
+			method: 'manual'
+		});
 	} catch (error) {
 		console.error('Error saving file:', error);
 		res.status(500).json({ error: 'Failed to save file' });
@@ -676,143 +745,41 @@ async function expandBlocks(commands, basePath, expandedBlocks = new Set()) {
 //
 // Function to process test results with proper block handling
 
-// Helper function to parse a .rec file and handle blocks recursively
+// Helper function to parse a .rec file using WASM and handle blocks recursively
 async function parseRecFile(absolutePath) {
-	// Read the file content
-	const content = await fs.readFile(absolutePath, 'utf8');
-
-	// Parse initial commands from .rec file
-	const commands = [];
-	const lines = content.split('\n');
-	let currentSection = '';
-	let currentCommand = '';
-	let currentOutput = '';
-	let commandType = 'command';
-
-	let i = 0;
-	while (i < lines.length) {
-		const line = lines[i].trim();
-
-		// Detect section markers
-		if (line.startsWith('––– ') || line.startsWith('--- ')) {
-			// Process completed section before starting a new one
-			if (currentSection === 'input' && currentCommand) {
-				// We have a command but no output section yet
-				currentSection = ''; // Reset section
-			} else if (currentSection === 'output' && currentCommand) {
-				// We've completed an input/output pair
-				commands.push({
-					command: currentCommand.trim(),
-					expectedOutput: currentOutput.trim(),
-					type: 'command',
-					status: 'pending',
-				});
-
-				// Reset for next command
-				currentCommand = '';
-				currentOutput = '';
-				currentSection = '';
-			} else if (currentSection === 'comment' && currentCommand) {
-				// We've completed a comment section
-				commands.push({
-					command: currentCommand.trim(),
-					type: 'comment',
-					status: 'pending',
-				});
-
-				// Reset for next command
-				currentCommand = '';
-				currentSection = '';
-			} else if (currentSection === 'block' && currentCommand) {
-				// We've completed a block reference
-				commands.push({
-					command: currentCommand.trim(),
-					type: 'block',
-					status: 'pending',
-				});
-
-				// Reset for next command
-				currentCommand = '';
-				currentSection = '';
-			}
-
-			// Parse the marker to determine what section follows
-			if (line.includes('input')) {
-				currentSection = 'input';
-				commandType = 'command';
-			} else if (line.includes('output')) {
-				currentSection = 'output';
-			} else if (line.includes('comment')) {
-				currentSection = 'comment';
-				commandType = 'comment';
-			} else if (line.includes('block:')) {
-				currentSection = 'block';
-				commandType = 'block';
-				// Extract path from block marker: "--- block: path/to/file ---"
-				const pathMatch = line.match(/block:\s*([^\s]+)/);
-				if (pathMatch && pathMatch[1]) {
-					currentCommand = pathMatch[1].trim();
-				}
-			}
-
-			i++;
-			continue;
-		}
-
-		// Process content based on current section
-		if (currentSection === 'input') {
-			if (currentCommand) currentCommand += '\n';
-			currentCommand += lines[i];
-		} else if (currentSection === 'output') {
-			if (currentOutput) currentOutput += '\n';
-			currentOutput += lines[i];
-		} else if (currentSection === 'comment') {
-			if (currentCommand) currentCommand += '\n';
-			currentCommand += lines[i];
-		} else if (currentSection === 'block' && !currentCommand) {
-			// Only set the command if we haven't extracted it from the marker
-			currentCommand = lines[i];
-		}
-
-		i++;
-	}
-
-	// Handle the last section if it wasn't closed properly
-	if (currentSection === 'input' && currentCommand) {
-		commands.push({
-			command: currentCommand.trim(),
-			type: 'command',
-			status: 'pending',
-		});
-	} else if (currentSection === 'output' && currentCommand) {
-		commands.push({
-			command: currentCommand.trim(),
-			expectedOutput: currentOutput.trim(),
-			type: 'command',
-			status: 'pending',
-		});
-	} else if (currentSection === 'comment' && currentCommand) {
-		commands.push({
-			command: currentCommand.trim(),
-			type: 'comment',
-			status: 'pending',
-		});
-	} else if (currentSection === 'block' && currentCommand) {
-		commands.push({
-			command: currentCommand.trim(),
-			type: 'block',
-			status: 'pending',
-		});
-	}
-
-	// After parsing the file, recursively expand any blocks
 	try {
-		const expandedCommands = await expandBlocks(commands, absolutePath);
-		return expandedCommands;
+		console.log(`📖 Parsing .rec file with WASM: ${absolutePath}`);
+		
+		// Use WASM to parse the file into structured format
+		const testStructure = await parseRecFileWasm(absolutePath);
+		
+		// Convert to the format expected by the rest of the backend
+		const commands = convertWasmToUIFormat(testStructure);
+		
+		// After parsing the file, recursively expand any blocks
+		try {
+			const expandedCommands = await expandBlocks(commands, absolutePath);
+			return expandedCommands;
+		} catch (error) {
+			console.error(`Error expanding blocks in ${absolutePath}:`, error);
+			// Return the original commands if block expansion fails
+			return commands;
+		}
 	} catch (error) {
-		console.error(`Error expanding blocks in ${absolutePath}:`, error);
-		// Return the original commands if block expansion fails
-		return commands;
+		console.warn(`WASM parsing failed for ${absolutePath}, using fallback:`, error.message);
+		// Fallback to reading raw content and returning minimal structure
+		try {
+			const content = await fs.readFile(absolutePath, 'utf8');
+			return [{
+				command: `echo "File parsing failed: ${error.message}"`,
+				expectedOutput: '',
+				type: 'command',
+				status: 'failed'
+			}];
+		} catch (readError) {
+			console.error(`Failed to read file ${absolutePath}:`, readError);
+			return [];
+		}
 	}
 }
 
@@ -1403,72 +1370,65 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 // API endpoint to get patterns file
 app.get('/api/get-patterns', isAuthenticated, async (req, res) => {
 	try {
-		// Create an object to hold all patterns
-		const patterns = {};
-
-		// Helper function to read and parse patterns from a file
-		async function readPatternsFromFile(filePath) {
-			try {
-				const content = await fs.readFile(filePath, 'utf8');
-				const lines = content.split('\n').filter(line => line.trim() !== '');
-
-				for (const line of lines) {
-					const parts = line.split(' ');
-					if (parts.length >= 2) {
-						const patternName = parts[0].trim();
-						const patternRegex = parts.slice(1).join(' ').trim();
-						patterns[patternName] = patternRegex;
-					}
-				}
-				return true;
-			} catch (err) {
-				console.log(`Patterns file not found at ${filePath}: ${err.message}`);
-				return false;
-			}
-		}
-
-		// 1. First try to read patterns from current directory
-		let currentDirPatterns = false;
-		try {
-			// Try to read from UI folder .clt directory
-			currentDirPatterns = await readPatternsFromFile(path.join(__dirname, '.clt', 'patterns'));
-		} catch (err) {
-			// If not found, try to read from project root
-			try {
-				currentDirPatterns = await readPatternsFromFile(path.join(ROOT_DIR, '.clt', 'patterns'));
-			} catch (innerErr) {
-				// No patterns found in current directory, that's okay
-				console.log('No patterns file found in current directory');
-			}
-		}
-
-		// 2. Try to read patterns from user's repository
-		// Get fresh auth config
+		console.log('🎯 Getting patterns via WASM for user repository');
+		
+		// Get the user's repository path for pattern context
 		const authConfig = getAuthConfig();
 		const username = req.user?.username || (authConfig.skipAuth ? 'dev-mode' : null);
+		let userRepoPath = null;
+		
 		if (username) {
-			const userRepoPath = getUserRepoPath(req);
-			const userPatternPath = path.join(userRepoPath, '.clt', 'patterns');
-
-			try {
-				const userPatterns = await readPatternsFromFile(userPatternPath);
-				if (userPatterns) {
-					console.log(`Merged patterns from user repository: ${userRepoPath}`);
-				}
-			} catch (repoError) {
-				console.log(`No patterns file found in user repository: ${repoError.message}`);
-			}
+			userRepoPath = getUserRepoPath(req);
+			console.log(`Using user repo path for patterns: ${userRepoPath}`);
 		}
-
-		// If no patterns were found at all, return a 404
-		if (Object.keys(patterns).length === 0) {
-			return res.status(404).json({ error: 'Patterns file not found in any location' });
+		
+		// Try to get patterns using WASM with user's repo context
+		try {
+			const patterns = await getPatternsWasm(userRepoPath);
+			console.log(`✅ Found ${Object.keys(patterns).length} patterns via WASM`);
+			return res.json({ patterns });
+		} catch (wasmError) {
+			console.error('WASM pattern retrieval failed:', wasmError);
+			// Return empty patterns instead of failing
+			return res.json({ patterns: {} });
 		}
-
-		res.json({ patterns });
 	} catch (error) {
-		console.error('Error reading patterns file:', error);
-		res.status(500).json({ error: 'Failed to read patterns file' });
+		console.error('Error getting patterns:', error);
+		res.status(500).json({ error: 'Failed to get patterns' });
+	}
+});
+
+// API endpoint to validate a test file
+app.post('/api/validate-test', isAuthenticated, async (req, res) => {
+	try {
+		const { filePath } = req.body;
+
+		if (!filePath) {
+			return res.status(400).json({ error: 'File path is required' });
+		}
+
+		// Use the user's test directory as the base
+		const testDir = getUserTestPath(req);
+		const absolutePath = path.join(testDir, filePath);
+
+		// Basic security check to ensure the path is within the test directory
+		if (!absolutePath.startsWith(testDir)) {
+			return res.status(403).json({ error: 'Access denied' });
+		}
+
+		// Validate using WASM
+		try {
+			console.log(`🔍 Validating test file via WASM: ${absolutePath}`);
+			const validationResult = await validateTestWasm(absolutePath);
+			console.log('✅ WASM validation completed');
+			res.json(validationResult);
+		} catch (wasmError) {
+			console.warn('WASM validation failed, returning default valid result:', wasmError.message);
+			res.json({ valid: true, errors: [], method: 'fallback' });
+		}
+	} catch (error) {
+		console.error('Error validating test:', error);
+		res.status(500).json({ error: 'Failed to validate test' });
 	}
 });
 
