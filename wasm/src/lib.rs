@@ -3,7 +3,13 @@ use regex::Regex;
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use once_cell::sync::Lazy;
+use parser::{TestStructure, read_test_file, write_test_file, replace_test_structure, append_test_structure, get_patterns};
 
+static VAR_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"%\{[A-Z]{1}[A-Z_0-9]*\}").unwrap()
+});
+
+// ===== EXISTING DIFF TYPES =====
 #[derive(Serialize, Deserialize)]
 pub struct DiffResult {
     has_diff: bool,
@@ -24,10 +30,7 @@ pub struct HighlightRange {
     end: usize,
 }
 
-static VAR_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"%\{[A-Z]{1}[A-Z_0-9]*\}").unwrap()
-});
-
+// ===== EXISTING PATTERN MATCHER =====
 #[wasm_bindgen]
 pub struct PatternMatcher {
     config: HashMap<String, String>,
@@ -67,7 +70,7 @@ impl PatternMatcher {
                     if self.has_diff(exp.to_string(), act.to_string()) {
                         result.has_diff = true;
                         // Lines are different
-                        let (ranges1, ranges2) = self.compute_diff_ranges(exp, act);
+                        let (_ranges1, ranges2) = self.compute_diff_ranges(exp, act);
                         
                         result.diff_lines.push(DiffLine {
                             line_type: "changed".to_string(),
@@ -231,4 +234,90 @@ impl PatternMatcher {
 enum MatchingPart {
     Static(String),
     Pattern(String),
+}
+
+// ===== REC FILE PARSING WASM BINDINGS =====
+
+/// Convert a .rec file to structured JSON format
+#[wasm_bindgen]
+pub fn read_test_file_wasm(test_file_path: &str) -> String {
+    match read_test_file(test_file_path) {
+        Ok(structure) => serde_json::to_string(&structure).unwrap_or_else(|e| {
+            format!("{{\"error\": \"Failed to serialize result: {}\"}}", e)
+        }),
+        Err(e) => format!("{{\"error\": \"{}\"}}", e),
+    }
+}
+
+/// Convert structured JSON format back to .rec file content
+#[wasm_bindgen]
+pub fn write_test_file_wasm(test_file_path: &str, test_structure_json: &str) -> String {
+    let test_structure: TestStructure = match serde_json::from_str(test_structure_json) {
+        Ok(s) => s,
+        Err(e) => return format!("{{\"error\": \"Invalid JSON: {}\"}}", e),
+    };
+    
+    match write_test_file(test_file_path, &test_structure) {
+        Ok(()) => "{\"success\": true}".to_string(),
+        Err(e) => format!("{{\"error\": \"{}\"}}", e),
+    }
+}
+
+/// Replace old test structure with new test structure in existing file
+#[wasm_bindgen]
+pub fn replace_test_structure_wasm(
+    test_file_path: &str,
+    old_structure_json: &str,
+    new_structure_json: &str,
+) -> String {
+    let old_structure: TestStructure = match serde_json::from_str(old_structure_json) {
+        Ok(s) => s,
+        Err(e) => return format!("{{\"error\": \"Invalid old structure JSON: {}\"}}", e),
+    };
+    
+    let new_structure: TestStructure = match serde_json::from_str(new_structure_json) {
+        Ok(s) => s,
+        Err(e) => return format!("{{\"error\": \"Invalid new structure JSON: {}\"}}", e),
+    };
+    
+    match replace_test_structure(test_file_path, &old_structure, &new_structure) {
+        Ok(()) => "{\"success\": true}".to_string(),
+        Err(e) => format!("{{\"error\": \"{}\"}}", e),
+    }
+}
+
+/// Append test structure to existing file
+#[wasm_bindgen]
+pub fn append_test_structure_wasm(test_file_path: &str, append_structure_json: &str) -> String {
+    let append_structure: TestStructure = match serde_json::from_str(append_structure_json) {
+        Ok(s) => s,
+        Err(e) => return format!("{{\"error\": \"Invalid structure JSON: {}\"}}", e),
+    };
+    
+    match append_test_structure(test_file_path, &append_structure) {
+        Ok(steps_added) => format!("{{\"success\": true, \"steps_added\": {}}}", steps_added),
+        Err(e) => format!("{{\"error\": \"{}\"}}", e),
+    }
+}
+
+/// Get all available patterns from system and project .clt/patterns files
+#[wasm_bindgen]
+pub fn get_patterns_wasm(clt_binary_path: Option<String>) -> String {
+    match get_patterns(clt_binary_path.as_deref()) {
+        Ok(patterns) => serde_json::to_string(&patterns).unwrap_or_else(|e| {
+            format!("{{\"error\": \"Failed to serialize patterns: {}\"}}", e)
+        }),
+        Err(e) => format!("{{\"error\": \"{}\"}}", e),
+    }
+}
+
+/// Validate a test by comparing .rec file with its .rep result file (WASM binding)
+#[wasm_bindgen]
+pub fn validate_test_wasm(rec_file_path: &str) -> String {
+    match parser::validate_test(rec_file_path) {
+        Ok(result) => serde_json::to_string(&result).unwrap_or_else(|e| {
+            format!("{{\"error\": \"Failed to serialize result: {}\"}}", e)
+        }),
+        Err(e) => format!("{{\"error\": \"{}\"}}", e),
+    }
 }
