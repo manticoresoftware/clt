@@ -8,3 +8,4 @@ rec/target/**
 cmp/target/**
 parser/target/**
 mcp/target/**
+wasm/pkg/**

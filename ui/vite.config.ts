@@ -14,6 +14,9 @@ export default defineConfig(({ mode }) => {
     plugins: [svelte()],
     server: {
 			allowedHosts: ['dev2.manticoresearch.com'],
+      fs: {
+        allow: ['..']
+      },
       proxy: {
         '/api': {
           target: `http://${backendHost}:${backendPort}`,

@@ -229,33 +229,130 @@ export function convertWasmToUIFormat(testStructure) {
     throw new Error('Invalid test structure: missing steps');
   }
 
-  return testStructure.steps.map(step => {
-    if (step.Block) {
-      return {
+  const commands = [];
+  
+  for (const step of testStructure.steps) {
+    // Handle new structure format (with step.type)
+    if (step.type) {
+      switch (step.type) {
+        case 'statement':
+          // Statements don't become commands in UI
+          break;
+        case 'command':
+          commands.push({
+            command: step.content,
+            type: 'command',
+            status: 'pending'
+          });
+          break;
+        case 'expected_output':
+          // Expected output is handled separately
+          break;
+        case 'block':
+          commands.push({
+            command: `@${step.args[0]}`,
+            type: 'block',
+            status: 'pending',
+            isBlockCommand: false
+          });
+          break;
+      }
+    }
+    // Handle old structure format (with step.Block, step.Command, etc.)
+    else if (step.Block) {
+      commands.push({
         command: step.Block.path,
         type: 'block',
         status: 'pending',
         blockSource: step.Block.source_file,
         isBlockCommand: false
-      };
+      });
     } else if (step.Comment) {
-      return {
+      commands.push({
         command: step.Comment,
         type: 'comment',
         status: 'pending'
-      };
+      });
     } else if (step.Command) {
-      return {
+      commands.push({
         command: step.Command.input,
         expectedOutput: step.Command.expected_output,
         actualOutput: step.Command.actual_output,
         type: 'command',
         status: 'pending'
-      };
+      });
     } else {
       throw new Error(`Unknown step type: ${JSON.stringify(step)}`);
     }
-  });
+  }
+  
+  return commands;
+}
+
+// ===== NEW WASM-COMPATIBLE FUNCTIONS (NO FILE SYSTEM OPERATIONS) =====
+
+// WASM-based file parsing using file content map (WASM-compatible)
+export async function parseRecFileFromMapWasm(filePath, fileMap) {
+  const wasm = await initWasm();
+  try {
+    console.log(`🔄 Parsing .rec file from map with WASM: ${filePath}`);
+    const fileMapJson = JSON.stringify(fileMap);
+    const structuredJson = wasm.read_test_file_from_map_wasm(filePath, fileMapJson);
+    
+    // Check if we got valid JSON
+    if (!structuredJson || typeof structuredJson !== 'string') {
+      console.warn('WASM read_test_file_from_map_wasm returned:', typeof structuredJson, structuredJson);
+      return {
+        steps: [],
+        metadata: {
+          created_at: new Date().toISOString(),
+          file_path: filePath
+        }
+      };
+    }
+
+    const parsed = JSON.parse(structuredJson);
+    
+    // Check for errors in the parsed result
+    if (parsed.error) {
+      console.error('WASM parsing error:', parsed.error);
+      throw new Error(parsed.error);
+    }
+    
+    console.log(`✅ Successfully parsed .rec file from map: ${filePath}`);
+    return parsed;
+  } catch (error) {
+    console.error(`❌ WASM file parsing from map failed for ${filePath}:`, error);
+    throw error;
+  }
+}
+
+// WASM-based file generation to content map (WASM-compatible)
+export async function generateRecFileToMapWasm(filePath, testStructure) {
+  const wasm = await initWasm();
+  try {
+    console.log(`🔄 Generating .rec file to map with WASM: ${filePath}`);
+    const structureJson = JSON.stringify(testStructure);
+    const fileMapJson = wasm.write_test_file_to_map_wasm(filePath, structureJson);
+    
+    if (!fileMapJson || typeof fileMapJson !== 'string') {
+      throw new Error('WASM write_test_file_to_map_wasm returned invalid result');
+    }
+
+    const parsed = JSON.parse(fileMapJson);
+    
+    // Check for errors in the parsed result
+    if (parsed.error) {
+      console.error('WASM generation error:', parsed.error);
+      throw new Error(parsed.error);
+    }
+    
+    console.log(`✅ Successfully generated .rec file to map: ${filePath}`);
+    return parsed; // Returns file map with path -> content
+  } catch (error) {
+    console.error(`❌ WASM file generation to map failed for ${filePath}:`, error);
+    throw error;
+  }
 }
 
 // Initialize WASM on module load

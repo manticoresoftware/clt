@@ -984,3 +984,184 @@ fn load_patterns_from_file(file_path: &Path, patterns: &mut HashMap<String, Stri
 
     Ok(())
 }
+
+// ===== WASM-COMPATIBLE FUNCTIONS (NO FILE SYSTEM OPERATIONS) =====
+
+/// WASM-compatible function to read and parse test file using file content map
+pub fn read_test_file_from_map(
+    main_file_path: &str,
+    file_map: &HashMap<String, String>
+) -> Result<TestStructure> {
+    // Get the main file content from the map
+    let main_content = file_map.get(main_file_path)
+        .ok_or_else(|| anyhow::anyhow!("Main file not found in file map: {}", main_file_path))?;
+    
+    // Create a mock base directory path
+    let mock_base_dir = std::path::Path::new("/tmp/mock");
+    
+    // Parse using the existing logic but with file map override
+    parse_rec_content_with_file_map(main_content, mock_base_dir, file_map)
+}
+
+/// Modified version of parse_rec_content that uses file map instead of file system
+fn parse_rec_content_with_file_map(content: &str, base_dir: &std::path::Path, file_map: &HashMap<String, String>) -> Result<TestStructure> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut steps = Vec::new();
+    let mut i = 0;
+
+    // First, extract description (everything before the first statement)
+    let mut description_lines = Vec::new();
+
+    while i < lines.len() {
+        let line = lines[i].trim();
+
+        // Check if this is a statement line
+        if line.starts_with("––– ") && line.ends_with(" –––") {
+            break;
+        }
+
+        // Skip empty lines at the beginning if no content yet
+        if description_lines.is_empty() && line.is_empty() {
+            i += 1;
+            continue;
+        }
+
+        description_lines.push(lines[i]); // Keep original line with whitespace
+        i += 1;
+    }
+
+    // Trim trailing empty lines from description
+    while let Some(last) = description_lines.last() {
+        if last.trim().is_empty() {
+            description_lines.pop();
+        } else {
+            break;
+        }
+    }
+
+    let description = if description_lines.is_empty() {
+        None
+    } else {
+        Some(description_lines.join("\n"))
+    };
+
+    // Now parse the statements starting from where we left off - COPY EXACT LOGIC
+    while i < lines.len() {
+        let line = lines[i].trim();
+
+        // Skip empty lines
+        if line.is_empty() {
+            i += 1;
+            continue;
+        }
+
+        // Check if this is a statement line
+        if line.starts_with("––– ") && line.ends_with(" –––") {
+            let (statement, arg) = parse_statement(line)?;
+            let step = match statement {
+                Statement::Input => {
+                    // Collect input content until next statement
+                    let (content, next_idx) = collect_content(&lines, i + 1)?;
+                    i = next_idx;
+                    TestStep {
+                        step_type: "input".to_string(),
+                        args: vec![],
+                        content: Some(content),
+                        steps: None,
+                    }
+                }
+                Statement::Output => {
+                    // Collect output content until next statement
+                    let (content, next_idx) = collect_content(&lines, i + 1)?;
+                    i = next_idx;
+                    let args = if let Some(checker) = arg {
+                        vec![checker]
+                    } else {
+                        vec![]
+                    };
+                    TestStep {
+                        step_type: "output".to_string(),
+                        args,
+                        content: Some(content),
+                        steps: None,
+                    }
+                }
+                Statement::Comment => {
+                    // Collect comment content until next statement
+                    let (content, next_idx) = collect_content(&lines, i + 1)?;
+                    i = next_idx;
+                    TestStep {
+                        step_type: "comment".to_string(),
+                        args: vec![],
+                        content: Some(content),
+                        steps: None,
+                    }
+                }
+                Statement::Block => {
+                    let block_path =
+                        arg.ok_or_else(|| anyhow::anyhow!("Block statement missing path argument"))?;
+
+                    // Resolve block file using file map instead of file system
+                    let nested_steps = resolve_block_with_file_map(&block_path, file_map)?;
+                    i += 1; // Move past the block statement line
+
+                    TestStep {
+                        step_type: "block".to_string(),
+                        args: vec![block_path],
+                        content: None,
+                        steps: Some(nested_steps),
+                    }
+                }
+                Statement::Duration => {
+                    // Skip duration statements (they're auto-generated)
+                    i += 1;
+                    continue;
+                }
+            };
+
+            steps.push(step);
+        } else {
+            return Err(anyhow::anyhow!("Unexpected line: {}", line));
+        }
+    }
+
+    Ok(TestStructure {
+        description,
+        steps,
+    })
+}
+
+/// Resolve a block reference using file map instead of file system
+fn resolve_block_with_file_map(block_path: &str, file_map: &HashMap<String, String>) -> Result<Vec<TestStep>> {
+    let block_file_key = format!("{}.recb", block_path);
+
+    if let Some(block_content) = file_map.get(&block_file_key) {
+        let mock_base_dir = std::path::Path::new("/tmp/mock");
+        let block_structure = parse_rec_content_with_file_map(block_content, mock_base_dir, file_map)?;
+        Ok(block_structure.steps)
+    } else {
+        Err(anyhow::anyhow!("Block file not found in file map: {}", block_file_key))
+    }
+}
+
+/// Parse block content using file map
+fn parse_block_content_with_file_map(
+    block_content: &str,
+    base_dir: &std::path::Path,
+    file_map: &HashMap<String, String>
+) -> Result<Vec<TestStep>> {
+    let block_structure = parse_rec_content_with_file_map(block_content, base_dir, file_map)?;
+    Ok(block_structure.steps)
+}
+
+/// WASM-compatible function that returns file content map for writing
+pub fn write_test_file_to_map(
+    test_file_path: &str,
+    test_structure: &TestStructure
+) -> Result<HashMap<String, String>> {
+    // Use the existing convert_structure_to_rec function
+    let content = convert_structure_to_rec(test_structure)?;
+    let mut file_map = HashMap::new();
+    file_map.insert(test_file_path.to_string(), content);
+    Ok(file_map)
+}
