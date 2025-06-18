@@ -142,9 +142,21 @@ test() {
 
 	replay "$image" "$record_file" "$delay"
 	output="${record_file%.*}.cmp"
-	if [ "$show_diff" -eq 1 ]; then
-		compare "$image" "$record_file" "$replay_file" 2>&1
+
+	# Detect if terminal has a color
+	if [ -t 1 ] && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
+		no_color=
 	else
-		compare "$image" "$record_file" "$replay_file" > "$output" 2>&1
+		no_color="1"
+	fi
+
+	if [ -n "$CLT_NO_COLOR" ]; then
+		no_color="1"
+	fi
+
+	if [ "$show_diff" -eq 1 ]; then
+		compare "$image" "$record_file" "$replay_file" "$no_color" 2>&1
+	else
+		compare "$image" "$record_file" "$replay_file" "$no_color" > "$output" 2>&1
 	fi
 }
