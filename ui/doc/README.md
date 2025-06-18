@@ -8,7 +8,7 @@
 - **[API.md](./API.md)** - Backend API reference and endpoint documentation
 
 ### 🎯 Feature Documentation
-- **[ASK_AI.md](./ASK_AI.md)** - Ask AI interactive session feature with session persistence
+- **[ASK_AI.md](./ASK_AI.md)** - Ask AI interactive session feature with session persistence\n- **[THEMING.md](./THEMING.md)** - CodeMirror theming guide for command syntax highlighting
 
 ## Quick Reference
 
