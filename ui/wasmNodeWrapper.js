@@ -6,29 +6,51 @@ import { readFileSync } from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Import WASM module
+// Import WASM module with proper singleton pattern
 let wasmModule = null;
+let wasmInitPromise = null;
 
 async function initWasm() {
-  if (!wasmModule) {
+  // If already initialized, return the cached module
+  if (wasmModule) {
+    return wasmModule;
+  }
+
+  // If initialization is in progress, wait for it
+  if (wasmInitPromise) {
+    await wasmInitPromise;
+    return wasmModule;
+  }
+
+  // Start initialization
+  wasmInitPromise = (async () => {
     try {
+      console.log('🔄 Initializing WASM module...');
+      
       // Import the WASM module
       const wasmPath = path.join(__dirname, 'pkg', 'wasm.js');
-      wasmModule = await import(wasmPath);
-      
+      const wasmImport = await import(wasmPath);
+
       // Load WASM binary directly in Node.js (avoid fetch)
       const wasmBinaryPath = path.join(__dirname, 'pkg', 'wasm_bg.wasm');
       const wasmBinary = readFileSync(wasmBinaryPath);
-      
+
       // Initialize the WASM module with binary data
-      await wasmModule.default(wasmBinary);
+      await wasmImport.default(wasmBinary);
+
+      // Cache the initialized module
+      wasmModule = wasmImport;
       
       console.log('✅ WASM module initialized successfully for backend');
+      return wasmModule;
     } catch (error) {
       console.error('❌ Failed to initialize WASM module:', error);
+      wasmInitPromise = null; // Reset promise on failure to allow retry
       throw error;
     }
-  }
+  })();
+
+  await wasmInitPromise;
   return wasmModule;
 }
 
@@ -39,7 +61,7 @@ export async function parseRecFileWasm(filePath) {
     const absoluteFilePath = path.resolve(filePath);
     console.log(`🔄 Parsing .rec file with WASM: ${absoluteFilePath}`);
     const structuredJson = wasm.read_test_file_wasm(absoluteFilePath);
-    
+
     // Check if we got valid JSON
     if (!structuredJson || typeof structuredJson !== 'string') {
       console.warn('WASM read_test_file_wasm returned:', typeof structuredJson, structuredJson);
@@ -52,7 +74,7 @@ export async function parseRecFileWasm(filePath) {
         }
       };
     }
-    
+
     return JSON.parse(structuredJson);
   } catch (error) {
     console.error(`❌ WASM parsing failed for ${path.resolve(filePath)}:`, error);
@@ -75,13 +97,13 @@ export async function generateRecFileWasm(filePath, testStructure) {
     console.log(`🔄 Generating .rec content with WASM: ${absoluteFilePath}`);
     const structuredJson = JSON.stringify(testStructure);
     const recContent = wasm.write_test_file_wasm(absoluteFilePath, structuredJson);
-    
+
     // Check if we got valid content
     if (recContent === undefined || recContent === null) {
       console.warn('WASM write_test_file_wasm returned undefined/null');
       return ''; // Return empty string instead of undefined
     }
-    
+
     return recContent;
   } catch (error) {
     console.error(`❌ WASM generation failed for ${path.resolve(filePath)}:`, error);
@@ -95,19 +117,19 @@ export async function getPatternsWasm(userRepoPath = null) {
   try {
     const absoluteRepoPath = userRepoPath ? path.resolve(userRepoPath) : null;
     console.log(`🔄 Getting patterns with WASM from repo: ${absoluteRepoPath || 'default'}`);
-    
+
     // Use the user's repository path as context for pattern discovery
     const patternsJson = wasm.get_patterns_wasm(absoluteRepoPath);
-    
+
     // Check if we got valid JSON
     if (!patternsJson || typeof patternsJson !== 'string') {
       console.log('No patterns found or invalid response, returning empty patterns');
       return {};
     }
-    
+
     try {
       const patternsArray = JSON.parse(patternsJson);
-      
+
       // Check if it's actually an array
       if (!Array.isArray(patternsArray)) {
         console.log('Patterns result is not an array, trying as object');
@@ -117,7 +139,7 @@ export async function getPatternsWasm(userRepoPath = null) {
         }
         return {};
       }
-      
+
       // Convert array to object format expected by UI
       const patterns = {};
       patternsArray.forEach(pattern => {
@@ -125,7 +147,7 @@ export async function getPatternsWasm(userRepoPath = null) {
           patterns[pattern.name] = pattern.pattern;
         }
       });
-      
+
       return patterns;
     } catch (jsonError) {
       console.warn('Failed to parse patterns JSON:', jsonError.message);
@@ -144,13 +166,13 @@ export async function validateTestWasm(recFilePath) {
     const absoluteRecFilePath = path.resolve(recFilePath);
     console.log(`🔄 Validating test with WASM: ${absoluteRecFilePath}`);
     const validationJson = wasm.validate_test_wasm(absoluteRecFilePath);
-    
+
     // Check if we got valid JSON
     if (!validationJson || typeof validationJson !== 'string') {
       console.warn('WASM validate_test_wasm returned:', typeof validationJson, validationJson);
       return { valid: true, errors: [] }; // Return default valid result
     }
-    
+
     return JSON.parse(validationJson);
   } catch (error) {
     console.error(`❌ WASM validation failed for ${path.resolve(recFilePath)}:`, error);
@@ -230,7 +252,7 @@ export function convertWasmToUIFormat(testStructure) {
   }
 
   const commands = [];
-  
+
   for (const step of testStructure.steps) {
     // Handle new structure format (with step.type)
     if (step.type) {
@@ -238,7 +260,7 @@ export function convertWasmToUIFormat(testStructure) {
         case 'statement':
           // Statements don't become commands in UI
           break;
-        case 'command':
+        case 'input':
           commands.push({
             command: step.content,
             type: 'command',
@@ -285,7 +307,7 @@ export function convertWasmToUIFormat(testStructure) {
       throw new Error(`Unknown step type: ${JSON.stringify(step)}`);
     }
   }
-  
+
   return commands;
 }
 
@@ -294,11 +316,17 @@ export function convertWasmToUIFormat(testStructure) {
 // WASM-based file parsing using file content map (WASM-compatible)
 export async function parseRecFileFromMapWasm(filePath, fileMap) {
   const wasm = await initWasm();
+  
+  // Validate that the WASM function is available
+  if (!wasm.read_test_file_from_map_wasm) {
+    throw new Error('WASM function read_test_file_from_map_wasm is not available');
+  }
+  
   try {
     console.log(`🔄 Parsing .rec file from map with WASM: ${filePath}`);
     const fileMapJson = JSON.stringify(fileMap);
     const structuredJson = wasm.read_test_file_from_map_wasm(filePath, fileMapJson);
-    
+
     // Check if we got valid JSON
     if (!structuredJson || typeof structuredJson !== 'string') {
       console.warn('WASM read_test_file_from_map_wasm returned:', typeof structuredJson, structuredJson);
@@ -312,13 +340,13 @@ export async function parseRecFileFromMapWasm(filePath, fileMap) {
     }
 
     const parsed = JSON.parse(structuredJson);
-    
+
     // Check for errors in the parsed result
     if (parsed.error) {
       console.error('WASM parsing error:', parsed.error);
       throw new Error(parsed.error);
     }
-    
+
     console.log(`✅ Successfully parsed .rec file from map: ${filePath}`);
     return parsed;
   } catch (error) {
@@ -330,23 +358,29 @@ export async function parseRecFileFromMapWasm(filePath, fileMap) {
 // WASM-based file generation to content map (WASM-compatible)
 export async function generateRecFileToMapWasm(filePath, testStructure) {
   const wasm = await initWasm();
+  
+  // Validate that the WASM function is available
+  if (!wasm.write_test_file_to_map_wasm) {
+    throw new Error('WASM function write_test_file_to_map_wasm is not available');
+  }
+  
   try {
     console.log(`🔄 Generating .rec file to map with WASM: ${filePath}`);
     const structureJson = JSON.stringify(testStructure);
     const fileMapJson = wasm.write_test_file_to_map_wasm(filePath, structureJson);
-    
+
     if (!fileMapJson || typeof fileMapJson !== 'string') {
       throw new Error('WASM write_test_file_to_map_wasm returned invalid result');
     }
 
     const parsed = JSON.parse(fileMapJson);
-    
+
     // Check for errors in the parsed result
     if (parsed.error) {
       console.error('WASM generation error:', parsed.error);
       throw new Error(parsed.error);
     }
-    
+
     console.log(`✅ Successfully generated .rec file to map: ${filePath}`);
     return parsed; // Returns file map with path -> content
   } catch (error) {
@@ -355,7 +389,5 @@ export async function generateRecFileToMapWasm(filePath, testStructure) {
   }
 }
 
-// Initialize WASM on module load
-initWasm().catch(error => {
-  console.error('Failed to initialize WASM module on startup:', error);
-});
+// Export the initialization function for explicit control
+export { initWasm };
