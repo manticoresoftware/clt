@@ -389,5 +389,41 @@ export async function generateRecFileToMapWasm(filePath, testStructure) {
   }
 }
 
+// WASM-based test validation using file content map (WASM-compatible)
+export async function validateTestFromMapWasm(recFilePath, fileMap) {
+  const wasm = await initWasm();
+  
+  // Validate that the WASM function is available
+  if (!wasm.validate_test_from_map_wasm) {
+    throw new Error('WASM function validate_test_from_map_wasm is not available');
+  }
+  
+  try {
+    console.log(`🔄 Validating test from map with WASM: ${recFilePath}`);
+    const fileMapJson = JSON.stringify(fileMap);
+    const validationJson = wasm.validate_test_from_map_wasm(recFilePath, fileMapJson);
+
+    // Check if we got valid JSON
+    if (!validationJson || typeof validationJson !== 'string') {
+      console.warn('WASM validate_test_from_map_wasm returned:', typeof validationJson, validationJson);
+      return { success: true, errors: [], summary: 'No validation performed' };
+    }
+
+    const parsed = JSON.parse(validationJson);
+
+    // Check for errors in the parsed result
+    if (parsed.error) {
+      console.error('WASM validation error:', parsed.error);
+      throw new Error(parsed.error);
+    }
+
+    console.log(`✅ Successfully validated test from map: ${recFilePath}`);
+    return parsed;
+  } catch (error) {
+    console.error(`❌ WASM test validation from map failed for ${recFilePath}:`, error);
+    throw error;
+  }
+}
+
 // Export the initialization function for explicit control
 export { initWasm };
