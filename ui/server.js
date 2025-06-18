@@ -6,14 +6,16 @@ import { createReadStream } from 'fs';
 import session from 'express-session';
 import dotenv from 'dotenv';
 import simpleGit from 'simple-git';
-import { setupPassport, isAuthenticated, addAuthRoutes } from './auth.js';
-import authConfig from './config/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load environment variables from .env file
+// Load environment variables from .env file FIRST
 dotenv.config();
+
+// Import auth modules AFTER environment variables are loaded
+import { setupPassport, isAuthenticated, addAuthRoutes } from './auth.js';
+import { getAuthConfig } from './config/auth.js';
 
 const app = express();
 const PORT = process.env.BACKEND_PORT || process.env.PORT || 3000;
@@ -194,6 +196,9 @@ global.ensureUserRepo = ensureUserRepo;
 
 // Get user repository path (working directory)
 function getUserRepoPath(req) {
+	// Get fresh auth config
+	const authConfig = getAuthConfig();
+	
 	// If auth is skipped, use a default user
 	if (authConfig.skipAuth) {
 		return path.join(WORKDIR, 'dev-mode');
@@ -289,6 +294,9 @@ async function buildFileTree(dir, basePath = '', followSymlinks = true) {
 // API endpoint to get the file tree
 app.get('/api/get-file-tree', isAuthenticated, async (req, res) => {
 	try {
+		// Get fresh auth config
+		const authConfig = getAuthConfig();
+		
 		// Ensure user repo exists
 		const username = req.user?.username || (authConfig.skipAuth ? 'dev-mode' : null);
 		if (username) {
@@ -1435,6 +1443,8 @@ app.get('/api/get-patterns', isAuthenticated, async (req, res) => {
 		}
 
 		// 2. Try to read patterns from user's repository
+		// Get fresh auth config
+		const authConfig = getAuthConfig();
 		const username = req.user?.username || (authConfig.skipAuth ? 'dev-mode' : null);
 		if (username) {
 			const userRepoPath = getUserRepoPath(req);

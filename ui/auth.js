@@ -1,9 +1,12 @@
 import passport from 'passport';
 import { Strategy as GitHubStrategy } from 'passport-github2';
-import authConfig from './config/auth.js';
+import { getAuthConfig } from './config/auth.js';
 
 // Configure Passport with GitHub strategy
 export function setupPassport() {
+  // Get fresh auth config after environment variables are loaded
+  const authConfig = getAuthConfig();
+  
   console.log('Setting up Passport with GitHub strategy');
 	console.log('Env config', process.env);
   console.log('Auth config:', {
@@ -77,6 +80,9 @@ export function setupPassport() {
 
 // Middleware to check if the user is authenticated
 export function isAuthenticated(req, res, next) {
+  // Get fresh auth config
+  const authConfig = getAuthConfig();
+  
   // Debug logging
   console.log(`[Auth Check] Path: ${req.path}`);
   console.log(`[Auth Check] Session ID: ${req.sessionID}`);
@@ -116,6 +122,9 @@ export function isAuthenticated(req, res, next) {
 
 // Function to add auth routes to express app
 export function addAuthRoutes(app) {
+  // Get fresh auth config
+  const authConfig = getAuthConfig();
+  
   // GitHub authentication routes
   app.get('/auth/github', (req, res, next) => {
     console.log('GitHub auth route accessed');
