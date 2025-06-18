@@ -10,6 +10,26 @@ interface FileNode {
   children?: FileNode[];
 }
 
+// New WASM structured format interfaces
+interface TestStep {
+  type: string;           // "input" | "output" | "block" | "comment"
+  args: string[];         // For blocks: [blockPath], for outputs: [checker]
+  content: string | null; // Command/output content
+  steps: TestStep[] | null; // For blocks: nested steps
+  
+  // Runtime properties (added by UI)
+  status?: 'pending' | 'matched' | 'failed';
+  actualOutput?: string;
+  duration?: number;
+  isExpanded?: boolean;   // For block expansion
+}
+
+interface TestStructure {
+  description: string | null;
+  steps: TestStep[];
+}
+
+// Legacy interface (deprecated, keeping for backward compatibility)
 interface RecordingCommand {
   command: string;
   expectedOutput?: string;
@@ -28,7 +48,10 @@ interface RecordingCommand {
 
 interface RecordingFile {
   path: string;
-  commands: RecordingCommand[];
+  // New structured format (preferred)
+  testStructure?: TestStructure;
+  // Legacy format (deprecated)
+  commands?: RecordingCommand[];
   dirty: boolean;
   lastSaved?: Date;
   status?: 'pending' | 'passed' | 'failed';
@@ -191,8 +214,28 @@ const checkFileLoaded = async (path: string) => {
     if (response.ok) {
       const data = await response.json();
       
-      // Check if we have structured data from backend (WASM-parsed)\n      if (data.uiCommands && data.wasmparsed) {\n        console.log('✅ Using WASM-parsed commands from backend');\n        return { \n          success: true, \n          commands: data.uiCommands, \n          structuredData: data.structuredData,\n          method: 'wasm'\n        };\n      } else if (data.uiCommands) {\n        console.log('✅ Using structured commands from backend');\n        return { \n          success: true, \n          commands: data.uiCommands, \n          structuredData: data.structuredData,\n          method: 'structured'\n        };\n      } else {\n        // Fallback to manual parsing for backward compatibility\n        console.log('⚠️ Using manual parsing fallback');\n        const fileContent = data.content;\n        const commands = parseRecFileContent(fileContent);\n        return { success: true, commands, method: 'manual' };\n      }
-    } else {
+      // Check if we have structured data from backend (WASM-parsed)
+      if (data.structuredData && data.wasmparsed) {
+        console.log('✅ Using WASM-parsed structured data from backend');
+        return { 
+          success: true, 
+          testStructure: data.structuredData,
+          method: 'wasm'
+        };
+      } else if (data.structuredData) {
+        console.log('✅ Using structured data from backend');
+        return { 
+          success: true, 
+          testStructure: data.structuredData,
+          method: 'structured'
+        };
+      } else {
+        // Fallback to manual parsing for backward compatibility
+        console.log('⚠️ Using manual parsing fallback');
+        const fileContent = data.content;
+        const commands = parseRecFileContent(fileContent);
+        return { success: true, commands, method: 'manual' };
+      }    } else {
       return { success: false, error: `Failed to load file: ${response.statusText}` };
     }
   } catch (error) {
@@ -886,36 +929,63 @@ function createFilesStore() {
         // Load the file content
         const result = await checkFileLoaded(path);
 
-        if (result.success && result.commands) {
-          // Set initializing flag for all commands to hide output sections until test is run
-          const commandsWithInitFlag = result.commands.map(cmd => ({
-            ...cmd,
-            status: cmd.status || 'pending', // Set default status to pending
-            initializing: true
-          }));
+        if (result.success) {
+          // Handle new structured format (preferred)
+          if (result.testStructure) {
+            console.log('✅ Using new structured format for file:', path);
+            
+            // Add runtime properties to all steps (status: pending, isExpanded: false)
+            const processSteps = (steps: TestStep[]): TestStep[] => {
+              return steps.map(step => ({
+                ...step,
+                status: 'pending',
+                isExpanded: step.type === 'block' ? false : undefined,
+                steps: step.steps ? processSteps(step.steps) : null
+              }));
+            };
 
-          // Update store with the file data
-          update(state => ({
-            ...state,
-            currentFile: {
-              path,
-              commands: commandsWithInitFlag,
-              dirty: false,
-              status: 'pending'
-            }
-          }));
+            const processedTestStructure: TestStructure = {
+              ...result.testStructure,
+              steps: processSteps(result.testStructure.steps)
+            };
 
-          // Use a small delay to make sure the store update is complete
-          // before running the test
-          setTimeout(async () => {
-            try {
-              await runCurrentTest();
-            } catch (error) {
-              console.error('Error running test after file load:', error);
-            }
-          }, 100);
+            // Update store with the new structured data
+            update(state => ({
+              ...state,
+              currentFile: {
+                path,
+                testStructure: processedTestStructure,
+                dirty: false,
+                status: 'pending'
+              }
+            }));
 
-          return true;
+            return true;
+          }
+          // Handle legacy format (deprecated)
+          else if (result.commands) {
+            console.log('⚠️ Using legacy commands format for file:', path);
+            
+            // Set initializing flag for all commands to hide output sections until test is run
+            const commandsWithInitFlag = result.commands.map(cmd => ({
+              ...cmd,
+              status: cmd.status || 'pending', // Set default status to pending
+              initializing: true
+            }));
+
+            // Update store with the legacy file data
+            update(state => ({
+              ...state,
+              currentFile: {
+                path,
+                commands: commandsWithInitFlag,
+                dirty: false,
+                status: 'pending'
+              }
+            }));
+
+            return true;
+          }
         } else {
           console.error('Failed to load file:', result.error);
           return false;
@@ -1208,6 +1278,22 @@ function createFilesStore() {
         console.error('Error validating test:', error);
         throw error;
       }
+    },
+
+    // Update test structure (for new structured format)
+    updateTestStructure: (newStructure: TestStructure) => {
+      update(state => {
+        if (!state.currentFile) return state;
+
+        return {
+          ...state,
+          currentFile: {
+            ...state.currentFile,
+            testStructure: newStructure,
+            dirty: true
+          }
+        };
+      });
     }
   };
 
@@ -1287,3 +1373,6 @@ export function updateChildPaths(children: FileNode[], oldParentPath: string, ne
     }
   });
 }
+
+// Export types for use in components
+export type { TestStep, TestStructure, RecordingCommand, FileNode };

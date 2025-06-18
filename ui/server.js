@@ -7,13 +7,11 @@ import session from 'express-session';
 import dotenv from 'dotenv';
 import simpleGit from 'simple-git';
 
-// Import WASM wrapper functions (file-map-based, no file I/O)
 import {
   getPatternsWasm,
-  validateTestWasm,
   parseRecFileFromMapWasm,
   generateRecFileToMapWasm,
-  convertWasmToUIFormat
+  validateTestFromMapWasm
 } from './wasmNodeWrapper.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -242,11 +240,74 @@ async function createFileContentMap(mainFilePath, baseDir) {
 		const mainDir = path.dirname(mainFilePath);
 		await findAndReadBlockFiles(mainDir, baseDir, fileMap);
 		
+		// Parse the main file content to find block references and resolve them
+		await resolveBlockReferences(mainContent, mainFilePath, baseDir, fileMap);
+		
 		console.log(`📁 Created file content map with ${Object.keys(fileMap).length} files`);
+		console.log(`📁 File map keys: ${Object.keys(fileMap).join(', ')}`);
 		return fileMap;
 	} catch (error) {
 		console.error('Error creating file content map:', error);
 		throw error;
+	}
+}
+
+// Parse content and resolve block references
+async function resolveBlockReferences(content, mainFilePath, baseDir, fileMap) {
+	// Find all block references in the content (e.g., "––– block: ../base/start-searchd –––")
+	const blockRegex = /–––\s*block:\s*([^–]+)\s*–––/g;
+	let match;
+	
+	while ((match = blockRegex.exec(content)) !== null) {
+		const blockPath = match[1].trim();
+		console.log(`🔍 Found block reference: "${blockPath}"`);
+		
+		// Resolve the block file path relative to the main file's directory
+		const mainFileDir = path.dirname(mainFilePath);
+		let resolvedBlockPath;
+		
+		// Handle different block path formats
+		if (blockPath.includes('/')) {
+			// Path with directory (e.g., "../base/start-searchd" or "auth/login")
+			const blockFileName = blockPath.endsWith('.recb') ? blockPath : `${blockPath}.recb`;
+			resolvedBlockPath = path.resolve(mainFileDir, blockFileName);
+		} else {
+			// Simple block name (e.g., "login-sequence")
+			const blockFileName = blockPath.endsWith('.recb') ? blockPath : `${blockPath}.recb`;
+			resolvedBlockPath = path.join(mainFileDir, blockFileName);
+		}
+		
+		console.log(`📂 Resolved block path: ${resolvedBlockPath}`);
+		
+		// Create the key that WASM expects (with .recb extension)
+		const wasmExpectedKey = blockPath.endsWith('.recb') ? blockPath : `${blockPath}.recb`;
+		
+		// Check if we already have this block in the map
+		if (!fileMap[wasmExpectedKey]) {
+			try {
+				console.log(`📄 Reading referenced block file: ${resolvedBlockPath}`);
+				
+				// Check if file exists first
+				await fs.access(resolvedBlockPath);
+				
+				const blockContent = await fs.readFile(resolvedBlockPath, 'utf8');
+				
+				// Store with the key that WASM expects (with .recb extension)
+				fileMap[wasmExpectedKey] = blockContent;
+				console.log(`✅ Added referenced block file: ${wasmExpectedKey} (${blockContent.length} chars)`);
+				
+				// Recursively resolve block references in this block file
+				await resolveBlockReferences(blockContent, resolvedBlockPath, baseDir, fileMap);
+			} catch (error) {
+				console.error(`❌ Could not read referenced block file ${resolvedBlockPath}:`, error.message);
+				
+				// Add error content to prevent WASM from failing
+				fileMap[wasmExpectedKey] = `––– input –––\necho "Error: Block file not found: ${blockPath}"\n––– output –––\nError: Block file not found`;
+				console.log(`⚠️  Added error placeholder for block: ${wasmExpectedKey}`);
+			}
+		} else {
+			console.log(`ℹ️  Block ${wasmExpectedKey} already in file map`);
+		}
 	}
 }
 
@@ -280,163 +341,7 @@ async function findAndReadBlockFiles(dir, baseDir, fileMap) {
 	}
 }
 
-// Pure JavaScript .rec file parser (NO WASM)
-function parseRecFileContent(content, baseDir) {
-	const lines = content.split('\n');
-	const steps = [];
-	let i = 0;
-
-	// Extract description (everything before the first statement)
-	let description = '';
-	const descriptionLines = [];
-
-	while (i < lines.length) {
-		const line = lines[i].trim();
-
-		// Check if this is a statement line
-		if (line.startsWith('––– ') && line.endsWith(' –––')) {
-			break;
-		}
-
-		// Skip empty lines at the beginning if no content yet
-		if (descriptionLines.length === 0 && line === '') {
-			i++;
-			continue;
-		}
-
-		descriptionLines.push(lines[i]); // Keep original line with whitespace
-		i++;
-	}
-
-	// Trim trailing empty lines from description
-	while (descriptionLines.length > 0 && descriptionLines[descriptionLines.length - 1].trim() === '') {
-		descriptionLines.pop();
-	}
-
-	description = descriptionLines.join('\n');
-
-	// Parse statements
-	while (i < lines.length) {
-		const line = lines[i].trim();
-
-		if (line.startsWith('––– ') && line.endsWith(' –––')) {
-			// Extract statement name
-			const statement = line.slice(4, -4).trim();
-			i++;
-
-			// Create a statement step
-			steps.push({
-				type: 'statement',
-				args: [statement],
-				content: null,
-				steps: null,
-			});
-
-			// Parse command blocks and expected output
-			let currentCommand = '';
-			let inExpectedOutput = false;
-			let inCommandBlock = false;
-
-			while (i < lines.length) {
-				const line = lines[i];
-				const trimmed = line.trim();
-
-				// Check for next statement
-				if (trimmed.startsWith('––– ') && trimmed.endsWith(' –––')) {
-					break;
-				}
-
-				// Check for block reference
-				if (trimmed.startsWith('@')) {
-					const blockPath = trimmed.slice(1).trim();
-					
-					// Add block step
-					steps.push({
-						type: 'block',
-						args: [blockPath],
-						content: null,
-						steps: null,
-					});
-					i++;
-					continue;
-				}
-
-				// Check for expected output marker
-				if (trimmed === '---') {
-					if (inCommandBlock && currentCommand.trim() !== '') {
-						steps.push({
-							type: 'command',
-							args: [],
-							content: currentCommand.trim(),
-							steps: null,
-						});
-						currentCommand = '';
-					}
-					inExpectedOutput = true;
-					inCommandBlock = false;
-					i++;
-					continue;
-				}
-
-				if (inExpectedOutput) {
-					// We're collecting expected output
-					let expectedOutput = '';
-					while (i < lines.length) {
-						const line = lines[i];
-						const trimmed = line.trim();
-						
-						// Check for next statement
-						if (trimmed.startsWith('––– ') && trimmed.endsWith(' –––')) {
-							break;
-						}
-						
-						if (expectedOutput !== '') {
-							expectedOutput += '\n';
-						}
-						expectedOutput += line;
-						i++;
-					}
-					
-					if (expectedOutput.trim() !== '') {
-						steps.push({
-							type: 'expected_output',
-							args: [],
-							content: expectedOutput.trim(),
-							steps: null,
-						});
-					}
-					break; // Exit the inner loop
-				} else {
-					// We're in a command block
-					inCommandBlock = true;
-					if (currentCommand !== '') {
-						currentCommand += '\n';
-					}
-					currentCommand += line;
-				}
-
-				i++;
-			}
-
-			// Add any remaining command
-			if (inCommandBlock && currentCommand.trim() !== '') {
-				steps.push({
-					type: 'command',
-					args: [],
-					content: currentCommand.trim(),
-					steps: null,
-				});
-			}
-		} else {
-			i++;
-		}
-	}
-
-	return {
-		description: description || null,
-		steps,
-	};
-}
+// Convert WASM TestStructure to legacy command format for UI compatibility
 
 // Convert parsed structure to UI format
 function convertToUIFormat(testStructure) {
@@ -685,40 +590,35 @@ app.get('/api/get-file', isAuthenticated, async (req, res) => {
 				const rawContent = await fs.readFile(absolutePath, 'utf8');
 				
 				// Parse .rec file using WASM with file content map (NO file I/O in WASM)
-				try {
-					console.log(`📖 Parsing .rec file with WASM using content map: ${absolutePath}`);
-					
-					// Create file content map for WASM
-					const fileMap = await createFileContentMap(absolutePath, testDir);
-					const relativeFilePath = path.relative(testDir, absolutePath);
-					
-					// Call WASM with path + content map
-					const testStructure = await parseRecFileFromMapWasm(relativeFilePath, fileMap);
-					const uiCommands = convertWasmToUIFormat(testStructure);
-					
-					res.json({ 
-						content: rawContent,
-						structuredData: testStructure,
-						uiCommands: uiCommands,
-						wasmparsed: true
-					});
-				} catch (wasmError) {
-					console.warn('WASM parsing failed, falling back to JavaScript:', wasmError.message);
-					
-					// Fallback to JavaScript parsing - MUST return same structure format as WASM
-					const testStructure = parseRecFileContent(rawContent, path.dirname(absolutePath));
-					const uiCommands = convertWasmToUIFormat(testStructure); // Use same converter
-					
-					res.json({ 
-						content: rawContent,
-						structuredData: testStructure,
-						uiCommands: uiCommands,
-						wasmparsed: false // JavaScript fallback, but same format
-					});
-				}
-			} catch (fileError) {
-				console.error('File read error:', fileError);
-				throw fileError;
+				console.log(`📖 Parsing .rec file with WASM using content map: ${absolutePath}`);
+				
+				// Create file content map for WASM
+				const fileMap = await createFileContentMap(absolutePath, testDir);
+				const relativeFilePath = path.relative(testDir, absolutePath);
+				
+				// Call WASM with path + content map (NO FALLBACK)
+				const testStructure = await parseRecFileFromMapWasm(relativeFilePath, fileMap);
+				
+				// Convert WASM structure to UI commands format
+				const uiCommands = convertTestStructureToLegacyCommands(testStructure);
+				
+				res.json({ 
+					content: rawContent,
+					structuredData: testStructure,  // Keep for future use
+					commands: uiCommands,          // For current UI compatibility
+					wasmparsed: true
+				});
+			} catch (error) {
+				console.error('WASM parsing failed:', error);
+				// Return raw content if WASM fails
+				const rawContent = await fs.readFile(absolutePath, 'utf8');
+				res.json({ 
+					content: rawContent,
+					structuredData: null,
+					commands: [],                  // Empty commands array
+					wasmparsed: false,
+					error: error.message
+				});
 			}
 		} else {
 			// For non-test files, return raw content
@@ -753,33 +653,29 @@ app.post('/api/save-file', isAuthenticated, async (req, res) => {
 		const directory = path.dirname(absolutePath);
 		await fs.mkdir(directory, { recursive: true });
 
-		// For .rec and .recb files, try WASM generation with content map if structured data is provided
+		// For .rec and .recb files, try WASM generation if structured data is provided
 		if ((filePath.endsWith('.rec') || filePath.endsWith('.recb')) && structuredData) {
-			try {
-				console.log(`💾 Attempting to save structured test file via WASM: ${absolutePath}`);
-				
-				// Use WASM with file content map (no file I/O in WASM)
-				const relativeFilePath = path.relative(testDir, absolutePath);
-				const fileContentMap = await generateRecFileToMapWasm(relativeFilePath, structuredData);
-				
-				// Get the generated content for the main file
-				const generatedContent = fileContentMap[relativeFilePath];
-				
-				if (generatedContent && generatedContent.length > 0) {
-					// JavaScript writes the file (WASM doesn't touch filesystem)
-					await fs.writeFile(absolutePath, generatedContent, 'utf8');
-					console.log('✅ File saved via WASM generation');
-					res.json({ 
-						success: true,
-						method: 'wasm',
-						generatedContent: generatedContent
-					});
-					return;
-				} else {
-					console.warn('WASM generation returned empty content, using manual content');
-				}
-			} catch (wasmError) {
-				console.warn('WASM generation failed, using manual content:', wasmError.message);
+			console.log(`💾 Saving structured test file via WASM: ${absolutePath}`);
+			
+			// Use WASM with file content map (no file I/O in WASM)
+			const relativeFilePath = path.relative(testDir, absolutePath);
+			const fileContentMap = await generateRecFileToMapWasm(relativeFilePath, structuredData);
+			
+			// Get the generated content for the main file
+			const generatedContent = fileContentMap[relativeFilePath];
+			
+			if (generatedContent && generatedContent.length > 0) {
+				// JavaScript writes the file (WASM doesn't touch filesystem)
+				await fs.writeFile(absolutePath, generatedContent, 'utf8');
+				console.log('✅ File saved via WASM generation');
+				res.json({ 
+					success: true,
+					method: 'wasm',
+					generatedContent: generatedContent
+				});
+				return;
+			} else {
+				console.warn('WASM generation returned empty content, falling back to manual content');
 			}
 		}
 		
@@ -1089,7 +985,75 @@ async function expandBlocks(commands, basePath, expandedBlocks = new Set()) {
 
 //
 //
-// Function to process test results with proper block handling
+// Convert WASM TestStructure to legacy command format for UI compatibility
+function convertTestStructureToLegacyCommands(testStructure, parentBlock = null, blockSource = null) {
+	const commands = [];
+	
+	if (!testStructure || !testStructure.steps) {
+		return commands;
+	}
+	
+	for (const step of testStructure.steps) {
+		switch (step.step_type) {
+			case 'input':
+				commands.push({
+					command: step.content || '',
+					type: 'command',
+					status: 'pending',
+					parentBlock,
+					blockSource,
+					isBlockCommand: !!parentBlock
+				});
+				break;
+				
+			case 'output':
+				// Output steps are handled as expectedOutput in the previous input command
+				if (commands.length > 0 && commands[commands.length - 1].type === 'command') {
+					commands[commands.length - 1].expectedOutput = step.content || '';
+				}
+				break;
+				
+			case 'block':
+				const blockPath = step.args && step.args.length > 0 ? step.args[0] : 'unknown-block';
+				
+				// Add the block reference
+				commands.push({
+					command: blockPath,
+					type: 'block',
+					status: 'pending',
+					parentBlock,
+					blockSource,
+					isBlockCommand: false
+				});
+				
+				// Add nested commands from the block
+				if (step.steps && step.steps.length > 0) {
+					const nestedCommands = convertTestStructureToLegacyCommands(
+						{ steps: step.steps }, 
+						{ command: blockPath }, 
+						blockPath
+					);
+					commands.push(...nestedCommands);
+				}
+				break;
+				
+			case 'comment':
+				commands.push({
+					command: step.content || '',
+					type: 'comment',
+					status: 'pending',
+					parentBlock,
+					blockSource,
+					isBlockCommand: !!parentBlock
+				});
+				break;
+		}
+	}
+	
+	return commands;
+}
+
+// Function to process test results with WASM structured format
 
 // Helper function to parse a .rec file using WASM and handle blocks recursively
 async function parseRecFile(absolutePath) {
@@ -1180,16 +1144,39 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 			console.log(testReallyFailed ? `Test completed with differences: ${error?.message}` : 'Test passed with no differences');
 
 			try {
-				// Parse the .rec file and expand blocks
-				const expandedCommands = await parseRecFile(absolutePath);
+				// Parse the .rec file using WASM with content map
+				console.log(`📖 Parsing .rec file with WASM: ${absolutePath}`);
+				const fileMap = await createFileContentMap(absolutePath, testDir);
+				const relativeFilePath = path.relative(testDir, absolutePath);
+				const testStructure = await parseRecFileFromMapWasm(relativeFilePath, fileMap);
 
-				// Process the test results with expanded blocks
-				const results = await processTestResults(absolutePath, expandedCommands, stdout, stderr, exitCode, error);
+				// Check if .rep file exists for validation
+				const repFilePath = absolutePath.replace('.rec', '.rep');
+				const repRelativePath = relativeFilePath.replace('.rec', '.rep');
+				let validationResults = null;
+				
+				try {
+					await fs.access(repFilePath);
+					// .rep file exists, add it to file map and validate
+					const repContent = await fs.readFile(repFilePath, 'utf8');
+					fileMap[repRelativePath] = repContent;
+					
+					console.log(`🔍 Running validation with WASM: ${repFilePath}`);
+					validationResults = await validateTestFromMapWasm(relativeFilePath, fileMap);
+					console.log(`✅ Validation completed: ${validationResults.success ? 'PASSED' : 'FAILED'}`);
+				} catch (repError) {
+					console.log(`ℹ️  No .rep file found for validation: ${repFilePath}`);
+				}
 
-				// Return the results
+				// Process test results for UI compatibility
+				const results = await processTestResults(absolutePath, testStructure, stdout, stderr, exitCode, error);
+
+				// Return the results with validation
 				res.json({
 					filePath,
 					dockerImage: dockerImage || 'default-image',
+					testStructure,           // NEW: Structured format from WASM
+					validationResults,       // NEW: Validation results if .rep exists
 					...results
 				});
 			} catch (readError) {
@@ -1994,8 +1981,12 @@ app.get('*', isAuthenticated, (req, res) => {
 app.listen(PORT, HOST === 'localhost' ? HOST : '0.0.0.0', () => {
 	console.log(`Server is running on ${HOST}:${PORT}`);
 });
-// Function to process test results with proper block handling
-async function processTestResults(absolutePath, expandedCommands, stdout, stderr, exitCode, error) {
+// Function to process test results with WASM structured format
+async function processTestResults(absolutePath, testStructure, stdout, stderr, exitCode, error) {
+	// Convert WASM TestStructure to the format expected by the existing logic
+	// This maintains UI compatibility while using the new structured format
+	const expandedCommands = convertTestStructureToLegacyCommands(testStructure);
+	
 	const repFilePath = absolutePath.replace(/\.rec$/, '.rep');
 	let success = false; // Default to failure, will update based on command results
 
