@@ -3,7 +3,7 @@
   import { EditorView, keymap } from '@codemirror/view';
   import { EditorState, Compartment } from '@codemirror/state';
   import { oneDark } from '@codemirror/theme-one-dark';
-  import { basicLight } from '@uiw/codemirror-theme-basic';
+  import { bbedit } from '@uiw/codemirror-theme-bbedit';
   import { defaultKeymap } from '@codemirror/commands';
   import { StreamLanguage } from '@codemirror/language';
   import { shell } from '@codemirror/legacy-modes/mode/shell';
@@ -26,45 +26,7 @@
   
   // Get appropriate theme based on user preference
   function getTheme() {
-    if (isDarkMode) {
-      return oneDark;
-    } else {
-      // Create a custom light theme with better contrast for shell syntax
-      return [basicLight, EditorView.theme({
-        '&': {
-          fontSize: '14px',
-          fontFamily: "'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace"
-        },
-        '.cm-content': {
-          padding: '8px 12px',
-          backgroundColor: '#ffffff'
-        },
-        // Shell syntax highlighting improvements for light mode
-        '.cm-string': { color: '#0d7377' },         // Teal for strings
-        '.cm-comment': { color: '#6a737d', fontStyle: 'italic' }, // Gray for comments
-        '.cm-keyword': { color: '#d73a49', fontWeight: 'bold' },   // Red for keywords
-        '.cm-operator': { color: '#005cc5' },       // Blue for operators
-        '.cm-variableName': { color: '#6f42c1' },   // Purple for variables
-        '.cm-number': { color: '#005cc5' },         // Blue for numbers
-        '.cm-atom': { color: '#005cc5' },           // Blue for atoms
-        '.cm-builtin': { color: '#d73a49' },        // Red for builtins
-        '.cm-meta': { color: '#6f42c1' },           // Purple for meta
-        '.cm-tag': { color: '#22863a' },            // Green for tags
-        '.cm-attribute': { color: '#6f42c1' },      // Purple for attributes
-        '.cm-qualifier': { color: '#6f42c1' },      // Purple for qualifiers
-        '.cm-property': { color: '#005cc5' },       // Blue for properties
-        '.cm-variable': { color: '#24292e' },       // Dark gray for variables
-        '.cm-def': { color: '#6f42c1' },            // Purple for definitions
-        '.cm-bracket': { color: '#24292e' },        // Dark gray for brackets
-        '.cm-type': { color: '#d73a49' },           // Red for types
-        // Enhanced shell-specific highlighting
-        '.cm-shell-command': { color: '#d73a49', fontWeight: 'bold' },
-        '.cm-shell-flag': { color: '#005cc5' },
-        '.cm-shell-path': { color: '#032f62' },
-        '.cm-shell-redirect': { color: '#d73a49' },
-        '.cm-shell-pipe': { color: '#d73a49', fontWeight: 'bold' }
-      })];
-    }
+    return isDarkMode ? oneDark : bbedit;
   }
   
   // Create CodeMirror editor

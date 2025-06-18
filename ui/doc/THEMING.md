@@ -6,6 +6,8 @@ This document provides comprehensive information about the theming system for co
 
 The CLT UI uses CodeMirror 6 for syntax highlighting in command input fields. The theming system automatically switches between light and dark themes based on the user's system preference (`prefers-color-scheme`).
 
+**Current Implementation**: Uses pre-built themes from the [@uiw/codemirror-themes](https://www.npmjs.com/package/@uiw/codemirror-themes) package for optimal shell syntax highlighting.
+
 ## Architecture
 
 ### Theme Detection
@@ -13,10 +15,14 @@ The CLT UI uses CodeMirror 6 for syntax highlighting in command input fields. Th
 - **Real-time Switching**: Listens for theme changes and updates the editor dynamically
 - **Fallback**: Defaults to light theme if detection fails
 
+### Current Theme Selection
+- **Light Mode**: **BBEdit Theme** - Clean, professional light theme optimized for code readability
+- **Dark Mode**: **One Dark Theme** - Popular dark theme with excellent contrast
+
 ### Theme Components
-1. **Base Theme**: Foundation theme (oneDark for dark, basicLight for light)
-2. **Custom Overrides**: Shell-specific syntax highlighting rules
-3. **Dynamic Reconfiguration**: Uses CodeMirror's Compartment API for live theme switching
+1. **Base Theme**: Pre-built themes from @uiw packages
+2. **Dynamic Reconfiguration**: Uses CodeMirror's Compartment API for live theme switching
+3. **Shell Syntax Support**: Themes are optimized for shell/bash syntax highlighting
 
 ## File Structure
 
@@ -28,150 +34,129 @@ ui/src/components/
 
 ## Current Theme Configuration
 
-### Dark Mode Theme
-Uses `@codemirror/theme-one-dark` with no additional customization.
-
-### Light Mode Theme
-Combines `@uiw/codemirror-theme-basic` with custom shell syntax highlighting:
-
+### Implementation
 ```javascript
-// Light theme configuration
-return [basicLight, EditorView.theme({
-  '&': {
-    fontSize: '14px',
-    fontFamily: "'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace"
-  },
-  '.cm-content': {
-    padding: '8px 12px',
-    backgroundColor: '#ffffff'
-  },
-  // Shell syntax highlighting
-  '.cm-string': { color: '#0d7377' },         // Teal for strings
-  '.cm-comment': { color: '#6a737d', fontStyle: 'italic' },
-  '.cm-keyword': { color: '#d73a49', fontWeight: 'bold' },
-  '.cm-operator': { color: '#005cc5' },
-  '.cm-variableName': { color: '#6f42c1' },
-  // ... more syntax rules
-})]
-```
+// Theme imports
+import { oneDark } from '@codemirror/theme-one-dark';
+import { bbedit } from '@uiw/codemirror-theme-bbedit';
 
-## Color Palette
-
-### Light Mode Colors
-| Element | Color | Usage |
-|---------|-------|-------|
-| Commands/Keywords | `#d73a49` (Red) | `docker`, `echo`, `grep`, etc. |
-| Strings | `#0d7377` (Teal) | Quoted text, file paths in quotes |
-| Operators | `#005cc5` (Blue) | `>`, `|`, `&&`, `||` |
-| Variables | `#6f42c1` (Purple) | `$VAR`, environment variables |
-| Comments | `#6a737d` (Gray) | `# comment text` |
-| Numbers | `#005cc5` (Blue) | Port numbers, counts |
-| Flags | `#005cc5` (Blue) | `-q`, `--verbose`, etc. |
-| Paths | `#032f62` (Dark Blue) | File system paths |
-
-### Dark Mode Colors
-Uses the standard One Dark theme color palette:
-- Keywords: `#c678dd` (Purple)
-- Strings: `#98c379` (Green)
-- Comments: `#5c6370` (Gray)
-- Numbers: `#d19a66` (Orange)
-- Operators: `#56b6c2` (Cyan)
-
-## How to Customize Themes
-
-### 1. Modifying Existing Colors
-
-To change colors for light mode, edit the `getTheme()` function in both `CodeMirrorInput.svelte` and `SimpleCodeMirror.svelte`:
-
-```javascript
-// Example: Change string color to purple
-'.cm-string': { color: '#6f42c1' }, // Changed from teal to purple
-```
-
-### 2. Adding New Syntax Rules
-
-Add new CSS classes for specific shell elements:
-
-```javascript
-// Add new shell-specific highlighting
-'.cm-shell-sudo': { color: '#d73a49', fontWeight: 'bold' },
-'.cm-shell-env-var': { color: '#6f42c1', fontStyle: 'italic' },
-'.cm-shell-glob': { color: '#22863a' },
-```
-
-### 3. Creating a Custom Theme
-
-To create a completely custom theme:
-
-```javascript
-// 1. Install a new base theme
-npm install @uiw/codemirror-theme-[theme-name]
-
-// 2. Import in the component
-import { customTheme } from '@uiw/codemirror-theme-custom';
-
-// 3. Replace in getTheme() function
+// Dynamic theme selection
 function getTheme() {
-  if (isDarkMode) {
-    return customDarkTheme;
-  } else {
-    return [customTheme, EditorView.theme({
-      // Your custom overrides
-    })];
-  }
+  return isDarkMode ? oneDark : bbedit;
 }
-```
 
-### 4. Advanced Customization
-
-For complex theming needs, you can create a completely custom theme:
-
-```javascript
-import { EditorView } from '@codemirror/view';
-
-const myCustomTheme = EditorView.theme({
-  '&': {
-    color: '#333',
-    backgroundColor: '#fff'
-  },
-  '.cm-content': {
-    padding: '10px',
-    fontFamily: 'Monaco, monospace'
-  },
-  '.cm-focused': {
-    outline: 'none'
-  },
-  '.cm-editor': {
-    border: '1px solid #ddd',
-    borderRadius: '4px'
-  },
-  '.cm-editor.cm-focused': {
-    borderColor: '#007acc',
-    boxShadow: '0 0 0 2px rgba(0, 122, 204, 0.2)'
-  },
-  // Syntax highlighting
-  '.cm-keyword': { color: '#0000ff', fontWeight: 'bold' },
-  '.cm-string': { color: '#008000' },
-  '.cm-comment': { color: '#808080', fontStyle: 'italic' },
-  '.cm-number': { color: '#ff6600' },
-  '.cm-operator': { color: '#000080' },
-  '.cm-variableName': { color: '#800080' }
+// Real-time theme switching
+mediaQuery.addEventListener('change', (e) => {
+  isDarkMode = e.matches;
+  editorView.dispatch({
+    effects: themeCompartment.reconfigure(getTheme())
+  });
 });
 ```
 
-## Available Theme Packages
+### Why These Themes?
+
+#### BBEdit Theme (Light Mode)
+- ✅ **Professional appearance** - Clean, minimal design
+- ✅ **Excellent contrast** - High readability for shell commands
+- ✅ **Optimized syntax colors** - Well-balanced color palette
+- ✅ **Shell-friendly** - Good highlighting for commands, strings, operators
+
+#### One Dark Theme (Dark Mode)  
+- ✅ **Popular choice** - Widely used and tested
+- ✅ **Eye-friendly** - Reduced strain in low-light environments
+- ✅ **Comprehensive highlighting** - Full syntax support
+- ✅ **Consistent experience** - Matches many developer tools
+
+## Available Pre-built Themes
+
+All themes from [@uiw/codemirror-themes](https://www.npmjs.com/package/@uiw/codemirror-themes) are available:
 
 ### Recommended Light Themes
-- `@uiw/codemirror-theme-basic` - Clean, minimal light theme
-- `@uiw/codemirror-theme-github` - GitHub-style light theme
-- `@uiw/codemirror-theme-white` - Pure white background theme
-- `@uiw/codemirror-theme-eclipse` - Eclipse IDE-style theme
+| Theme | Package | Best For |
+|-------|---------|----------|
+| **BBEdit** ⭐ | `@uiw/codemirror-theme-bbedit` | **Current choice** - Professional, clean |
+| GitHub Light | `@uiw/codemirror-theme-github` | GitHub-style interface |
+| XCode Light | `@uiw/codemirror-theme-xcode` | Apple ecosystem integration |
+| Eclipse | `@uiw/codemirror-theme-eclipse` | IDE-style appearance |
+| Material Light | `@uiw/codemirror-theme-material` | Material Design aesthetic |
 
 ### Recommended Dark Themes
-- `@codemirror/theme-one-dark` - One Dark theme (current default)
-- `@uiw/codemirror-theme-dracula` - Dracula theme
-- `@uiw/codemirror-theme-monokai` - Monokai theme
-- `@uiw/codemirror-theme-sublime` - Sublime Text theme
+| Theme | Package | Best For |
+|-------|---------|----------|
+| **One Dark** ⭐ | `@codemirror/theme-one-dark` | **Current choice** - Popular, well-tested |
+| Atom One | `@uiw/codemirror-theme-atom-one` | Atom editor style |
+| Dracula | `@uiw/codemirror-theme-dracula` | High contrast, vibrant |
+| Tokyo Night | `@uiw/codemirror-theme-tokyo-night` | Modern, stylish |
+| Nord | `@uiw/codemirror-theme-nord` | Cool, arctic-inspired |
+
+## How to Change Themes
+
+### 1. Using Different Pre-built Themes
+
+**Step 1**: Install the desired theme package
+```bash
+cd ui
+npm install @uiw/codemirror-theme-[theme-name]
+```
+
+**Step 2**: Update imports in both components
+```javascript
+// In CodeMirrorInput.svelte and SimpleCodeMirror.svelte
+import { newLightTheme } from '@uiw/codemirror-theme-[light-theme]';
+import { newDarkTheme } from '@uiw/codemirror-theme-[dark-theme]';
+```
+
+**Step 3**: Update the getTheme() function
+```javascript
+function getTheme() {
+  return isDarkMode ? newDarkTheme : newLightTheme;
+}
+```
+
+### 2. Popular Theme Combinations
+
+```javascript
+// GitHub-style combination
+import { githubLight } from '@uiw/codemirror-theme-github';
+import { githubDark } from '@uiw/codemirror-theme-github';
+
+// VS Code-style combination  
+import { vscodeDark } from '@uiw/codemirror-theme-vscode';
+import { bbedit } from '@uiw/codemirror-theme-bbedit'; // Light alternative
+
+// Material Design combination
+import { materialLight } from '@uiw/codemirror-theme-material';
+import { materialDark } from '@uiw/codemirror-theme-material';
+```
+
+### 3. Creating Custom Themes
+
+For advanced customization, use the `createTheme` function:
+
+```javascript
+import { createTheme } from '@uiw/codemirror-themes';
+import { tags as t } from '@lezer/highlight';
+
+const customLightTheme = createTheme({
+  theme: 'light',
+  settings: {
+    background: '#ffffff',
+    foreground: '#333333',
+    caret: '#5d00ff',
+    selection: '#036dd626',
+    gutterBackground: '#f5f5f5',
+    gutterForeground: '#999999',
+  },
+  styles: [
+    { tag: t.comment, color: '#6a737d' },
+    { tag: t.keyword, color: '#d73a49' },
+    { tag: t.string, color: '#032f62' },
+    { tag: t.operator, color: '#005cc5' },
+    { tag: t.variableName, color: '#6f42c1' },
+  ],
+});
+```
 
 ## Shell Syntax Highlighting Details
 
@@ -187,10 +172,13 @@ The CLT UI uses the shell mode from `@codemirror/legacy-modes/mode/shell` which 
 - **Numbers**: Numeric literals
 - **Flags**: Command-line options (`-v`, `--verbose`)
 
-### Limitations
-- Limited Docker-specific highlighting
-- Basic pipe and redirection detection
-- No advanced shell construct recognition (functions, arrays)
+### Theme Color Mapping
+Pre-built themes automatically handle these elements with appropriate colors:
+- Commands and keywords get primary accent colors
+- Strings use secondary colors for distinction
+- Comments are typically muted/gray
+- Operators use bright colors for visibility
+- Variables get special highlighting
 
 ## Testing Theme Changes
 
@@ -212,6 +200,7 @@ npm run build
 - [ ] Theme switches properly when system preference changes
 - [ ] All shell elements are properly colored
 - [ ] No CSS conflicts with main UI theme
+- [ ] Sufficient contrast for accessibility
 
 ## Troubleshooting
 
@@ -222,15 +211,15 @@ npm run build
    - Verify media query listener is attached
    - Check console for JavaScript errors
 
-2. **Colors not applying**
-   - Ensure CSS selectors are correct (`.cm-keyword`, not `.keyword`)
-   - Check for CSS specificity conflicts
-   - Verify theme is properly imported
+2. **Theme not loading**
+   - Ensure theme package is installed: `npm install @uiw/codemirror-theme-[name]`
+   - Check import path matches package exports
+   - Verify build process completes without errors
 
-3. **Performance issues**
-   - Avoid complex CSS selectors in theme
-   - Use CSS variables for consistent theming
-   - Minimize theme reconfiguration frequency
+3. **Colors not as expected**
+   - Different themes have different color philosophies
+   - Test with various shell commands to see full palette
+   - Consider switching to a different pre-built theme
 
 ### Debug Mode
 
@@ -239,60 +228,86 @@ To debug theme issues, add logging to the `getTheme()` function:
 ```javascript
 function getTheme() {
   console.log('Theme switching to:', isDarkMode ? 'dark' : 'light');
-  // ... rest of function
+  const theme = isDarkMode ? oneDark : bbedit;
+  console.log('Using theme:', theme);
+  return theme;
 }
 ```
 
 ## Best Practices
 
-### 1. Color Accessibility
-- Ensure sufficient contrast ratios (WCAG 2.1 AA: 4.5:1 for normal text)
-- Test with color blindness simulators
-- Provide alternative indicators beyond color (bold, italic, underline)
+### 1. Theme Selection
+- **Choose popular themes** - Better tested and maintained
+- **Test with real content** - Use actual shell commands for evaluation
+- **Consider user base** - Match your audience's preferences
+- **Maintain consistency** - Use themes from the same family when possible
 
-### 2. Consistency
-- Use consistent color meanings across light/dark themes
-- Maintain visual hierarchy (commands > operators > variables)
-- Follow existing UI color palette when possible
+### 2. Accessibility
+- **Verify contrast ratios** - WCAG 2.1 AA: 4.5:1 for normal text
+- **Test with color blindness simulators**
+- **Ensure themes work in both light and dark modes**
 
 ### 3. Performance
-- Minimize theme complexity
-- Use CSS variables for maintainable themes
-- Avoid frequent theme reconfiguration
+- **Use pre-built themes** - Faster than custom themes
+- **Minimize theme complexity** - Simpler themes load faster
+- **Avoid frequent theme reconfiguration**
 
 ### 4. Maintenance
-- Document custom color choices
-- Use semantic color names in comments
-- Test theme changes across different shell commands
+- **Keep packages updated** - Themes receive bug fixes and improvements
+- **Document theme choices** - Record why specific themes were chosen
+- **Test after updates** - Verify themes still work after package updates
+
+## Package Management
+
+### Installing Themes
+```bash
+# Install specific theme
+npm install @uiw/codemirror-theme-[name]
+
+# Install multiple themes
+npm install @uiw/codemirror-theme-github @uiw/codemirror-theme-dracula
+
+# Install the full theme collection
+npm install @uiw/codemirror-themes
+```
+
+### Keeping Themes Updated
+```bash
+# Update specific theme
+npm update @uiw/codemirror-theme-bbedit
+
+# Update all theme packages
+npm update @uiw/codemirror-theme-*
+```
 
 ## Future Improvements
 
 ### Planned Features
-- [ ] Custom theme picker in UI settings
-- [ ] Docker-specific syntax highlighting
-- [ ] Enhanced shell construct recognition
-- [ ] Theme export/import functionality
-- [ ] High contrast accessibility theme
+- [ ] User theme selection in UI settings
+- [ ] Theme preview functionality
+- [ ] High contrast accessibility themes
+- [ ] Custom theme import/export
 
 ### Extension Points
-- Plugin system for custom syntax modes
-- User-defined color schemes
-- Command-specific highlighting rules
-- Integration with VS Code themes
+- Theme picker component
+- User preference persistence
+- Custom theme builder interface
+- Integration with system accent colors
 
 ## Contributing
 
 When contributing theme improvements:
 
-1. Test in both light and dark modes
-2. Ensure accessibility compliance
-3. Document color choices and rationale
-4. Update this guide with new features
-5. Add visual regression tests if possible
+1. **Use pre-built themes when possible** - Avoid custom themes unless necessary
+2. **Test in both light and dark modes**
+3. **Ensure accessibility compliance**
+4. **Document theme choices and rationale**
+5. **Update this guide with new features**
 
 ## References
 
 - [CodeMirror 6 Theming Guide](https://codemirror.net/docs/guide/#theming)
-- [CodeMirror Theme Extensions](https://codemirror.net/docs/ref/#view.EditorView^theme)
+- [@uiw/codemirror-themes Package](https://www.npmjs.com/package/@uiw/codemirror-themes)
+- [Theme Gallery](https://uiwjs.github.io/react-codemirror/#/theme/doc)
 - [Shell Mode Documentation](https://codemirror.net/5/mode/shell/)
 - [WCAG Color Contrast Guidelines](https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum.html)
