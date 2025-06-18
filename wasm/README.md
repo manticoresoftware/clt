@@ -46,7 +46,7 @@ The simplest way to compile and bundle your library is with `wasm-pack`.
    In the project directory, run:
 
    ```bash
-   wasm-pack build --release
+    RUSTFLAGS='-C target-feature=+bulk-memory' wasm-pack build --release --target web --out-dir ../ui/pkg --quiet
    ```
 
    This command compiles the Rust code to WASM and generates a `pkg/` directory with your WASM module and JavaScript bindings.
