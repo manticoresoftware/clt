@@ -1,11 +1,11 @@
 mod mcp_protocol;
 mod pattern_refiner;
-mod structured_test;
 mod test_runner;
 
-use mcp_protocol::*;
+use crate::mcp_protocol::*;
 use pattern_refiner::PatternRefiner;
 use test_runner::TestRunner;
+use parser::{TestStructure, TestStep};
 
 use anyhow::Result;
 use clap::Parser;
@@ -715,7 +715,7 @@ impl McpServer {
                 Ok(serde_json::to_string_pretty(&help_content)?)
             }
             "get_patterns" => {
-                let patterns = structured_test::get_patterns(self.clt_binary_path.as_deref())?;
+                let patterns = parser::get_patterns(self.clt_binary_path.as_deref())?;
 
                 let enhanced_output = json!({
                     "tool": "get_patterns",
@@ -735,7 +735,7 @@ impl McpServer {
                 )?;
 
                 let test_structure =
-                    structured_test::read_test_file(&self.resolve_test_path(&input.test_file)?)?;
+                    parser::read_test_file(&self.resolve_test_path(&input.test_file)?)?;
 
                 let enhanced_output = json!({
                     "tool": "read_test",
@@ -780,7 +780,7 @@ impl McpServer {
                 };
 
                 // Safely write test file with proper error handling
-                match structured_test::write_test_file(&resolved_test_path, &input.test_structure) {
+                match parser::write_test_file(&resolved_test_path, &input.test_structure) {
                     Ok(()) => {
                         let enhanced_output = json!({
                             "tool": "write_test",
@@ -841,7 +841,7 @@ impl McpServer {
                     }
                 };
 
-                match structured_test::replace_test_structure(
+                match parser::replace_test_structure(
                     &resolved_test_path,
                     &input.old_test_structure,
                     &input.new_test_structure,
@@ -889,7 +889,7 @@ impl McpServer {
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
 
-                match structured_test::append_test_structure(
+                match parser::append_test_structure(
                     &self.resolve_test_path(&input.test_file)?,
                     &input.test_structure,
                 ) {
@@ -1988,7 +1988,7 @@ impl McpServer {
     /// - summary: human-readable explanation of differences
     fn execute_test_match(&self, expected: &str, actual: &str) -> Result<TestMatchOutput> {
         // Use the same pattern loading logic as get_patterns tool
-        let patterns = structured_test::get_patterns(self.clt_binary_path.as_deref())?;
+        let patterns = parser::get_patterns(self.clt_binary_path.as_deref())?;
 
         // Create a temporary patterns file for the cmp crate
         let temp_patterns_file = if !patterns.is_empty() {

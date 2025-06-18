@@ -3,7 +3,7 @@ ui/dist/**
 ui/workdir/**
 ui/pkg/**
 ui/public/**
-wasm-diff/**
+wasm/target/**
 rec/target/**
 cmp/target/**
 parser/target/**

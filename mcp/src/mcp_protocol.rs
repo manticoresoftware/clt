@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+pub use parser::{TestStructure, TestStep};
 
 /// MCP JSON-RPC 2.0 Request
 #[derive(Debug, Deserialize)]
@@ -218,23 +219,7 @@ pub struct GetPatternsOutput {
     pub patterns: std::collections::HashMap<String, String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TestStructure {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub steps: Vec<TestStep>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TestStep {
-    #[serde(rename = "type")]
-    pub step_type: String,
-    pub args: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub steps: Option<Vec<TestStep>>, // For nested blocks
-}
+// TestStructure and TestStep are now imported from parser crate
 
 impl McpResponse {
     pub fn success(id: Option<serde_json::Value>, result: serde_json::Value) -> Self {
