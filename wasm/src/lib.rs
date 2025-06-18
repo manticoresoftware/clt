@@ -3,7 +3,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use once_cell::sync::Lazy;
-use parser::{TestStructure, read_test_file, write_test_file, replace_test_structure, append_test_structure, get_patterns, read_test_file_from_map, write_test_file_to_map};
+use parser::{TestStructure, read_test_file, write_test_file, replace_test_structure, append_test_structure, get_patterns, read_test_file_from_map, write_test_file_to_map, validate_test_from_map};
 
 static VAR_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"%\{[A-Z]{1}[A-Z_0-9]*\}").unwrap()
@@ -354,6 +354,27 @@ pub fn write_test_file_to_map_wasm(test_file_path: &str, test_structure_json: &s
     match write_test_file_to_map(test_file_path, &test_structure) {
         Ok(file_map) => serde_json::to_string(&file_map).unwrap_or_else(|e| {
             format!("{{\"error\": \"Failed to serialize file map: {}\"}}", e)
+        }),
+        Err(e) => format!("{{\"error\": \"{}\"}}", e),
+    }
+}
+
+/// WASM-compatible function to validate test using file content map
+/// This avoids file system operations that are not supported in WASM
+#[wasm_bindgen]
+pub fn validate_test_from_map_wasm(
+    rec_file_path: &str,
+    file_map_json: &str
+) -> String {
+    // Parse the file map from JSON
+    let file_map: HashMap<String, String> = match serde_json::from_str(file_map_json) {
+        Ok(map) => map,
+        Err(e) => return format!("{{\"error\": \"Invalid file map JSON: {}\"}}", e),
+    };
+
+    match validate_test_from_map(rec_file_path, &file_map) {
+        Ok(result) => serde_json::to_string(&result).unwrap_or_else(|e| {
+            format!("{{\"error\": \"Failed to serialize validation result: {}\"}}", e)
         }),
         Err(e) => format!("{{\"error\": \"{}\"}}", e),
     }
