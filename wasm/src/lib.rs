@@ -3,7 +3,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use once_cell::sync::Lazy;
-use parser::{TestStructure, read_test_file, write_test_file, replace_test_structure, append_test_structure, get_patterns};
+use parser::{TestStructure, read_test_file, write_test_file, replace_test_structure, append_test_structure, get_patterns, read_test_file_from_map, write_test_file_to_map};
 
 static VAR_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"%\{[A-Z]{1}[A-Z_0-9]*\}").unwrap()
@@ -317,6 +317,43 @@ pub fn validate_test_wasm(rec_file_path: &str) -> String {
     match parser::validate_test(rec_file_path) {
         Ok(result) => serde_json::to_string(&result).unwrap_or_else(|e| {
             format!("{{\"error\": \"Failed to serialize result: {}\"}}", e)
+        }),
+        Err(e) => format!("{{\"error\": \"{}\"}}", e),
+    }
+}
+
+// ===== NEW WASM-COMPATIBLE FUNCTIONS (NO FILE SYSTEM OPERATIONS) =====
+
+/// WASM-compatible function to parse .rec file using file content map
+/// This avoids file system operations that are not supported in WASM
+#[wasm_bindgen]
+pub fn read_test_file_from_map_wasm(main_file_path: &str, file_map_json: &str) -> String {
+    // Parse the file map from JSON
+    let file_map: HashMap<String, String> = match serde_json::from_str(file_map_json) {
+        Ok(map) => map,
+        Err(e) => return format!("{{\"error\": \"Invalid file map JSON: {}\"}}", e),
+    };
+
+    match read_test_file_from_map(main_file_path, &file_map) {
+        Ok(structure) => serde_json::to_string(&structure).unwrap_or_else(|e| {
+            format!("{{\"error\": \"Failed to serialize result: {}\"}}", e)
+        }),
+        Err(e) => format!("{{\"error\": \"{}\"}}", e),
+    }
+}
+
+/// WASM-compatible function to convert test structure to file content map
+/// Returns a JSON object with file paths as keys and content as values
+#[wasm_bindgen]
+pub fn write_test_file_to_map_wasm(test_file_path: &str, test_structure_json: &str) -> String {
+    let test_structure: TestStructure = match serde_json::from_str(test_structure_json) {
+        Ok(s) => s,
+        Err(e) => return format!("{{\"error\": \"Invalid JSON: {}\"}}", e),
+    };
+    
+    match write_test_file_to_map(test_file_path, &test_structure) {
+        Ok(file_map) => serde_json::to_string(&file_map).unwrap_or_else(|e| {
+            format!("{{\"error\": \"Failed to serialize file map: {}\"}}", e)
         }),
         Err(e) => format!("{{\"error\": \"{}\"}}", e),
     }

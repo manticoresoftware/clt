@@ -7,13 +7,12 @@ import session from 'express-session';
 import dotenv from 'dotenv';
 import simpleGit from 'simple-git';
 
-// Import WASM wrapper functions
+// Import WASM wrapper functions (file-map-based, no file I/O)
 import {
-  parseRecFileWasm,
-  generateRecFileWasm,
   getPatternsWasm,
   validateTestWasm,
-  convertUIToWasmFormat,
+  parseRecFileFromMapWasm,
+  generateRecFileToMapWasm,
   convertWasmToUIFormat
 } from './wasmNodeWrapper.js';
 
@@ -229,6 +228,333 @@ function getUserTestPath(req) {
 	return path.join(userRepo, 'test', 'clt-tests');
 }
 
+// Helper function to create file content map for WASM processing
+async function createFileContentMap(mainFilePath, baseDir) {
+	const fileMap = {};
+	
+	try {
+		// Read the main file
+		const mainContent = await fs.readFile(mainFilePath, 'utf8');
+		const relativePath = path.relative(baseDir, mainFilePath);
+		fileMap[relativePath] = mainContent;
+		
+		// Find and read all .recb block files in the same directory and subdirectories
+		const mainDir = path.dirname(mainFilePath);
+		await findAndReadBlockFiles(mainDir, baseDir, fileMap);
+		
+		console.log(`📁 Created file content map with ${Object.keys(fileMap).length} files`);
+		return fileMap;
+	} catch (error) {
+		console.error('Error creating file content map:', error);
+		throw error;
+	}
+}
+
+// Recursively find and read .recb files
+async function findAndReadBlockFiles(dir, baseDir, fileMap) {
+	try {
+		const entries = await fs.readdir(dir, { withFileTypes: true });
+		
+		for (const entry of entries) {
+			if (entry.name.startsWith('.')) continue; // Skip hidden files
+			
+			const fullPath = path.join(dir, entry.name);
+			
+			if (entry.isDirectory()) {
+				// Recursively search subdirectories
+				await findAndReadBlockFiles(fullPath, baseDir, fileMap);
+			} else if (entry.name.endsWith('.recb')) {
+				// Read block file
+				try {
+					const content = await fs.readFile(fullPath, 'utf8');
+					const relativePath = path.relative(baseDir, fullPath);
+					fileMap[relativePath] = content;
+					console.log(`📄 Added block file to map: ${relativePath}`);
+				} catch (error) {
+					console.warn(`⚠️  Could not read block file ${fullPath}:`, error.message);
+				}
+			}
+		}
+	} catch (error) {
+		console.warn(`⚠️  Could not read directory ${dir}:`, error.message);
+	}
+}
+
+// Pure JavaScript .rec file parser (NO WASM)
+function parseRecFileContent(content, baseDir) {
+	const lines = content.split('\n');
+	const steps = [];
+	let i = 0;
+
+	// Extract description (everything before the first statement)
+	let description = '';
+	const descriptionLines = [];
+
+	while (i < lines.length) {
+		const line = lines[i].trim();
+
+		// Check if this is a statement line
+		if (line.startsWith('––– ') && line.endsWith(' –––')) {
+			break;
+		}
+
+		// Skip empty lines at the beginning if no content yet
+		if (descriptionLines.length === 0 && line === '') {
+			i++;
+			continue;
+		}
+
+		descriptionLines.push(lines[i]); // Keep original line with whitespace
+		i++;
+	}
+
+	// Trim trailing empty lines from description
+	while (descriptionLines.length > 0 && descriptionLines[descriptionLines.length - 1].trim() === '') {
+		descriptionLines.pop();
+	}
+
+	description = descriptionLines.join('\n');
+
+	// Parse statements
+	while (i < lines.length) {
+		const line = lines[i].trim();
+
+		if (line.startsWith('––– ') && line.endsWith(' –––')) {
+			// Extract statement name
+			const statement = line.slice(4, -4).trim();
+			i++;
+
+			// Create a statement step
+			steps.push({
+				type: 'statement',
+				args: [statement],
+				content: null,
+				steps: null,
+			});
+
+			// Parse command blocks and expected output
+			let currentCommand = '';
+			let inExpectedOutput = false;
+			let inCommandBlock = false;
+
+			while (i < lines.length) {
+				const line = lines[i];
+				const trimmed = line.trim();
+
+				// Check for next statement
+				if (trimmed.startsWith('––– ') && trimmed.endsWith(' –––')) {
+					break;
+				}
+
+				// Check for block reference
+				if (trimmed.startsWith('@')) {
+					const blockPath = trimmed.slice(1).trim();
+					
+					// Add block step
+					steps.push({
+						type: 'block',
+						args: [blockPath],
+						content: null,
+						steps: null,
+					});
+					i++;
+					continue;
+				}
+
+				// Check for expected output marker
+				if (trimmed === '---') {
+					if (inCommandBlock && currentCommand.trim() !== '') {
+						steps.push({
+							type: 'command',
+							args: [],
+							content: currentCommand.trim(),
+							steps: null,
+						});
+						currentCommand = '';
+					}
+					inExpectedOutput = true;
+					inCommandBlock = false;
+					i++;
+					continue;
+				}
+
+				if (inExpectedOutput) {
+					// We're collecting expected output
+					let expectedOutput = '';
+					while (i < lines.length) {
+						const line = lines[i];
+						const trimmed = line.trim();
+						
+						// Check for next statement
+						if (trimmed.startsWith('––– ') && trimmed.endsWith(' –––')) {
+							break;
+						}
+						
+						if (expectedOutput !== '') {
+							expectedOutput += '\n';
+						}
+						expectedOutput += line;
+						i++;
+					}
+					
+					if (expectedOutput.trim() !== '') {
+						steps.push({
+							type: 'expected_output',
+							args: [],
+							content: expectedOutput.trim(),
+							steps: null,
+						});
+					}
+					break; // Exit the inner loop
+				} else {
+					// We're in a command block
+					inCommandBlock = true;
+					if (currentCommand !== '') {
+						currentCommand += '\n';
+					}
+					currentCommand += line;
+				}
+
+				i++;
+			}
+
+			// Add any remaining command
+			if (inCommandBlock && currentCommand.trim() !== '') {
+				steps.push({
+					type: 'command',
+					args: [],
+					content: currentCommand.trim(),
+					steps: null,
+				});
+			}
+		} else {
+			i++;
+		}
+	}
+
+	return {
+		description: description || null,
+		steps,
+	};
+}
+
+// Convert parsed structure to UI format
+function convertToUIFormat(testStructure) {
+	const commands = [];
+	
+	for (const step of testStructure.steps) {
+		switch (step.type) {
+			case 'statement':
+				// Statements don't become commands in UI
+				break;
+			case 'command':
+				commands.push({
+					command: step.content,
+					type: 'command',
+					status: 'pending'
+				});
+				break;
+			case 'expected_output':
+				// Expected output is handled separately
+				break;
+			case 'block':
+				// Block references could be expanded later
+				commands.push({
+					command: `@${step.args[0]}`,
+					type: 'command',
+					status: 'pending'
+				});
+				break;
+		}
+	}
+	
+	return commands;
+}
+
+// Convert structured format back to .rec content (JavaScript implementation)
+function convertStructureToRecContent(testStructure) {
+	let content = '';
+
+	// Add description
+	if (testStructure.description && testStructure.description.trim() !== '') {
+		content += testStructure.description;
+		content += '\n\n';
+	}
+
+	// Add test steps
+	let currentStatement = null;
+	let commandContent = '';
+	let expectedOutput = '';
+
+	for (const step of testStructure.steps) {
+		switch (step.type) {
+			case 'statement':
+				// Finish previous statement if any
+				if (currentStatement !== null) {
+					content += `––– ${currentStatement} –––\n`;
+					if (commandContent.trim() !== '') {
+						content += commandContent;
+						content += '\n';
+					}
+					if (expectedOutput.trim() !== '') {
+						content += '---\n';
+						content += expectedOutput;
+						content += '\n';
+					}
+					content += '\n';
+					commandContent = '';
+					expectedOutput = '';
+				}
+				
+				// Start new statement
+				if (step.args && step.args.length > 0) {
+					currentStatement = step.args[0];
+				}
+				break;
+			case 'command':
+				if (step.content) {
+					if (commandContent !== '') {
+						commandContent += '\n';
+					}
+					commandContent += step.content;
+				}
+				break;
+			case 'expected_output':
+				if (step.content) {
+					if (expectedOutput !== '') {
+						expectedOutput += '\n';
+					}
+					expectedOutput += step.content;
+				}
+				break;
+			case 'block':
+				if (step.args && step.args.length > 0) {
+					if (commandContent !== '') {
+						commandContent += '\n';
+					}
+					commandContent += `@${step.args[0]}`;
+				}
+				break;
+		}
+	}
+
+	// Finish last statement if any
+	if (currentStatement !== null) {
+		content += `––– ${currentStatement} –––\n`;
+		if (commandContent.trim() !== '') {
+			content += commandContent;
+			content += '\n';
+		}
+		if (expectedOutput.trim() !== '') {
+			content += '---\n';
+			content += expectedOutput;
+			content += '\n';
+		}
+	}
+
+	return content;
+}
+
 // Helper function to get a file tree
 async function buildFileTree(dir, basePath = '', followSymlinks = true) {
 	const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -358,9 +684,16 @@ app.get('/api/get-file', isAuthenticated, async (req, res) => {
 				// Get raw content first
 				const rawContent = await fs.readFile(absolutePath, 'utf8');
 				
-				// Try WASM parsing for structured data
+				// Parse .rec file using WASM with file content map (NO file I/O in WASM)
 				try {
-					const testStructure = await parseRecFileWasm(absolutePath);
+					console.log(`📖 Parsing .rec file with WASM using content map: ${absolutePath}`);
+					
+					// Create file content map for WASM
+					const fileMap = await createFileContentMap(absolutePath, testDir);
+					const relativeFilePath = path.relative(testDir, absolutePath);
+					
+					// Call WASM with path + content map
+					const testStructure = await parseRecFileFromMapWasm(relativeFilePath, fileMap);
 					const uiCommands = convertWasmToUIFormat(testStructure);
 					
 					res.json({ 
@@ -370,10 +703,17 @@ app.get('/api/get-file', isAuthenticated, async (req, res) => {
 						wasmparsed: true
 					});
 				} catch (wasmError) {
-					console.warn('WASM parsing failed, returning raw content:', wasmError.message);
+					console.warn('WASM parsing failed, falling back to JavaScript:', wasmError.message);
+					
+					// Fallback to JavaScript parsing - MUST return same structure format as WASM
+					const testStructure = parseRecFileContent(rawContent, path.dirname(absolutePath));
+					const uiCommands = convertWasmToUIFormat(testStructure); // Use same converter
+					
 					res.json({ 
 						content: rawContent,
-						wasmparsed: false
+						structuredData: testStructure,
+						uiCommands: uiCommands,
+						wasmparsed: false // JavaScript fallback, but same format
 					});
 				}
 			} catch (fileError) {
@@ -413,14 +753,20 @@ app.post('/api/save-file', isAuthenticated, async (req, res) => {
 		const directory = path.dirname(absolutePath);
 		await fs.mkdir(directory, { recursive: true });
 
-		// For .rec and .recb files, try WASM generation if structured data is provided
+		// For .rec and .recb files, try WASM generation with content map if structured data is provided
 		if ((filePath.endsWith('.rec') || filePath.endsWith('.recb')) && structuredData) {
 			try {
 				console.log(`💾 Attempting to save structured test file via WASM: ${absolutePath}`);
-				const generatedContent = await generateRecFileWasm(absolutePath, structuredData);
+				
+				// Use WASM with file content map (no file I/O in WASM)
+				const relativeFilePath = path.relative(testDir, absolutePath);
+				const fileContentMap = await generateRecFileToMapWasm(relativeFilePath, structuredData);
+				
+				// Get the generated content for the main file
+				const generatedContent = fileContentMap[relativeFilePath];
 				
 				if (generatedContent && generatedContent.length > 0) {
-					// Use WASM-generated content
+					// JavaScript writes the file (WASM doesn't touch filesystem)
 					await fs.writeFile(absolutePath, generatedContent, 'utf8');
 					console.log('✅ File saved via WASM generation');
 					res.json({ 
