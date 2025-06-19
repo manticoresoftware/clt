@@ -235,13 +235,8 @@
     try {
       const newValue = e.detail?.target?.value || '';
 
-      // Update the command directly in place to avoid re-rendering other commands
-      command.expectedOutput = newValue;
-
-      // Use a timeout to avoid reactive update cycles
-      setTimeout(() => {
-        dispatch('updateExpectedOutput', { index, newValue });
-      }, 0);
+      // Dispatch the update without direct mutation
+      dispatch('updateExpectedOutput', { index, newValue });
     } catch (err) {
       console.error('Error updating expected output:', err);
     }
@@ -261,14 +256,14 @@
 
   // Handle expansion on click (simple toggle)
   function handleExpectedOutputClick(event: MouseEvent) {
-    command.isOutputExpanded = !command.isOutputExpanded;
-    dispatch('toggleExpansion', { index, expanded: command.isOutputExpanded });
+    const newExpanded = !command.isOutputExpanded;
+    dispatch('toggleExpansion', { index, expanded: newExpanded });
   }
 
   // Handle expansion on actual output click
   function handleActualOutputClick(event: MouseEvent) {
-    command.isOutputExpanded = !command.isOutputExpanded;
-    dispatch('toggleExpansion', { index, expanded: command.isOutputExpanded });
+    const newExpanded = !command.isOutputExpanded;
+    dispatch('toggleExpansion', { index, expanded: newExpanded });
   }
 
   // Get actual output content without duration
