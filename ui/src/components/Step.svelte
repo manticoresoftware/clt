@@ -280,6 +280,8 @@
     // If no duration marker found, return the whole output.
     return command.actualOutput.trim();
   }
+
+
 </script>
 
 <div class="command-card {((command.status === 'failed' || command.error) && !command.initializing) ? 'failed-command' : ''} {command.type === 'block' ? 'block-command' : ''} {command.isBlockCommand ? 'is-block-command' : ''} {command.isNested ? 'nested-command' : ''}" style={command.isNested ? `margin-left: ${command.nestingLevel * 20}px;` : ''}>
@@ -452,13 +454,21 @@
             <label for={`actual-output-${index}`}>Actual Output</label>
           </div>
           <div class="codemirror-output-wrapper {command.isOutputExpanded ? 'expanded' : ''}" on:click={handleActualOutputClick}>
-            <OutputCodeMirror
-              bind:this={actualCodeMirror}
-              value={getActualOutputContent()}
-              placeholder="Empty output."
-              editable={false}
-              syncScrollWith={expectedEditorView}
-            />
+            {#if command.actualOutput}
+              {#await highlightDifferences(getActualOutputContent(), command.expectedOutput || '')}
+                <div class="actual-output-content">
+                  <pre class="plain-output">{getActualOutputContent()}</pre>
+                </div>
+              {:then diffHtml}
+                <div class="actual-output-content">
+                  <div class="wasm-diff">{@html diffHtml}</div>
+                </div>
+              {/await}
+            {:else}
+              <div class="actual-output-content">
+                <span class="no-output-message">Empty output.</span>
+              </div>
+            {/if}
           </div>
         </div>
       </div>
@@ -927,5 +937,133 @@
 
   .command-body {
     padding: 0 12px 12px 12px;
+  }
+
+  /* WASM Diff Styles */
+  .actual-output-content {
+    padding: 8px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    background: var(--color-bg-secondary);
+    font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    min-height: 60px;
+    overflow-y: auto;
+    cursor: pointer;
+  }
+
+  .codemirror-output-wrapper.expanded .actual-output-content {
+    max-height: none;
+  }
+
+  .codemirror-output-wrapper:not(.expanded) .actual-output-content {
+    max-height: 200px;
+  }
+
+  .wasm-diff {
+    font-family: monospace;
+    white-space: pre-wrap;
+    line-height: 1.4;
+  }
+
+  .plain-output {
+    font-family: monospace;
+    white-space: pre-wrap;
+    line-height: 1.4;
+    margin: 0;
+  }
+
+  .no-output-message {
+    color: var(--color-text-tertiary);
+    font-style: italic;
+  }
+
+  .diff-added-line {
+    background-color: #f0fdf4; /* light green background */
+    display: block;
+    width: 100%;
+    border-left: 3px solid #10b981;
+    padding-left: 4px;
+    margin-left: -7px;
+  }
+
+  .diff-matched-line {
+    background-color: #f0fdf4; /* lighter green */
+    display: block;
+    width: 100%;
+    border-left: 3px solid #22c55e;
+    padding-left: 4px;
+    margin-left: -7px;
+    color: #15803d;
+  }
+
+  .diff-removed-line {
+    background-color: #fee2e2; /* light red background */
+    display: block;
+    width: 100%;
+    border-left: 3px solid #dc2626;
+    padding-left: 4px;
+    margin-left: -7px;
+    color: #b91c1e;
+  }
+
+  .highlight-line {
+    background-color: #fee2e2; /* light red background */
+    display: block;
+    width: 100%;
+    border-left: 3px solid #ef4444;
+    padding-left: 4px;
+    margin-left: -7px;
+    color: #b91c1e;
+  }
+
+  .highlight-diff {
+    background-color: #fca5a5; /* highlighted diff */
+    color: #991b1b;
+    border-bottom: 1px dashed #ef4444;
+  }
+
+  /* Dark mode styles */
+  @media (prefers-color-scheme: dark) {
+    .actual-output-content {
+      background: rgba(75, 85, 99, 0.2);
+      border-color: #6b7280;
+      color: #d1d5db;
+    }
+
+    .diff-added-line {
+      background-color: rgba(16, 185, 129, 0.1);
+      border-left: 3px solid #10b981;
+      color: #4ade80;
+    }
+
+    .diff-matched-line {
+      background-color: rgba(34, 197, 94, 0.1);
+      border-left: 3px solid #22c55e;
+      color: #4ade80;
+    }
+
+    .diff-removed-line {
+      background-color: rgba(220, 38, 38, 0.1);
+      border-left: 3px solid #dc2626;
+      color: #fca5a5;
+    }
+
+    .highlight-line {
+      background-color: rgba(239, 68, 68, 0.1);
+      border-left: 3px solid #ef4444;
+      color: #fca5a5;
+    }
+
+    .highlight-diff {
+      background-color: rgba(239, 68, 68, 0.25);
+      color: #fca5a5;
+      border-bottom: 1px dashed #ef4444;
+    }
+
+    .no-output-message {
+      color: #9ca3af;
+    }
   }
 </style>
