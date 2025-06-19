@@ -1231,6 +1231,54 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 						console.log(`🔥 CALLING validateTestFromMapWasm WITH PATTERNS`);
 						validationResults = await validateTestFromMapWasm(relativeFilePath, fileMap, patterns);
 						console.log(`🔥 VALIDATION RESULT:`, JSON.stringify(validationResults, null, 2));
+						
+						// ENRICH testStructure with actual outputs and error flags
+						try {
+							console.log(`📋 Enriching testStructure with actual outputs from .rep file`);
+							
+							// Parse .rep file to get actual outputs
+							const repStructure = await parseRecFileFromMapWasm(repRelativePath, fileMap);
+							console.log(`📋 Rep structure:`, JSON.stringify(repStructure, null, 2));
+							
+							// Extract only OUTPUT type blocks from .rep file (flat/expanded)
+							const repOutputs = repStructure.steps.filter(step => step.type === 'output');
+							console.log(`📋 Found ${repOutputs.length} output blocks in .rep file`);
+							
+							// Track output index for sequential mapping
+							let outputIndex = 0;
+							
+							// Recursive function to traverse nested structure and assign outputs
+							function enrichStepsRecursively(steps) {
+								steps.forEach((step, index) => {
+									// If this step has nested steps, process them first
+									if (step.steps && step.steps.length > 0) {
+										enrichStepsRecursively(step.steps);
+									}
+									
+									// If this is an output step, assign next .rep output
+									if (step.type === 'output') {
+										if (repOutputs[outputIndex]) {
+											step.actualOutput = repOutputs[outputIndex].content || '';
+											console.log(`📋 Assigned rep output ${outputIndex + 1} to nested step: ${step.actualOutput ? 'SET' : 'EMPTY'}`);
+										}
+										outputIndex++;
+									}
+									
+									// Set error flag based on validation results
+									const hasError = validationResults.errors && 
+										validationResults.errors.some(error => error.step === outputIndex);
+									step.error = hasError;
+								});
+							}
+							
+							// Start recursive enrichment
+							enrichStepsRecursively(testStructure.steps);
+							
+							console.log(`✅ TestStructure enriched with ${outputIndex} outputs processed`);
+						} catch (enrichError) {
+							console.error('Error enriching testStructure:', enrichError.message);
+						}
+						
 					} catch (patternError) {
 						console.warn('Could not load patterns for validation:', patternError.message);
 						// Fall back to validation without patterns
