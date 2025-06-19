@@ -108,16 +108,16 @@
   // Convert structured data to legacy command format for UI compatibility
   function convertStructuredToCommands(testStructure: TestStructure | null): any[] {
     if (!testStructure || !testStructure.steps) return [];
-    
+
     const commands: any[] = [];
-    
+
     // Process steps, including nested steps when blocks are expanded
     function processSteps(steps: TestStepType[], level = 0, parentBlockPath: number[] = []) {
       let i = 0;
       while (i < steps.length) {
         const step = steps[i];
         const currentPath = level === 0 ? [i] : [...parentBlockPath, i];
-        
+
         if (step.type === 'input') {
           // Create command from input step
           const command = {
@@ -135,7 +135,7 @@
             isNested: level > 0,
             nestingLevel: level
           };
-          
+
           // Look for following output step
           if (i + 1 < steps.length && steps[i + 1].type === 'output') {
             const outputStep = steps[i + 1];
@@ -149,7 +149,7 @@
             command.isInputOutputPair = true;
             i++; // Skip the output step since we processed it
           }
-          
+
           commands.push(command);
         } else if (step.type === 'block') {
           const blockCommand = {
@@ -168,9 +168,9 @@
             // Store nested steps for expansion
             nestedSteps: step.steps
           };
-          
+
           commands.push(blockCommand);
-          
+
           // If block is expanded, process its nested steps
           if (step.isExpanded && step.steps && step.steps.length > 0) {
             processSteps(step.steps, level + 1, currentPath);
@@ -191,11 +191,11 @@
           });
         }
         // Skip standalone output steps (they should be handled with input steps)
-        
+
         i++;
       }
     }
-    
+
     // Process all steps, including nested ones when expanded
     processSteps(testStructure.steps, 0);
     return commands;
@@ -220,22 +220,22 @@
 
     // Create updated structure
     const updatedStructure = { ...testStructure };
-    
+
     // Navigate to the correct location using stepPath
     let targetSteps = updatedStructure.steps;
     const stepPath = command.stepPath;
-    
+
     // Navigate to the parent container
     for (let i = 0; i < stepPath.length - 1; i++) {
       targetSteps = targetSteps[stepPath[i]].steps;
     }
-    
+
     // Get the final index and update the step
     const finalIndex = stepPath[stepPath.length - 1];
-    
+
     if (finalIndex >= 0 && finalIndex < targetSteps.length) {
       const step = { ...targetSteps[finalIndex] };
-      
+
       if (step.type === 'input') {
         step.content = newValue;
       } else if (step.type === 'block') {
@@ -243,9 +243,9 @@
       } else if (step.type === 'comment') {
         step.content = newValue;
       }
-      
+
       targetSteps[finalIndex] = step;
-      
+
       // Update the store with new structure
       filesStore.updateTestStructure(updatedStructure);
     }
@@ -268,26 +268,26 @@
 
     // Create updated structure
     const updatedStructure = { ...testStructure };
-    
+
     // Navigate to the correct location using stepPath
     let targetSteps = updatedStructure.steps;
     const stepPath = command.stepPath;
-    
+
     // Navigate to the parent container
     for (let i = 0; i < stepPath.length - 1; i++) {
       targetSteps = targetSteps[stepPath[i]].steps;
     }
-    
+
     // Get the final index and update the output step (should be at finalIndex + 1)
     const finalIndex = stepPath[stepPath.length - 1];
-    
+
     if (finalIndex + 1 >= 0 && finalIndex + 1 < targetSteps.length) {
       const outputStep = { ...targetSteps[finalIndex + 1] };
-      
+
       if (outputStep.type === 'output') {
         outputStep.content = newValue;
         targetSteps[finalIndex + 1] = outputStep;
-        
+
         // Update the store with new structure
         filesStore.updateTestStructure(updatedStructure);
       }
@@ -297,7 +297,7 @@
   // Define testStructure for template usage
   $: testStructure = $filesStore.currentFile?.testStructure;
 
-  $: commands = $filesStore.currentFile?.testStructure 
+  $: commands = $filesStore.currentFile?.testStructure
     ? convertStructuredToCommands($filesStore.currentFile.testStructure)
     : ($filesStore.currentFile?.commands || []);
 
@@ -330,11 +330,11 @@
     const updatedStructure = { ...testStructure };
     const updatedSteps = [...updatedStructure.steps];
     const stepIndex = command.stepPath[0];
-    
+
     if (stepIndex > 0 && stepIndex < updatedSteps.length) {
       // Handle input/output pairs
-      if (updatedSteps[stepIndex].type === 'input' && 
-          stepIndex + 1 < updatedSteps.length && 
+      if (updatedSteps[stepIndex].type === 'input' &&
+          stepIndex + 1 < updatedSteps.length &&
           updatedSteps[stepIndex + 1].type === 'output') {
         // Move input/output pair
         const inputStep = updatedSteps[stepIndex];
@@ -347,7 +347,7 @@
         updatedSteps.splice(stepIndex, 1); // Remove
         updatedSteps.splice(stepIndex - 1, 0, step); // Insert at new position
       }
-      
+
       updatedStructure.steps = updatedSteps;
       filesStore.updateTestStructure(updatedStructure);
     }
@@ -375,11 +375,11 @@
     const updatedStructure = { ...testStructure };
     const updatedSteps = [...updatedStructure.steps];
     const stepIndex = command.stepPath[0];
-    
+
     if (stepIndex >= 0 && stepIndex < updatedSteps.length - 1) {
       // Handle input/output pairs
-      if (updatedSteps[stepIndex].type === 'input' && 
-          stepIndex + 1 < updatedSteps.length && 
+      if (updatedSteps[stepIndex].type === 'input' &&
+          stepIndex + 1 < updatedSteps.length &&
           updatedSteps[stepIndex + 1].type === 'output') {
         // Move input/output pair
         const inputStep = updatedSteps[stepIndex];
@@ -392,7 +392,7 @@
         updatedSteps.splice(stepIndex, 1); // Remove
         updatedSteps.splice(stepIndex + 1, 0, step); // Insert at new position
       }
-      
+
       updatedStructure.steps = updatedSteps;
       filesStore.updateTestStructure(updatedStructure);
     }
@@ -417,13 +417,13 @@
     const updatedStructure = { ...testStructure };
     const updatedSteps = [...updatedStructure.steps];
     const stepIndex = command.stepPath[0];
-    
+
     if (stepIndex >= 0 && stepIndex < updatedSteps.length) {
       const step = updatedSteps[stepIndex];
-      
+
       // Handle input/output pairs
-      if (step.type === 'input' && 
-          stepIndex + 1 < updatedSteps.length && 
+      if (step.type === 'input' &&
+          stepIndex + 1 < updatedSteps.length &&
           updatedSteps[stepIndex + 1].type === 'output') {
         // Duplicate input/output pair
         const inputStep = { ...step };
@@ -434,7 +434,7 @@
         const duplicatedStep = { ...step };
         updatedSteps.splice(stepIndex + 1, 0, duplicatedStep);
       }
-      
+
       updatedStructure.steps = updatedSteps;
       filesStore.updateTestStructure(updatedStructure);
     }
@@ -496,12 +496,12 @@
 
     // Handle structured format
     const updatedStructure = { ...testStructure };
-    
+
     // Calculate the correct insertion position by walking through current steps
     let insertIndex;
     let targetSteps = updatedStructure.steps;
     let nestingPath: number[] = [];
-    
+
     if (index === 0) {
       insertIndex = 0; // Insert at beginning of top level
     } else if (index >= commands.length) {
@@ -509,18 +509,18 @@
     } else {
       // Find the command we're inserting after
       const targetCommand = commands[index - 1];
-      
+
       if (targetCommand.isNested) {
         // We're inserting into a nested context
         nestingPath = targetCommand.stepPath.slice(0, -1); // Remove last index to get parent path
-        
+
         // Navigate to the parent block's steps
         let currentSteps = updatedStructure.steps;
         for (const pathIndex of nestingPath) {
           currentSteps = currentSteps[pathIndex].steps;
         }
         targetSteps = currentSteps;
-        
+
         // Calculate position within the nested steps
         insertIndex = targetCommand.stepPath[targetCommand.stepPath.length - 1] + 1;
         if (targetCommand.isInputOutputPair) {
@@ -543,9 +543,9 @@
         }
       }
     }
-    
+
     let newSteps: TestStepType[] = [];
-    
+
     if (commandType === 'block') {
       newSteps = [{
         type: 'block',
@@ -582,7 +582,7 @@
         }
       ];
     }
-    
+
     // Insert the new steps at the correct location
     targetSteps.splice(insertIndex, 0, ...newSteps);
     filesStore.updateTestStructure(updatedStructure);
@@ -603,19 +603,19 @@
     }
 
     const updatedStructure = { ...testStructure };
-    
+
     // Navigate to the correct location using stepPath
     let targetSteps = updatedStructure.steps;
     const stepPath = command.stepPath;
-    
+
     // Navigate to the parent container
     for (let i = 0; i < stepPath.length - 1; i++) {
       targetSteps = targetSteps[stepPath[i]].steps;
     }
-    
+
     // Get the final index within the target container
     const finalIndex = stepPath[stepPath.length - 1];
-    
+
     if (finalIndex >= 0 && finalIndex < targetSteps.length) {
       if (command.isInputOutputPair) {
         // Remove both input and output steps
@@ -624,7 +624,7 @@
         // Remove single step (block/comment)
         targetSteps.splice(finalIndex, 1);
       }
-      
+
       filesStore.updateTestStructure(updatedStructure);
     }
   }
@@ -647,7 +647,7 @@
     // Navigate through the path to find the correct step
     let targetStep = null;
     let targetSteps = currentSteps;
-    
+
     for (let i = 0; i < stepPath.length; i++) {
       const pathIndex = stepPath[i];
       if (i === stepPath.length - 1) {
@@ -1030,8 +1030,8 @@
         <!-- Render the converted commands using the existing UI -->
         <div class="command-list">
           {#each commands as command, i}
-            {@const displayNumber = command.isNested ? 
-              (commands.slice(0, i).filter(c => c.isNested && c.nestingLevel === command.nestingLevel && JSON.stringify(c.stepPath.slice(0, -1)) === JSON.stringify(command.stepPath.slice(0, -1))).length + 1) : 
+            {@const displayNumber = command.isNested ?
+              (commands.slice(0, i).filter(c => c.isNested && c.nestingLevel === command.nestingLevel && JSON.stringify(c.stepPath.slice(0, -1)) === JSON.stringify(command.stepPath.slice(0, -1))).length + 1) :
               (commands.slice(0, i).filter(c => !c.isNested).length + 1)
             }
             <div class="command-card {(command.status === 'failed' && !command.initializing) ? 'failed-command' : ''} {command.type === 'block' ? 'block-command' : ''} {command.isBlockCommand ? 'is-block-command' : ''} {command.isNested ? 'nested-command' : ''}" style={command.isNested ? `margin-left: ${command.nestingLevel * 20}px;` : ''}>
@@ -1094,32 +1094,32 @@
                 </div>
                 <div class="command-actions">
                   <!-- Move Up Button -->
-                  <button
-                    class="action-button move-up"
-                    on:click={() => moveCommandUp(i)}
-                    title="Move up"
-                    aria-label="Move command up"
-                    disabled={i === 0}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M18 15l-6-6-6 6"></path>
-                    </svg>
-                  </button>
+                  <!-- <button -->
+                  <!--   class="action-button move-up" -->
+                  <!--   on:click={() => moveCommandUp(i)} -->
+                  <!--   title="Move up" -->
+                  <!--   aria-label="Move command up" -->
+                  <!--   disabled={i === 0} -->
+                  <!-- > -->
+                  <!--   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"> -->
+                  <!--     <path d="M18 15l-6-6-6 6"></path> -->
+                  <!--   </svg> -->
+                  <!-- </button> -->
 
                   <!-- Move Down Button -->
-                  <button
-                    class="action-button move-down"
-                    on:click={() => moveCommandDown(i)}
-                    title="Move down"
-                    aria-label="Move command down"
-                    disabled={i === commands.length - 1}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M6 9l6 6 6-6"></path>
-                    </svg>
-                  </button>
+                  <!-- <button -->
+                  <!--   class="action-button move-down" -->
+                  <!--   on:click={() => moveCommandDown(i)} -->
+                  <!--   title="Move down" -->
+                  <!--   aria-label="Move command down" -->
+                  <!--   disabled={i === commands.length - 1} -->
+                  <!-- > -->
+                  <!--   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"> -->
+                  <!--     <path d="M6 9l6 6 6-6"></path> -->
+                  <!--   </svg> -->
+                  <!-- </button> -->
 
-                  <div class="action-separator"></div>
+                  <!-- <div class="action-separator"></div> -->
 
                   <!-- Add Command Button -->
                   <button
@@ -1160,17 +1160,17 @@
                   </button>
 
                   <!-- Duplicate Button -->
-                  <button
-                    class="action-button duplicate"
-                    on:click={() => duplicateCommand(i)}
-                    title="Duplicate"
-                    aria-label="Duplicate command"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                    </svg>
-                  </button>
+                  <!-- <button -->
+                  <!--   class="action-button duplicate" -->
+                  <!--   on:click={() => duplicateCommand(i)} -->
+                  <!--   title="Duplicate" -->
+                  <!--   aria-label="Duplicate command" -->
+                  <!-- > -->
+                  <!--   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"> -->
+                  <!--     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect> -->
+                  <!--     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path> -->
+                  <!--   </svg> -->
+                  <!-- </button> -->
 
                   <div class="action-separator"></div>
 
