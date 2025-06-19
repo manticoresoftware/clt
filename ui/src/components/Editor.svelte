@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { API_URL } from '../config.js';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
+  import Step from './Step.svelte';
 
   // Add global TypeScript interface for window
   declare global {
@@ -85,22 +86,7 @@
     }
   }
 
-// arrays for our refs
-  let expectedEls: HTMLElement[] = [];
-  let actualEls: HTMLElement[] = [];
-
-  /**
-   * syncScroll
-   * @param idx  index in the loop
-   * @param fromExpected  if true, copy from expectedElems[idx] → actualElems[idx], else vice versa
-   */
-  function syncScroll(idx: number, fromExpected = true) {
-    const from = fromExpected ? expectedEls[idx] : actualEls[idx];
-    const to   = fromExpected ? actualEls[idx]   : expectedEls[idx];
-    if (from && to) {
-      to.scrollTop = from.scrollTop;
-    }
-  }
+// Scroll sync is now handled in individual Step components
 
   let commands: any[] = [];
   let autoSaveEnabled = true;
@@ -278,7 +264,10 @@
       return;
     }
 
-    // Create updated structure
+    // Update the command directly in the commands array to avoid re-rendering all components
+    commands[commandIndex] = { ...command, expectedOutput: newValue };
+
+    // Also update the structured format for persistence
     const updatedStructure = { ...testStructure };
 
     // Navigate to the correct location using stepPath
@@ -300,8 +289,8 @@
         outputStep.content = newValue;
         targetSteps[finalIndex + 1] = outputStep;
 
-        // Update the store with new structure
-        filesStore.updateTestStructure(updatedStructure);
+        // Update the store with new structure but don't trigger reactive updates
+        filesStore.updateTestStructureQuietly(updatedStructure);
       }
     }
   }
@@ -452,24 +441,7 @@
     }
   }
 
-  // Auto-resize action for textareas
-  function initTextArea(node: HTMLTextAreaElement) {
-    // Initial auto-resize
-    setTimeout(() => {
-      if (node.value) {
-        node.style.height = 'auto';
-        node.style.height = Math.max(24, node.scrollHeight) + 'px';
-      }
-    }, 0);
-
-    return {
-      update() {
-        // Update height when value changes externally
-        node.style.height = 'auto';
-        node.style.height = Math.max(24, node.scrollHeight) + 'px';
-      }
-    };
-  }
+  // Auto-resize is now handled in individual Step components
 
   // Initialize autoSaveEnabled from localStorage
   onMount(() => {
@@ -698,211 +670,7 @@
     });
   }
 
-  function getStatusIcon(status: string | undefined) {
-    // Create different status indicators for different item types
-    if (status === 'matched' || status === 'success') {
-      return `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-      </svg>`;
-    }
-    if (status === 'failed') {
-      return `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
-      </svg>`;
-    }
-    if (status === 'block' || status === 'pending') {
-      // Use a different icon for blocks - file icon is more appropriate for blocks, clock for pending
-      const isBlock = status === 'block';
-      const isPending = status === 'pending';
-
-      if (isBlock) {
-        return `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd" />
-          </svg>`;
-      } else {
-        return `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd" />
-          </svg>`;
-      }
-    }
-  }
-
-  // Escape HTML special characters
-  function escapeHtml(text: string): string {
-    return text
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
-  }
-
-  // Highlight differences using the WASM module.
-  // Now we iterate over diffResult.diff_lines directly so that each line is rendered:
-  //   • unchanged lines are rendered as plain text
-  //   • added lines are prefixed with a "+", styled with diff-added-line
-  //   • removed lines are prefixed with a "−", styled with diff-removed-line
-  //   • changed lines include character-level highlight spans if available.
-  async function highlightDifferences(actual: string, expected: string): Promise<string> {
-    try {
-      if (!wasmLoaded || !patternMatcher) {
-        console.log('WASM module not loaded yet, showing plain text');
-        return escapeHtml(actual); // Return plain text if WASM isn't ready
-      }
-
-      // For real-time comparison, refresh patterns when showing the diff
-      try {
-        // Only refresh if we've gone more than 5 seconds since last refresh
-        if (!window.lastPatternRefresh || (Date.now() - window.lastPatternRefresh > 5000)) {
-          // Default patterns if API fails
-          const defaultPatterns = {
-            "NUMBER": "[0-9]+",
-            "DATE": "[0-9]{4}\\-[0-9]{2}\\-[0-9]{2}",
-            "DATETIME": "[0-9]{4}\\-[0-9]{2}\\-[0-9]{2}\\s[0-9]{2}:[0-9]{2}:[0-9]{2}",
-            "IPADDR": "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+",
-            "PATH": "[A-Za-z0-9\\/\\.\\-\\_]+",
-            "SEMVER": "[0-9]+\\.[0-9]+\\.[0-9]+",
-            "TIME": "[0-9]{2}:[0-9]{2}:[0-9]{2}",
-            "YEAR": "[0-9]{4}"
-          };
-
-          let patternsData;
-          try {
-            patternsData = await fetchPatterns();
-            // If patterns is empty, use default patterns
-            if (Object.keys(patternsData).length === 0) {
-              console.log('No patterns returned from API for refresh, using defaults');
-              patternsData = defaultPatterns;
-            }
-          } catch (refreshErr) {
-            console.warn('Could not refresh patterns, using defaults:', refreshErr);
-            patternsData = defaultPatterns;
-          }
-
-          try {
-            patternMatcher = new module.PatternMatcher(JSON.stringify(patternsData));
-            window.patternMatcher = patternMatcher;
-            window.lastPatternRefresh = Date.now();
-            console.log('Refreshed patterns for real-time comparison:', patternsData);
-          } catch (patternErr) {
-            console.warn('Error creating pattern matcher:', patternErr);
-          }
-        }
-      } catch (err) {
-        console.warn('Error in pattern refresh logic:', err);
-      }
-
-      // Return simple escaped text if inputs are identical
-      if (actual === expected) {
-        // Style as matched - no need for diff
-        if (actual && actual.trim() !== '') {
-          // Split by newlines to render properly
-          const lines = actual.split('\n');
-          let resultHtml = '';
-
-          lines.forEach((line, index) => {
-            resultHtml += `<span class="diff-matched-line">${escapeHtml(line)}</span>`;
-            if (index < lines.length - 1) {
-              resultHtml += '<br>';
-            }
-          });
-
-          return resultHtml;
-        }
-        return escapeHtml(actual);
-      }
-
-      // Get the diff result from the WASM module (returns a JSON string)
-      let diffResult;
-      try {
-        diffResult = JSON.parse(patternMatcher.diff_text(expected, actual));
-      } catch (diffErr) {
-        console.error('Error during diff processing:', diffErr);
-        return escapeHtml(actual);
-      }
-
-      if (!diffResult.has_diff) {
-        // No differences found; return with success styling
-        if (actual && actual.trim() !== '' && expected && expected.trim() !== '') {
-          // Split by newlines to render properly
-          const lines = actual.split('\n');
-          let resultHtml = '';
-
-          lines.forEach((line, index) => {
-            resultHtml += `<span class="diff-matched-line">${escapeHtml(line)}</span>`;
-            if (index < lines.length - 1) {
-              resultHtml += '<br>';
-            }
-          });
-
-          return resultHtml;
-        }
-        return escapeHtml(actual); // Simply escape if no meaningful content
-      }
-
-      let resultHtml = '';
-
-      // Iterate over each diff line. (Assumes diffResult.diff_lines is in sequential order.)
-      for (let i = 0; i < diffResult.diff_lines.length; i++) {
-        const diffLine = diffResult.diff_lines[i];
-        if (diffLine.line_type === "same") {
-          resultHtml += `${escapeHtml(diffLine.content)}`;
-          // Add a newline between content lines unless it's the last line
-          if (i < diffResult.diff_lines.length - 1) {
-            resultHtml += '<br>';
-          }
-        } else if (diffLine.line_type === "added") {
-          // Render added lines with a plus sign.
-          resultHtml += `<span class="diff-added-line">+ ${escapeHtml(diffLine.content)}</span>`;
-        } else if (diffLine.line_type === "removed") {
-          // Render removed lines with a minus sign.
-          resultHtml += `<span class="diff-removed-line">− ${escapeHtml(diffLine.content)}</span>`;
-        } else if (diffLine.line_type === "changed") {
-          // For changed lines, show a "~" marker.
-          if (diffLine.highlight_ranges && diffLine.highlight_ranges.length > 0) {
-            let lineHtml = '<span class="highlight-line">~ ';
-            let lastPos = 0;
-            for (const range of diffLine.highlight_ranges) {
-              // Append unchanged text
-              lineHtml += escapeHtml(diffLine.content.substring(lastPos, range.start));
-              // Append highlighted text
-              lineHtml += `<span class="highlight-diff">${escapeHtml(diffLine.content.substring(range.start, range.end))}</span>`;
-              lastPos = range.end;
-            }
-            // Append any remainder of the text.
-            lineHtml += escapeHtml(diffLine.content.substring(lastPos));
-            lineHtml += '</span>';
-            resultHtml += lineHtml;
-          } else {
-            resultHtml += `<span class="highlight-line">~ ${escapeHtml(diffLine.content)}</span>`;
-          }
-        }
-      }
-      return resultHtml;
-    } catch (err) {
-      console.error('Error highlighting differences:', err);
-      return escapeHtml(actual); // On error, return plain escaped text.
-    }
-  }
-
-  function formatDuration(ms: number | null): string {
-    if (ms === null) return '';
-    return `${ms}ms`;
-  }
-
-  function parseActualOutputContent(actualOutput: string | undefined): string {
-    if (!actualOutput) return '';
-
-    // Handle the case when there's a duration section in the output.
-    const durationMatch = actualOutput.match(/–––\s*duration/);
-    if (durationMatch) {
-      // Return everything before the duration marker.
-      return actualOutput.substring(0, durationMatch.index).trim();
-    }
-
-    // If no duration marker found, return the whole output.
-    return actualOutput.trim();
-  }
+  // These functions are now handled in individual Step components
 
   // Function to copy current URL with file hash to clipboard.
   function copyShareUrl() {
@@ -1039,325 +807,25 @@
           </div>
         {/if}
 
-        <!-- Render the converted commands using the existing UI -->
+        <!-- Render the converted commands using the Step component -->
         <div class="command-list">
-          {#each commands as command, i}
+          {#each commands as command, i (command.stepIndex || i)}
             {@const displayNumber = command.isNested ?
               (commands.slice(0, i).filter(c => c.isNested && c.nestingLevel === command.nestingLevel && JSON.stringify(c.stepPath.slice(0, -1)) === JSON.stringify(command.stepPath.slice(0, -1))).length + 1) :
               (commands.slice(0, i).filter(c => !c.isNested).length + 1)
             }
-            <div class="command-card {(command.status === 'failed' && !command.initializing) ? 'failed-command' : ''} {command.type === 'block' ? 'block-command' : ''} {command.isBlockCommand ? 'is-block-command' : ''} {command.isNested ? 'nested-command' : ''}" style={command.isNested ? `margin-left: ${command.nestingLevel * 20}px;` : ''}>
-              <!-- Command header -->
-              <div class="command-header">
-                <div class="command-title">
-                  <span class="command-number">{displayNumber}</span>
-                  {#if command.type === 'block'}
-                    <span>Block Reference</span>
-                    <!-- Expand/Collapse button for blocks -->
-                    <button
-                      class="expand-button"
-                      on:click={() => toggleBlockExpansion(i)}
-                      title={command.isExpanded ? 'Collapse block' : 'Expand block'}
-                      aria-label={command.isExpanded ? 'Collapse block' : 'Expand block'}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="expand-icon {command.isExpanded ? 'expanded' : ''}">
-                        <path d="M9 18l6-6-6-6"></path>
-                      </svg>
-                    </button>
-                  {:else if command.type === 'comment'}
-                    <span>Comment</span>
-                  {:else if command.isBlockCommand}
-                    <span>Block Command</span>
-                  {:else}
-                    <span>Command</span>
-                  {/if}
-                  {#if command.initializing}
-                    <span class="command-status pending-status">
-                      {@html getStatusIcon('pending')}
-                      <span>Pending</span>
-                    </span>
-                  {:else if command.status === 'matched'}
-                    <span class="command-status matched-status">
-                      {@html getStatusIcon('matched')}
-                      <span>Matched</span>
-                    </span>
-                  {:else if command.status === 'success'}
-                    <span class="command-status success-status">
-                      {@html getStatusIcon('success')}
-                      <span>Success</span>
-                    </span>
-                  {:else if command.status === 'failed'}
-                    <span class="command-status failed-status">
-                      {@html getStatusIcon('failed')}
-                      <span>Failed</span>
-                    </span>
-                  {:else if command.type === 'block'}
-                    <span class="command-status {command.status}-status">
-                      {@html getStatusIcon(command.status)}
-                      <span>{command.status.charAt(0).toUpperCase() + command.status.slice(1)}</span>
-                    </span>
-                  {:else if command.status}
-                    <span class="command-status {command.status}-status">
-                      {@html getStatusIcon(command.status)}
-                      <span>{command.status.charAt(0).toUpperCase() + command.status.slice(1)}</span>
-                    </span>
-                  {/if}
-                  {#if command.blockSource && command.isBlockCommand}
-                    <span class="block-source">From: {command.blockSource.split('/').pop()}</span>
-                  {/if}
-                  {#if command.duration}
-                    <span class="command-duration">{formatDuration(command.duration)}</span>
-                  {/if}
-                </div>
-                <div class="command-actions">
-                  <!-- Move Up Button -->
-                  <!-- <button -->
-                  <!--   class="action-button move-up" -->
-                  <!--   on:click={() => moveCommandUp(i)} -->
-                  <!--   title="Move up" -->
-                  <!--   aria-label="Move command up" -->
-                  <!--   disabled={i === 0} -->
-                  <!-- > -->
-                  <!--   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"> -->
-                  <!--     <path d="M18 15l-6-6-6 6"></path> -->
-                  <!--   </svg> -->
-                  <!-- </button> -->
-
-                  <!-- Move Down Button -->
-                  <!-- <button -->
-                  <!--   class="action-button move-down" -->
-                  <!--   on:click={() => moveCommandDown(i)} -->
-                  <!--   title="Move down" -->
-                  <!--   aria-label="Move command down" -->
-                  <!--   disabled={i === commands.length - 1} -->
-                  <!-- > -->
-                  <!--   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"> -->
-                  <!--     <path d="M6 9l6 6 6-6"></path> -->
-                  <!--   </svg> -->
-                  <!-- </button> -->
-
-                  <!-- <div class="action-separator"></div> -->
-
-                  <!-- Add Command Button -->
-                  <button
-                    class="action-button add-command"
-                    on:click={() => addCommand(i + 1, 'command')}
-                    title="Add command"
-                    aria-label="Add command"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <line x1="12" y1="5" x2="12" y2="19"></line>
-                      <line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
-                  </button>
-
-                  <!-- Add Block Button -->
-                  <button
-                    class="action-button add-block"
-                    on:click={() => addCommand(i + 1, 'block')}
-                    title="Add block reference"
-                    aria-label="Add block reference"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                      <polyline points="14 2 14 8 20 8"></polyline>
-                    </svg>
-                  </button>
-
-                  <!-- Add Comment Button -->
-                  <button
-                    class="action-button add-comment"
-                    on:click={() => addCommand(i + 1, 'comment')}
-                    title="Add comment"
-                    aria-label="Add comment"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                    </svg>
-                  </button>
-
-                  <!-- Duplicate Button -->
-                  <!-- <button -->
-                  <!--   class="action-button duplicate" -->
-                  <!--   on:click={() => duplicateCommand(i)} -->
-                  <!--   title="Duplicate" -->
-                  <!--   aria-label="Duplicate command" -->
-                  <!-- > -->
-                  <!--   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"> -->
-                  <!--     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect> -->
-                  <!--     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path> -->
-                  <!--   </svg> -->
-                  <!-- </button> -->
-
-                  <div class="action-separator"></div>
-
-                  <!-- Delete Button -->
-                  <button
-                    class="action-button delete"
-                    on:click={() => deleteCommand(i)}
-                    title="Delete"
-                    aria-label="Delete command"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M3 6h18" />
-                      <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                      <path d="M10 11v6" />
-                      <path d="M14 11v6" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              <!-- Command input -->
-              <div class="command-body">
-                {#if command.type === 'block'}
-                  <!-- Block reference input -->
-                  <SimpleCodeMirror
-                    placeholder="Enter path to file (without .recb extension)"
-                    bind:value={command.command}
-                    on:input={(e) => {
-                      try {
-                        // Get value from CodeMirror dispatched event
-                        const newValue = e.detail?.target?.value || '';
-
-                        // Use a timeout to avoid reactive update cycles
-                        setTimeout(() => {
-                          updateStructuredCommand(i, newValue);
-                        }, 0);
-                      } catch (err) {
-                        console.error('Error updating block reference:', err);
-                      }
-                    }}
-                  />
-                {:else if command.type === 'comment'}
-                  <!-- Comment input -->
-                  <SimpleCodeMirror
-                    placeholder="Enter your comment here..."
-                    bind:value={command.command}
-                    on:input={(e) => {
-                      try {
-                        // Get value from CodeMirror dispatched event
-                        const newValue = e.detail?.target?.value || '';
-
-                        // Use a timeout to avoid reactive update cycles
-                        setTimeout(() => {
-                          updateStructuredCommand(i, newValue);
-                        }, 0);
-                      } catch (err) {
-                        console.error('Error updating comment:', err);
-                      }
-                    }}
-                  />
-                {:else}
-                  <!-- Standard command input with syntax highlighting -->
-                  <SimpleCodeMirror
-                    placeholder="Enter command..."
-                    bind:value={command.command}
-                    on:input={(e) => {
-                      try {
-                        // Get value from CodeMirror dispatched event
-                        const newValue = e.detail?.target?.value || '';
-
-                        // Use a timeout to avoid reactive update cycles
-                        setTimeout(() => {
-                          updateStructuredCommand(i, newValue);
-                        }, 0);
-                      } catch (err) {
-                        console.error('Error updating command:', err);
-                      }
-                    }}
-                  />
-
-                  <!-- Output section (only for regular commands) -->
-                  {#if !command.initializing}
-                  <div class="output-grid {command.isOutputExpanded ? 'has-expanded-outputs' : ''}">
-                    <div class="output-column">
-                      <div class="output-header">
-                        <span class="output-indicator expected-indicator"></span>
-                        <label for={`expected-output-${i}`}>Expected Output</label>
-                      </div>
-                      <textarea
-                        id={`expected-output-${i}`}
-                        class="expected-output {command.isOutputExpanded ? 'expanded' : ''}"
-                        bind:this={expectedEls[i]}
-                        on:scroll={() => syncScroll(i, true)}
-                        placeholder="Expected output..."
-                        rows="1"
-                        bind:value={command.expectedOutput}
-                        on:input={(e) => {
-                          try {
-                            // Auto-resize textarea based on content
-                            e.target.style.height = 'auto';
-                            e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
-
-                            // Get value from textarea (this is a regular textarea, not CodeMirror)
-                            const newValue = e.target?.value || '';
-
-                            // Use a timeout to avoid reactive update cycles
-                            setTimeout(() => {
-                              updateStructuredExpectedOutput(i, newValue);
-
-                              // Force a re-render of the diff - a small hack to make
-                              // sure the diff updates in real-time as we type
-                              if (command.actualOutput) {
-                                const actualOutput = parseActualOutputContent(command.actualOutput);
-                                const actualOutputElement = document.getElementById(`actual-output-${i}`);
-                                if (actualOutputElement) {
-                                  highlightDifferences(actualOutput, newValue).then(diffHtml => {
-                                    if (actualOutputElement.querySelector('.wasm-diff')) {
-                                      actualOutputElement.querySelector('.wasm-diff').innerHTML = diffHtml;
-                                    } else {
-                                      actualOutputElement.innerHTML = `<div class="wasm-diff">${diffHtml}</div>`;
-                                    }
-                                  });
-                                }
-                              }
-                            }, 0);
-                          } catch (err) {
-                            console.error('Error updating expected output:', err);
-                          }
-                        }}
-                        on:focus={() => {
-                          // Focus handler - no expansion needed in structured format
-                        }}
-                        on:click={() => {
-                          // Click handler - no expansion needed in structured format
-                        }}
-                        use:initTextArea
-                      ></textarea>
-                    </div>
-                    <div class="output-column">
-                      <div class="output-header">
-                        <span class="output-indicator actual-indicator"></span>
-                        <label for={`actual-output-${i}`}>Actual Output</label>
-                      </div>
-                      <div
-                        id={`actual-output-${i}`}
-                        class="actual-output {command.status === 'failed' ? 'failed-output' : ''} {command.isOutputExpanded ? 'expanded' : ''}"
-                        bind:this={actualEls[i]}
-                        on:scroll={() => syncScroll(i, false)}
-                        role="region"
-                        aria-label="Actual Output"
-                        on:click={() => {
-                          // Click handler - no expansion needed in structured format
-                        }}
-                      >
-                        {#if command.actualOutput}
-                          {#await highlightDifferences(parseActualOutputContent(command.actualOutput), command.expectedOutput || '')}
-                            <pre class="plain-output">{parseActualOutputContent(command.actualOutput)}</pre>
-                          {:then diffHtml}
-                            <div class="wasm-diff">{@html diffHtml}</div>
-                          {/await}
-                        {:else}
-                          <span class="no-output-message">Empty output.</span>
-                        {/if}
-                      </div>
-                    </div>
-                  </div>
-                  {/if}
-                {/if}
-              </div>
-            </div>
+            <Step 
+              {command} 
+              index={i} 
+              {displayNumber}
+              {wasmLoaded}
+              {patternMatcher}
+              on:updateCommand={(e) => updateStructuredCommand(e.detail.index, e.detail.newValue)}
+              on:updateExpectedOutput={(e) => updateStructuredExpectedOutput(e.detail.index, e.detail.newValue)}
+              on:toggleExpansion={(e) => toggleBlockExpansion(e.detail.index)}
+              on:addCommand={(e) => addCommand(e.detail.index, e.detail.type)}
+              on:deleteCommand={(e) => deleteCommand(e.detail.index)}
+            />
           {/each}
 
           <!-- Add first command button if no commands -->
