@@ -1,6 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import { EditorView } from '@codemirror/view';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
+  import OutputCodeMirror from './OutputCodeMirror.svelte';
 
   export let command: any;
   export let index: number;
@@ -10,16 +12,19 @@
 
   const dispatch = createEventDispatcher();
 
-  // Arrays for scroll sync refs
-  let expectedEl: HTMLElement;
-  let actualEl: HTMLElement;
+  // CodeMirror refs for scroll sync
+  let expectedCodeMirror: any;
+  let actualCodeMirror: any;
+  let expectedEditorView: EditorView | null = null;
+  let actualEditorView: EditorView | null = null;
 
-  function syncScroll(fromExpected = true) {
-    const from = fromExpected ? expectedEl : actualEl;
-    const to = fromExpected ? actualEl : expectedEl;
-    if (from && to) {
-      to.scrollTop = from.scrollTop;
-    }
+  // Update editor views when components are ready
+  $: if (expectedCodeMirror?.getEditorView) {
+    expectedEditorView = expectedCodeMirror.getEditorView();
+  }
+  
+  $: if (actualCodeMirror?.getEditorView) {
+    actualEditorView = actualCodeMirror.getEditorView();
   }
 
   // Auto-resize action for textareas
@@ -32,11 +37,23 @@
       }
     }, 0);
 
+    // Add scroll event listener for syncing
+    const handleScroll = (e) => {
+      if (!isScrollSyncing && node === expectedEl) {
+        syncScroll(true);
+      }
+    };
+    
+    node.addEventListener('scroll', handleScroll);
+
     return {
       update() {
         // Update height when value changes externally
         node.style.height = 'auto';
         node.style.height = Math.max(24, node.scrollHeight) + 'px';
+      },
+      destroy() {
+        node.removeEventListener('scroll', handleScroll);
       }
     };
   }
@@ -216,12 +233,7 @@
 
   function handleExpectedOutputInput(e: any) {
     try {
-      // Auto-resize textarea based on content
-      e.target.style.height = 'auto';
-      e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
-
-      // Get value from textarea (this is a regular textarea, not CodeMirror)
-      const newValue = e.target?.value || '';
+      const newValue = e.detail?.target?.value || '';
 
       // Update the command directly in place to avoid re-rendering other commands
       command.expectedOutput = newValue;
@@ -245,6 +257,33 @@
 
   function handleDeleteCommand() {
     dispatch('deleteCommand', { index });
+  }
+
+  // Handle expansion on click (simple toggle)
+  function handleExpectedOutputClick(event: MouseEvent) {
+    command.isOutputExpanded = !command.isOutputExpanded;
+    dispatch('toggleExpansion', { index, expanded: command.isOutputExpanded });
+  }
+
+  // Handle expansion on actual output click
+  function handleActualOutputClick(event: MouseEvent) {
+    command.isOutputExpanded = !command.isOutputExpanded;
+    dispatch('toggleExpansion', { index, expanded: command.isOutputExpanded });
+  }
+
+  // Get actual output content without duration
+  function getActualOutputContent(): string {
+    if (!command.actualOutput) return '';
+    
+    // Handle the case when there's a duration section in the output.
+    const durationMatch = command.actualOutput.match(/–––\s*duration/);
+    if (durationMatch) {
+      // Return everything before the duration marker.
+      return command.actualOutput.substring(0, durationMatch.index).trim();
+    }
+
+    // If no duration marker found, return the whole output.
+    return command.actualOutput.trim();
   }
 </script>
 
@@ -401,53 +440,30 @@
             <span class="output-indicator expected-indicator"></span>
             <label for={`expected-output-${index}`}>Expected Output</label>
           </div>
-          <textarea
-            id={`expected-output-${index}`}
-            class="expected-output {command.isOutputExpanded ? 'expanded' : ''}"
-            bind:this={expectedEl}
-            on:scroll={() => syncScroll(true)}
-            placeholder="Expected output..."
-            rows="1"
-            bind:value={command.expectedOutput}
-            on:input={handleExpectedOutputInput}
-            on:focus={() => {
-              // Focus handler - no expansion needed in structured format
-            }}
-            on:click={() => {
-              // Click handler - no expansion needed in structured format
-            }}
-            use:initTextArea
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="off"
-            spellcheck="false"
-          ></textarea>
+          <div class="codemirror-output-wrapper {command.isOutputExpanded ? 'expanded' : ''}" on:click={handleExpectedOutputClick}>
+            <OutputCodeMirror
+              bind:this={expectedCodeMirror}
+              bind:value={command.expectedOutput}
+              placeholder="Expected output..."
+              editable={true}
+              syncScrollWith={actualEditorView}
+              on:input={handleExpectedOutputInput}
+            />
+          </div>
         </div>
         <div class="output-column">
           <div class="output-header">
             <span class="output-indicator actual-indicator"></span>
             <label for={`actual-output-${index}`}>Actual Output</label>
           </div>
-          <div
-            id={`actual-output-${index}`}
-            class="actual-output {command.status === 'failed' ? 'failed-output' : ''} {command.isOutputExpanded ? 'expanded' : ''}"
-            bind:this={actualEl}
-            on:scroll={() => syncScroll(false)}
-            role="region"
-            aria-label="Actual Output"
-            on:click={() => {
-              // Click handler - no expansion needed in structured format
-            }}
-          >
-            {#if command.actualOutput}
-              {#await highlightDifferences(parseActualOutputContent(command.actualOutput), command.expectedOutput || '')}
-                <pre class="plain-output">{parseActualOutputContent(command.actualOutput)}</pre>
-              {:then diffHtml}
-                <div class="wasm-diff">{@html diffHtml}</div>
-              {/await}
-            {:else}
-              <span class="no-output-message">Empty output.</span>
-            {/if}
+          <div class="codemirror-output-wrapper {command.isOutputExpanded ? 'expanded' : ''}" on:click={handleActualOutputClick}>
+            <OutputCodeMirror
+              bind:this={actualCodeMirror}
+              value={getActualOutputContent()}
+              placeholder="Empty output."
+              editable={false}
+              syncScrollWith={expectedEditorView}
+            />
           </div>
         </div>
       </div>
@@ -670,12 +686,17 @@
     color: var(--color-text-primary);
     transition: border-color 0.2s ease-in-out;
     line-height: 1;
-    overflow-y: hidden;
+    overflow-y: auto; /* Enable scrolling */
+    max-height: 200px; /* Default max height */
     /* Disable all browser autocomplete features */
     autocomplete: off;
     autocorrect: off;
     autocapitalize: off;
     spellcheck: false;
+  }
+
+  .expected-output.expanded {
+    max-height: 400px; /* Larger when expanded */
   }
 
   .command-input:focus, .expected-output:focus {
@@ -697,10 +718,11 @@
     max-height: 200px;
     overflow-y: auto;
     cursor: pointer;
+    transition: max-height 0.2s ease-in-out;
   }
 
   .actual-output.expanded {
-    max-height: none;
+    max-height: 400px; /* Larger when expanded */
   }
 
   .output-grid {
@@ -715,6 +737,33 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
+  }
+
+  .codemirror-output-wrapper {
+    min-height: 60px;
+    max-height: 200px;
+    overflow: visible;
+    border-radius: 4px;
+    transition: max-height 0.2s ease-in-out;
+    cursor: pointer;
+  }
+
+  .codemirror-output-wrapper.expanded {
+    max-height: 400px;
+  }
+
+  .codemirror-output-wrapper :global(.cm-editor) {
+    min-height: 60px;
+    max-height: inherit;
+  }
+
+  .codemirror-output-wrapper :global(.cm-scroller) {
+    overflow-y: auto !important;
+    max-height: inherit;
+  }
+
+  .codemirror-output-wrapper :global(.cm-content) {
+    min-height: 60px;
   }
 
   .output-header {
