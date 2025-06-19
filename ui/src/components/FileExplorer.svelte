@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { filesStore, type FileNode, addNodeToDirectory, updateChildPaths } from '../stores/filesStore';
   import { branchStore } from '../stores/branchStore';
+  import { gitStatusStore } from '../stores/gitStatusStore';
   import { API_URL } from '../config.js';
 
   // Default to tests directory
@@ -52,6 +53,8 @@
       fileTree = $filesStore.fileTree;
     }
   }
+
+
 
   function toggleFolder(node: FileNode, event: MouseEvent) {
     event.stopPropagation();
@@ -197,6 +200,9 @@
     // Fetch the file tree from the backend
     await filesStore.refreshFileTree();
 
+    // Start git status polling
+    gitStatusStore.startPolling(5000); // Poll every 5 seconds
+
     // If file path is specified in URL hash, open it
     if (filePath) {
       // Expand all parent folders to the file
@@ -215,6 +221,12 @@
 
     // Listen for hash changes to load files when URL changes
     window.addEventListener('hashchange', handleHashChange);
+  });
+
+  // Cleanup on destroy
+  onDestroy(() => {
+    gitStatusStore.stopPolling();
+    window.removeEventListener('hashchange', handleHashChange);
   });
 
   // Drag handlers
@@ -397,6 +409,87 @@
     }
   }
 
+  // Get git status for a file (reactive)
+  function getFileGitStatus(filePath: string): string | null {
+    // Try exact match first
+    const exactMatch = $gitStatusStore.modifiedFiles.find(file => file.path === filePath);
+    if (exactMatch) {
+      return exactMatch.status;
+    }
+    
+    // Try matching by filename ending
+    const endMatch = $gitStatusStore.modifiedFiles.find(file => file.path.endsWith(filePath));
+    if (endMatch) {
+      return endMatch.status;
+    }
+    
+    // Try matching if the git path contains our file path
+    const containsMatch = $gitStatusStore.modifiedFiles.find(file => file.path.includes(filePath));
+    if (containsMatch) {
+      return containsMatch.status;
+    }
+    
+    return null;
+  }
+
+  // Check if directory has changes (reactive)
+  function isDirModified(dirPath: string): boolean {
+    // Try exact match first
+    if ($gitStatusStore.modifiedDirs.includes(dirPath)) {
+      return true;
+    }
+    
+    // Try matching if any git modified dir ends with our dir path
+    const endMatch = $gitStatusStore.modifiedDirs.some(gitDir => gitDir.endsWith(dirPath));
+    if (endMatch) {
+      return true;
+    }
+    
+    // Try matching if any git modified dir contains our dir path
+    const containsMatch = $gitStatusStore.modifiedDirs.some(gitDir => gitDir.includes(dirPath));
+    if (containsMatch) {
+      return true;
+    }
+    
+    // Try matching if our dir path contains any git modified dir
+    const reverseMatch = $gitStatusStore.modifiedDirs.some(gitDir => dirPath.includes(gitDir));
+    if (reverseMatch) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  // Get git status display text
+  function getGitStatusDisplay(status: string | null): string {
+    if (!status) return '';
+    switch (status) {
+      case 'M': return 'M';
+      case 'A': return 'A';
+      case 'D': return 'D';
+      case 'R': return 'R';
+      case 'C': return 'C';
+      case 'U': return 'U';
+      case '??': return 'U'; // Untracked
+      default: return status;
+    }
+  }
+
+  // Get git status color class
+  function getGitStatusClass(status: string | null): string {
+    if (!status) return '';
+    switch (status) {
+      case 'M': return 'git-modified';
+      case 'A': return 'git-added';
+      case 'D': return 'git-deleted';
+      case 'R': return 'git-renamed';
+      case 'C': return 'git-copied';
+      case 'U': return 'git-unmerged';
+      case '??': return 'git-untracked';
+      default: return 'git-unknown';
+    }
+  }
+
   // Create a recursive component to render the file tree
   function renderNode(node: FileNode, depth: number = 0) {
     const paddingLeft = `${depth * 16}px`;
@@ -464,7 +557,7 @@
       {#each fileTree as node}
         <div class="file-node">
           <div
-            class="tree-item {node.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === node ? 'drop-target' : ''}"
+            class="tree-item {node.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === node ? 'drop-target' : ''} {getFileGitStatus(node.path) || isDirModified(node.path) ? 'has-git-status' : ''} {getGitStatusClass(getFileGitStatus(node.path)) || (isDirModified(node.path) ? 'git-modified' : '')}"
             role="button"
             tabindex="0"
             draggable={true}
@@ -504,6 +597,19 @@
               {/if}
             </div>
             <span class="tree-item-name">{node.name}</span>
+            
+            <!-- Git status indicator -->
+            {#if !node.isDirectory}
+              {@const gitStatus = getFileGitStatus(node.path)}
+              {#if gitStatus}
+                <span class="git-status-indicator {getGitStatusClass(gitStatus)}">
+                  {getGitStatusDisplay(gitStatus)}
+                </span>
+              {/if}
+            {:else if isDirModified(node.path)}
+              <span class="git-status-indicator git-modified">M</span>
+            {/if}
+            
             {#if node.isDirectory}
               <div class="tree-item-arrow {expandedFolders.has(node.path) ? 'expanded' : ''}">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
@@ -520,7 +626,7 @@
                 <!-- Recursive File Node Template -->
                 <div class="file-node">
                   <div
-                    class="tree-item {childNode.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === childNode ? 'drop-target' : ''}"
+                    class="tree-item {childNode.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === childNode ? 'drop-target' : ''} {getFileGitStatus(childNode.path) || isDirModified(childNode.path) ? 'has-git-status' : ''} {getGitStatusClass(getFileGitStatus(childNode.path)) || (isDirModified(childNode.path) ? 'git-modified' : '')}"
                     role="button"
                     tabindex="0"
                     draggable={true}
@@ -551,6 +657,19 @@
                       {/if}
                     </div>
                     <span class="tree-item-name">{childNode.name}</span>
+                    
+                    <!-- Git status indicator -->
+                    {#if !childNode.isDirectory}
+                      {@const gitStatus = getFileGitStatus(childNode.path)}
+                      {#if gitStatus}
+                        <span class="git-status-indicator {getGitStatusClass(gitStatus)}">
+                          {getGitStatusDisplay(gitStatus)}
+                        </span>
+                      {/if}
+                    {:else if isDirModified(childNode.path)}
+                      <span class="git-status-indicator git-modified">M</span>
+                    {/if}
+                    
                     {#if childNode.isDirectory}
                       <div class="tree-item-arrow {expandedFolders.has(childNode.path) ? 'expanded' : ''}">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
@@ -566,7 +685,7 @@
                       {#each childNode.children as grandChildNode}
                         <div class="file-node">
                           <div
-                            class="tree-item {grandChildNode.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === grandChildNode ? 'drop-target' : ''}"
+                            class="tree-item {grandChildNode.path === $filesStore.currentFile?.path ? 'selected' : ''} {dropTarget === grandChildNode ? 'drop-target' : ''} {getFileGitStatus(grandChildNode.path) || isDirModified(grandChildNode.path) ? 'has-git-status' : ''} {getGitStatusClass(getFileGitStatus(grandChildNode.path)) || (isDirModified(grandChildNode.path) ? 'git-modified' : '')}"
                             role="button"
                             tabindex="0"
                             draggable={true}
@@ -597,6 +716,19 @@
                               {/if}
                             </div>
                             <span class="tree-item-name">{grandChildNode.name}</span>
+                            
+                            <!-- Git status indicator -->
+                            {#if !grandChildNode.isDirectory}
+                              {@const gitStatus = getFileGitStatus(grandChildNode.path)}
+                              {#if gitStatus}
+                                <span class="git-status-indicator {getGitStatusClass(gitStatus)}">
+                                  {getGitStatusDisplay(gitStatus)}
+                                </span>
+                              {/if}
+                            {:else if isDirModified(grandChildNode.path)}
+                              <span class="git-status-indicator git-modified">M</span>
+                            {/if}
+                            
                             {#if grandChildNode.isDirectory}
                               <div class="tree-item-arrow {expandedFolders.has(grandChildNode.path) ? 'expanded' : ''}">
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
@@ -979,10 +1111,181 @@
   :global(.tree-item-icon svg) {
     width: 18px;
     height: 18px;
+    color: #6b7280; /* Gray color for all icons */
   }
 
   :global(.tree-item-arrow svg) {
     width: 16px;
     height: 16px;
+    color: #6b7280; /* Gray color for arrows */
+  }
+
+  /* Git status indicators */
+  .git-status-indicator {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 4px;
+    margin-left: auto;
+    margin-right: 4px;
+    min-width: 12px;
+    text-align: center;
+    line-height: 1.2;
+    background-color: transparent;
+  }
+
+  .git-modified {
+    color: #f59e0b;
+  }
+
+  .git-added {
+    color: #10b981;
+  }
+
+  .git-deleted {
+    color: #ef4444;
+  }
+
+  .git-renamed {
+    color: #8b5cf6;
+  }
+
+  .git-copied {
+    color: #06b6d4;
+  }
+
+  .git-unmerged {
+    color: #f97316;
+  }
+
+  .git-untracked {
+    color: #6b7280;
+  }
+
+  .git-unknown {
+    color: #9ca3af;
+  }
+
+  /* Tree item layout adjustments for git status */
+  .tree-item {
+    display: flex;
+    align-items: center;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    margin: 1px 4px;
+    position: relative;
+    min-height: 24px;
+  }
+
+  .tree-item:hover {
+    background-color: var(--color-bg-hover);
+  }
+
+  .tree-item.selected {
+    background-color: var(--color-bg-accent);
+    color: white;
+  }
+
+  .tree-item.selected:hover {
+    background-color: var(--color-bg-accent);
+    color: white;
+  }
+
+  .tree-item.selected .tree-item-name {
+    color: white;
+  }
+
+  .tree-item.selected:hover .tree-item-name {
+    color: white;
+  }
+
+  .tree-item.selected .tree-item-icon svg {
+    color: white;
+  }
+
+  .tree-item.selected:hover .tree-item-icon svg {
+    color: white;
+  }
+
+  .tree-item.selected .tree-item-arrow svg {
+    color: white;
+  }
+
+  .tree-item.selected:hover .tree-item-arrow svg {
+    color: white;
+  }
+
+  /* Highlight text color for modified files */
+  .tree-item.has-git-status .tree-item-name {
+    color: #f59e0b; /* Same as git-modified color */
+  }
+
+  .tree-item.has-git-status.git-added .tree-item-name {
+    color: #10b981;
+  }
+
+  .tree-item.has-git-status.git-deleted .tree-item-name {
+    color: #ef4444;
+  }
+
+  .tree-item.has-git-status.git-renamed .tree-item-name {
+    color: #8b5cf6;
+  }
+
+  .tree-item.has-git-status.git-copied .tree-item-name {
+    color: #06b6d4;
+  }
+
+  .tree-item.has-git-status.git-unmerged .tree-item-name {
+    color: #f97316;
+  }
+
+  .tree-item.has-git-status.git-untracked .tree-item-name {
+    color: #6b7280;
+  }
+
+  /* Selected items override git status colors */
+  .tree-item.selected.has-git-status .tree-item-name {
+    color: white;
+  }
+
+  .tree-item.selected:hover.has-git-status .tree-item-name {
+    color: white;
+  }
+
+  .tree-item-icon {
+    margin-right: 6px;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .tree-item-name {
+    flex: 1;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-right: 4px;
+  }
+
+  .tree-item-arrow {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+  }
+
+  .tree-item-arrow.expanded {
+    transform: rotate(90deg);
+  }
+
+  .tree-children {
+    margin-left: 16px;
+  }
+
+  .file-node {
+    user-select: none;
   }
 </style>
