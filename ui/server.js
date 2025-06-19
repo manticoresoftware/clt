@@ -1246,28 +1246,54 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 							
 							// Track output index for sequential mapping
 							let outputIndex = 0;
+							let globalStepIndex = 0; // Track global step index for error mapping
 							
 							// Recursive function to traverse nested structure and assign outputs
 							function enrichStepsRecursively(steps) {
 								steps.forEach((step, index) => {
-									// If this step has nested steps, process them first
-									if (step.steps && step.steps.length > 0) {
-										enrichStepsRecursively(step.steps);
+									const currentStepIndex = globalStepIndex;
+									globalStepIndex++; // Increment for every step (input, output, block, comment)
+									
+									// If this is an input step, check for validation errors
+									if (step.type === 'input') {
+										const hasError = validationResults.errors && 
+											validationResults.errors.some(error => error.step === currentStepIndex);
+										step.error = hasError;
+										step.status = hasError ? 'failed' : 'success';
+										console.log(`📋 Input step ${currentStepIndex}: ${hasError ? 'FAILED' : 'SUCCESS'}`);
 									}
 									
-									// If this is an output step, assign next .rep output
+									// If this is an output step, assign next .rep output and inherit error status
 									if (step.type === 'output') {
 										if (repOutputs[outputIndex]) {
 											step.actualOutput = repOutputs[outputIndex].content || '';
-											console.log(`📋 Assigned rep output ${outputIndex + 1} to nested step: ${step.actualOutput ? 'SET' : 'EMPTY'}`);
+											console.log(`📋 Assigned rep output ${outputIndex + 1} to step ${currentStepIndex}: ${step.actualOutput ? 'SET' : 'EMPTY'}`);
 										}
 										outputIndex++;
+										
+										// Output inherits error status from validation (same step index logic)
+										const hasError = validationResults.errors && 
+											validationResults.errors.some(error => error.step === currentStepIndex);
+										step.error = hasError;
+										step.status = hasError ? 'failed' : 'success';
 									}
 									
-									// Set error flag based on validation results
-									const hasError = validationResults.errors && 
-										validationResults.errors.some(error => error.step === outputIndex);
-									step.error = hasError;
+									// If this is a block step, check for nested errors and process nested steps
+									if (step.type === 'block') {
+										if (step.steps && step.steps.length > 0) {
+											enrichStepsRecursively(step.steps);
+											// Block is failed if any nested step failed
+											const hasNestedError = step.steps.some(nestedStep => nestedStep.error);
+											step.error = hasNestedError;
+											step.status = hasNestedError ? 'failed' : 'success';
+										}
+									}
+									
+									// For comment steps, just set success status
+									if (step.type === 'comment') {
+										step.error = false;
+										step.status = 'success';
+									}
 								});
 							}
 							
