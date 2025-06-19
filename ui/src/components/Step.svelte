@@ -417,6 +417,10 @@
               // Click handler - no expansion needed in structured format
             }}
             use:initTextArea
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
           ></textarea>
         </div>
         <div class="output-column">
@@ -560,8 +564,9 @@
   /* WASM Diff specific styles */
   .wasm-diff {
     font-family: monospace;
+    font-size: 12px;
     white-space: pre-wrap;
-    line-height: 1.5;
+    line-height: 1;
   }
 
   /* Git-style diff highlighting */
@@ -613,8 +618,9 @@
 
   .plain-output {
     font-family: monospace;
+    font-size: 12px;
     white-space: pre-wrap;
-    line-height: 1.5;
+    line-height: 1;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -656,14 +662,20 @@
     width: 100%;
     resize: vertical;
     font-family: monospace;
+    font-size: 12px;
     padding: 8px;
     border: 1px solid var(--color-border);
     border-radius: 4px;
     background-color: var(--color-bg-textarea);
     color: var(--color-text-primary);
     transition: border-color 0.2s ease-in-out;
-    line-height: 1.5;
+    line-height: 1;
     overflow-y: hidden;
+    /* Disable all browser autocomplete features */
+    autocomplete: off;
+    autocorrect: off;
+    autocapitalize: off;
+    spellcheck: false;
   }
 
   .command-input:focus, .expected-output:focus {
@@ -676,11 +688,12 @@
     width: 100%;
     white-space: pre-wrap;
     font-family: monospace;
+    font-size: 12px;
     padding: 8px;
     background-color: var(--color-bg-secondary);
     border: 1px solid var(--color-border);
     border-radius: 4px;
-    line-height: 1.5;
+    line-height: 1;
     max-height: 200px;
     overflow-y: auto;
     cursor: pointer;
