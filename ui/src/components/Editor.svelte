@@ -668,9 +668,12 @@
     const { index, expanded } = detail;
     
     if (expanded !== undefined) {
-      // This is output expansion, handle it differently if needed
-      // For now, we don't need to update the structure for output expansion
-      return;
+      // This is output expansion - update the command's isOutputExpanded property
+      if (index >= 0 && index < commands.length) {
+        commands[index] = { ...commands[index], isOutputExpanded: expanded };
+        // Trigger reactivity
+        commands = commands;
+      }
     } else {
       // This is block expansion
       toggleBlockExpansion(index);
