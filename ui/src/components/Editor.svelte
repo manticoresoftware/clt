@@ -648,6 +648,20 @@
     filesStore.updateTestStructure(updatedStructure);
   }
 
+  // Handle different types of toggle expansion
+  function handleToggleExpansion(detail: { index: number; expanded?: boolean }) {
+    const { index, expanded } = detail;
+    
+    if (expanded !== undefined) {
+      // This is output expansion, handle it differently if needed
+      // For now, we don't need to update the structure for output expansion
+      return;
+    } else {
+      // This is block expansion
+      toggleBlockExpansion(index);
+    }
+  }
+
   function saveFile() {
     filesStore.saveOnly();
   }
@@ -840,7 +854,7 @@
               {patternMatcher}
               on:updateCommand={(e) => updateStructuredCommand(e.detail.index, e.detail.newValue)}
               on:updateExpectedOutput={(e) => updateStructuredExpectedOutput(e.detail.index, e.detail.newValue)}
-              on:toggleExpansion={(e) => toggleBlockExpansion(e.detail.index)}
+              on:toggleExpansion={(e) => handleToggleExpansion(e.detail)}
               on:addCommand={(e) => addCommand(e.detail.index, e.detail.type)}
               on:deleteCommand={(e) => deleteCommand(e.detail.index)}
             />
