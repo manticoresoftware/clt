@@ -1306,12 +1306,10 @@
                           }
                         }}
                         on:focus={() => {
-                          // Expand both outputs when focusing on the expected output
-                          filesStore.toggleOutputExpansion(i, true);
+                          // Focus handler - no expansion needed in structured format
                         }}
                         on:click={() => {
-                          // Also expand on click (helps with touch devices)
-                          filesStore.toggleOutputExpansion(i, true);
+                          // Click handler - no expansion needed in structured format
                         }}
                         use:initTextArea
                       ></textarea>
@@ -1329,8 +1327,7 @@
                         role="region"
                         aria-label="Actual Output"
                         on:click={() => {
-                          // Expand both outputs when clicking on actual output
-                          filesStore.toggleOutputExpansion(i, true);
+                          // Click handler - no expansion needed in structured format
                         }}
                       >
                         {#if command.actualOutput}
