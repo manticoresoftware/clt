@@ -33,7 +33,7 @@
         input = session.command || '';
         isRunning = true;
         console.log('Resuming active session:', sessionId);
-        
+
         // Start polling immediately for the active session
         startPolling();
       }
@@ -163,7 +163,7 @@
         }
 
         const data = await response.json();
-        
+
         if (data.logs) {
           logs = data.logs;
         }
@@ -172,7 +172,7 @@
           isRunning = false;
           const finalOutput = data.output || '';
           lastRunOutput = finalOutput;
-          
+
           // Save to localStorage with the command that was executed
           const activeSession = localStorage.getItem('askAI_activeSession');
           if (activeSession) {
@@ -181,16 +181,16 @@
             lastCommand = session.command;
             lastSessionTime = new Date().toISOString();
           }
-          
+
           // Clear active session since it's completed
           clearActiveSession();
-          
+
           if (pollingInterval) {
             clearInterval(pollingInterval);
             pollingInterval = null;
           }
           sessionId = null;
-          
+
           // Clear current logs since we now have the final output
           logs = [];
         }
@@ -217,7 +217,7 @@
       clearInterval(pollingInterval);
       pollingInterval = null;
     }
-    
+
     // Clear active session
     clearActiveSession();
     sessionId = null;
@@ -286,12 +286,12 @@
                     <circle cx="12" cy="12" r="10"></circle>
                     <polyline points="12,6 12,12 16,14"></polyline>
                   </svg>
-                  History available
+                  Last run log
                 </div>
               {/if}
             </div>
           </div>
-          
+
           <div class="logs-container">
             {#if isRunning && logs.length > 0}
               <div class="active-session-header">
@@ -316,7 +316,7 @@
                   <strong>✅ Last Completed Session:</strong>
                   <div class="session-meta">
                     {#if lastCommand}
-                      <div class="last-command">Command: <code>{lastCommand}</code></div>
+                      <div class="last-command">Task: <code>{lastCommand}</code></div>
                     {/if}
                     {#if lastSessionTime}
                       <div class="session-time">Run at: {formatTimestamp(lastSessionTime)}</div>
@@ -353,8 +353,8 @@
                   Cancel
                 </button>
               {:else}
-                <button 
-                  class="send-button" 
+                <button
+                  class="send-button"
                   on:click={startCommand}
                   disabled={!input.trim()}
                 >
