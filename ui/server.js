@@ -227,7 +227,7 @@ function getUserTestPath(req) {
 }
 
 // Helper function to create file content map for WASM processing
-async function createFileContentMap(mainFilePath, baseDir) {
+async function createFileContentMap(mainFilePath, baseDir, req = null) {
 	const fileMap = {};
 	
 	try {
@@ -593,7 +593,7 @@ app.get('/api/get-file', isAuthenticated, async (req, res) => {
 				console.log(`📖 Parsing .rec file with WASM using content map: ${absolutePath}`);
 				
 				// Create file content map for WASM
-				const fileMap = await createFileContentMap(absolutePath, testDir);
+				const fileMap = await createFileContentMap(absolutePath, testDir, req);
 				const relativeFilePath = path.relative(testDir, absolutePath);
 				
 				// Call WASM with path + content map (NO FALLBACK)
@@ -659,7 +659,7 @@ app.post('/api/save-file', isAuthenticated, async (req, res) => {
 			
 			try {
 				// Create file content map for any referenced block files (same as reading)
-				const existingFileMap = await createFileContentMap(absolutePath, testDir).catch(() => ({}));
+				const existingFileMap = await createFileContentMap(absolutePath, testDir, req).catch(() => ({}));
 				
 				// Use WASM to generate file content map from structured data
 				const relativeFilePath = path.relative(testDir, absolutePath);
@@ -1158,7 +1158,7 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 			try {
 				// Parse the .rec file using WASM with content map
 				console.log(`📖 Parsing .rec file with WASM: ${absolutePath}`);
-				const fileMap = await createFileContentMap(absolutePath, testDir);
+				const fileMap = await createFileContentMap(absolutePath, testDir, req);
 				const relativeFilePath = path.relative(testDir, absolutePath);
 				const testStructure = await parseRecFileFromMapWasm(relativeFilePath, fileMap);
 
@@ -1174,7 +1174,48 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 					fileMap[repRelativePath] = repContent;
 					
 					console.log(`🔍 Running validation with WASM: ${repFilePath}`);
-					validationResults = await validateTestFromMapWasm(relativeFilePath, fileMap);
+					
+					// Get patterns for validation
+					try {
+						const userRepoPath = getUserRepoPath(req);
+						
+						// Read patterns directly from file instead of using broken getPatternsWasm
+						const patternsFilePath = path.join(userRepoPath, '.clt', 'patterns');
+						let patterns = {};
+						
+						try {
+							const patternsContent = await fs.readFile(patternsFilePath, 'utf8');
+							console.log(`📋 Reading patterns from: ${patternsFilePath}`);
+							
+							// Parse patterns file content (same format as CLT)
+							for (const line of patternsContent.split('\n')) {
+								const trimmedLine = line.trim();
+								if (trimmedLine && !trimmedLine.startsWith('#')) {
+									const parts = trimmedLine.split(' ');
+									if (parts.length >= 2) {
+										const name = parts[0];
+										const regex = parts.slice(1).join(' ');
+										patterns[name] = regex;
+									}
+								}
+							}
+							
+							console.log(`📋 Loaded ${Object.keys(patterns).length} patterns: ${Object.keys(patterns).join(', ')}`);
+						} catch (fileError) {
+							console.warn(`Could not read patterns file ${patternsFilePath}:`, fileError.message);
+							// Try fallback with getPatternsWasm
+							patterns = await getPatternsWasm(userRepoPath);
+							console.log(`📋 Fallback getPatternsWasm returned ${Object.keys(patterns).length} patterns`);
+						}
+						
+						// Run validation with patterns
+						validationResults = await validateTestFromMapWasm(relativeFilePath, fileMap, patterns);
+					} catch (patternError) {
+						console.warn('Could not load patterns for validation:', patternError.message);
+						// Fall back to validation without patterns
+						validationResults = await validateTestFromMapWasm(relativeFilePath, fileMap);
+					}
+					
 					console.log(`✅ Validation completed: ${validationResults.success ? 'PASSED' : 'FAILED'}`);
 				} catch (repError) {
 					console.log(`ℹ️  No .rep file found for validation: ${repFilePath}`);

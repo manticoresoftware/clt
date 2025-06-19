@@ -1255,6 +1255,158 @@ pub fn validate_test_from_map(
     })
 }
 
+/// WASM-compatible function to validate a test using file content map with optional patterns
+/// This version accepts patterns directly instead of trying to discover them from file map
+pub fn validate_test_from_map_with_patterns(
+    rec_file_path: &str,
+    file_map: &HashMap<String, String>,
+    patterns: Option<HashMap<String, String>>
+) -> Result<ValidationResult> {
+    // Get REC file content from map
+    let rec_content = file_map.get(rec_file_path)
+        .ok_or_else(|| anyhow::anyhow!("REC file not found in file map: {}", rec_file_path))?;
+    
+    // Derive REP file path by replacing .rec with .rep
+    let rep_file_path = rec_file_path.replace(".rec", ".rep");
+    
+    // Get REP file content from map
+    let rep_content = file_map.get(&rep_file_path)
+        .ok_or_else(|| anyhow::anyhow!("REP file not found in file map: {}", rep_file_path))?;
+
+    // Parse REC file into structured format using file map for block resolution
+    let test_structure = match parse_rec_content_with_file_map(rec_content, std::path::Path::new(""), file_map) {
+        Ok(structure) => structure,
+        Err(e) => {
+            return Ok(ValidationResult {
+                success: false,
+                errors: vec![TestError {
+                    command: "rec_file_parsing".to_string(),
+                    expected: "Valid .rec file format".to_string(),
+                    actual: format!("Failed to parse .rec file: {}", e),
+                    step: 0,
+                }],
+                summary: "Failed to parse test file".to_string(),
+            });
+        }
+    };
+
+    // Extract all expected outputs from structured REC (handles blocks, nesting, etc.)
+    let expected_outputs = extract_all_outputs_from_structured(&test_structure);
+
+    // Extract all actual outputs from flat REP file
+    let actual_outputs = match extract_all_outputs_from_rep(rep_content) {
+        Ok(outputs) => outputs,
+        Err(e) => {
+            return Ok(ValidationResult {
+                success: false,
+                errors: vec![TestError {
+                    command: "rep_file_parsing".to_string(),
+                    expected: "Valid .rep file format".to_string(),
+                    actual: format!("Failed to parse .rep file: {}", e),
+                    step: 0,
+                }],
+                summary: "Failed to parse test result file".to_string(),
+            });
+        }
+    };
+
+    // Use provided patterns or fall back to file map discovery
+    let pattern_map = if let Some(patterns_map) = patterns {
+        patterns_map
+    } else {
+        // Fallback: try to find patterns in file map (existing behavior)
+        let pattern_file = find_pattern_file_from_map(rec_file_path, file_map);
+        if let Some(pattern_content) = pattern_file {
+            parse_patterns_from_content(&pattern_content)
+        } else {
+            HashMap::new()
+        }
+    };
+
+    // Compare output sequences using pattern matching logic
+    let mut errors = Vec::new();
+    match compare_output_sequences_with_patterns(&expected_outputs, &actual_outputs, &pattern_map) {
+        Ok(comparison_errors) => {
+            errors.extend(comparison_errors);
+        }
+        Err(e) => {
+            errors.push(TestError {
+                command: "output_comparison".to_string(),
+                expected: "Successful output comparison".to_string(),
+                actual: format!("Output comparison failed: {}", e),
+                step: 0,
+            });
+        }
+    }
+
+    let success = errors.is_empty();
+    let summary = if success {
+        "All outputs match expected results".to_string()
+    } else {
+        format!("{} validation error(s) found", errors.len())
+    };
+
+    Ok(ValidationResult {
+        success,
+        errors,
+        summary,
+    })
+}
+
+/// Helper function to parse patterns from content string
+fn parse_patterns_from_content(content: &str) -> HashMap<String, String> {
+    let mut patterns = HashMap::new();
+    
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Parse pattern line: PATTERN_NAME REGEX_PATTERN
+        let parts: Vec<&str> = line.splitn(2, ' ').collect();
+        if parts.len() == 2 {
+            patterns.insert(parts[0].to_string(), parts[1].to_string());
+        }
+    }
+    
+    patterns
+}
+
+/// Compare output sequences using patterns HashMap directly
+fn compare_output_sequences_with_patterns(
+    expected: &[OutputExpectation],
+    actual: &[ActualOutput],
+    patterns: &HashMap<String, String>,
+) -> Result<Vec<TestError>> {
+    let mut errors = Vec::new();
+
+    // Compare each expected output with actual output
+    for (exp, act) in expected.iter().zip(actual.iter()) {
+        // Use simple pattern matching for comparison
+        if has_diff_simple(&exp.expected_content, &act.actual_content, patterns) {
+            errors.push(TestError {
+                command: exp.command.clone(),
+                expected: exp.expected_content.clone(),
+                actual: act.actual_content.clone(),
+                step: exp.command_index,
+            });
+        }
+    }
+
+    // Check for count mismatch
+    if expected.len() != actual.len() {
+        errors.push(TestError {
+            command: "sequence_length".to_string(),
+            expected: format!("{} output(s)", expected.len()),
+            actual: format!("{} output(s)", actual.len()),
+            step: 0,
+        });
+    }
+
+    Ok(errors)
+}
+
 /// Helper function to find pattern file from file map instead of filesystem
 fn find_pattern_file_from_map(rec_file_path: &str, file_map: &HashMap<String, String>) -> Option<String> {
     // Try to find pattern file in the same directory as the rec file
