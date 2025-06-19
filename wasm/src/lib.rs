@@ -3,7 +3,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use once_cell::sync::Lazy;
-use parser::{TestStructure, read_test_file, write_test_file, replace_test_structure, append_test_structure, get_patterns, read_test_file_from_map, write_test_file_to_map, validate_test_from_map};
+use parser::{TestStructure, read_test_file, write_test_file, replace_test_structure, append_test_structure, get_patterns, read_test_file_from_map, write_test_file_to_map, validate_test_from_map, validate_test_from_map_with_patterns};
 
 static VAR_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"%\{[A-Z]{1}[A-Z_0-9]*\}").unwrap()
@@ -364,7 +364,8 @@ pub fn write_test_file_to_map_wasm(test_file_path: &str, test_structure_json: &s
 #[wasm_bindgen]
 pub fn validate_test_from_map_wasm(
     rec_file_path: &str,
-    file_map_json: &str
+    file_map_json: &str,
+    patterns_json: Option<String>
 ) -> String {
     // Parse the file map from JSON
     let file_map: HashMap<String, String> = match serde_json::from_str(file_map_json) {
@@ -372,7 +373,17 @@ pub fn validate_test_from_map_wasm(
         Err(e) => return format!("{{\"error\": \"Invalid file map JSON: {}\"}}", e),
     };
 
-    match validate_test_from_map(rec_file_path, &file_map) {
+    // Parse patterns if provided
+    let patterns = if let Some(patterns_str) = patterns_json {
+        match serde_json::from_str::<HashMap<String, String>>(&patterns_str) {
+            Ok(p) => Some(p),
+            Err(e) => return format!("{{\"error\": \"Invalid patterns JSON: {}\"}}", e),
+        }
+    } else {
+        None
+    };
+
+    match validate_test_from_map_with_patterns(rec_file_path, &file_map, patterns) {
         Ok(result) => serde_json::to_string(&result).unwrap_or_else(|e| {
             format!("{{\"error\": \"Failed to serialize validation result: {}\"}}", e)
         }),

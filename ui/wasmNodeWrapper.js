@@ -390,7 +390,7 @@ export async function generateRecFileToMapWasm(filePath, testStructure) {
 }
 
 // WASM-based test validation using file content map (WASM-compatible)
-export async function validateTestFromMapWasm(recFilePath, fileMap) {
+export async function validateTestFromMapWasm(recFilePath, fileMap, patterns = null) {
   const wasm = await initWasm();
   
   // Validate that the WASM function is available
@@ -401,7 +401,9 @@ export async function validateTestFromMapWasm(recFilePath, fileMap) {
   try {
     console.log(`🔄 Validating test from map with WASM: ${recFilePath}`);
     const fileMapJson = JSON.stringify(fileMap);
-    const validationJson = wasm.validate_test_from_map_wasm(recFilePath, fileMapJson);
+    const patternsJson = patterns ? JSON.stringify(patterns) : null;
+    
+    const validationJson = wasm.validate_test_from_map_wasm(recFilePath, fileMapJson, patternsJson);
 
     // Check if we got valid JSON
     if (!validationJson || typeof validationJson !== 'string') {
@@ -418,6 +420,9 @@ export async function validateTestFromMapWasm(recFilePath, fileMap) {
     }
 
     console.log(`✅ Successfully validated test from map: ${recFilePath}`);
+    if (patterns && Object.keys(patterns).length > 0) {
+      console.log(`📋 Used ${Object.keys(patterns).length} patterns for validation`);
+    }
     return parsed;
   } catch (error) {
     console.error(`❌ WASM test validation from map failed for ${recFilePath}:`, error);
