@@ -360,6 +360,24 @@
     }
   }
 
+  // Handle copying actual output to expected output
+  function handleUseActual(event: MouseEvent) {
+    event.stopPropagation();
+    const actualContent = getActualOutputContent();
+    if (actualContent) {
+      dispatch('updateExpectedOutput', { index, newValue: actualContent });
+      
+      // Add visual feedback
+      const button = event.target as HTMLElement;
+      button.style.transform = 'scale(0.9)';
+      button.style.color = 'var(--color-bg-accent)';
+      setTimeout(() => {
+        button.style.transform = '';
+        button.style.color = '';
+      }, 150);
+    }
+  }
+
   // Handle blur to collapse when moving out
   function handleOutputBlur(event: FocusEvent) {
     // Small delay to check if focus moved to related element
@@ -581,6 +599,11 @@
           <div class="output-header">
             <span class="output-indicator expected-indicator"></span>
             <label for={`expected-output-${index}`}>Expected Output</label>
+            {#if command.actualOutput && getActualOutputContent()}
+              <button class="use-actual-link" on:click={handleUseActual} title="Copy actual output to expected output">
+                (use actual)
+              </button>
+            {/if}
           </div>
           <div class="output-wrapper {command.isOutputExpanded ? 'expanded' : ''}" on:click={handleExpectedOutputClick}>
             <div 
@@ -930,6 +953,27 @@
     align-items: center;
     gap: 8px;
     margin-bottom: 4px;
+  }
+
+  .use-actual-link {
+    background: none;
+    border: none;
+    color: var(--color-text-tertiary);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 3px;
+    transition: all 0.2s ease;
+    margin-left: 4px;
+  }
+
+  .use-actual-link:hover {
+    color: var(--color-bg-accent);
+    background-color: rgba(var(--color-accent-rgb, 80, 70, 228), 0.1);
+  }
+
+  .use-actual-link:active {
+    transform: scale(0.95);
   }
 
   .output-indicator {
