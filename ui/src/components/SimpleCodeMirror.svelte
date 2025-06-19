@@ -42,15 +42,18 @@
           keymap.of(defaultKeymap),
           lineNumbers(), // Add line numbers
           EditorView.lineWrapping, // Enable line wrapping
+          // Disable all autocomplete and suggestions
+          EditorState.languageData.of(() => []),
+          EditorView.contentAttributes.of({'spellcheck': 'false', 'autocomplete': 'off', 'autocorrect': 'off', 'autocapitalize': 'off'}),
           EditorView.theme({
             '&': {
-              fontSize: '14px',
+              fontSize: '12px',
               fontFamily: "'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace"
             },
             '.cm-content': {
               padding: '8px 12px',
               minHeight: '40px',
-              lineHeight: '1.5'
+              lineHeight: '1'
             },
             '.cm-focused': {
               outline: 'none'
@@ -182,8 +185,8 @@
     opacity: 0.7;
     pointer-events: none;
     font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
-    font-size: 14px;
-    line-height: 1.5;
+    font-size: 12px;
+    line-height: 1;
     z-index: 1;
   }
 </style>
