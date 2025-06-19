@@ -111,11 +111,12 @@
     
     const commands: any[] = [];
     
-    // Only process top-level steps, ignore nested steps for now
-    function processSteps(steps: TestStepType[], level = 0) {
+    // Process steps, including nested steps when blocks are expanded
+    function processSteps(steps: TestStepType[], level = 0, parentBlockPath: number[] = []) {
       let i = 0;
       while (i < steps.length) {
         const step = steps[i];
+        const currentPath = level === 0 ? [i] : [...parentBlockPath, i];
         
         if (step.type === 'input') {
           // Create command from input step
@@ -129,8 +130,10 @@
             duration: step.duration,
             // Add metadata to track back to structured format
             stepIndex: i,
-            stepPath: [i],
-            isInputOutputPair: false
+            stepPath: currentPath,
+            isInputOutputPair: false,
+            isNested: level > 0,
+            nestingLevel: level
           };
           
           // Look for following output step
@@ -149,7 +152,7 @@
           
           commands.push(command);
         } else if (step.type === 'block') {
-          commands.push({
+          const blockCommand = {
             command: step.args[0] || '',
             status: step.status || 'pending',
             type: 'block',
@@ -158,16 +161,20 @@
             duration: step.duration,
             // Add metadata to track back to structured format
             stepIndex: i,
-            stepPath: [i],
+            stepPath: currentPath,
             isInputOutputPair: false,
-            // Store nested steps for potential expansion (but don't process them now)
+            isNested: level > 0,
+            nestingLevel: level,
+            // Store nested steps for expansion
             nestedSteps: step.steps
-          });
+          };
           
-          // DO NOT process nested steps - they should be hidden under the block
-          // if (step.steps && step.steps.length > 0) {
-          //   processSteps(step.steps, level + 1);
-          // }
+          commands.push(blockCommand);
+          
+          // If block is expanded, process its nested steps
+          if (step.isExpanded && step.steps && step.steps.length > 0) {
+            processSteps(step.steps, level + 1, currentPath);
+          }
         } else if (step.type === 'comment') {
           commands.push({
             command: step.content || '',
@@ -177,8 +184,10 @@
             duration: step.duration,
             // Add metadata to track back to structured format
             stepIndex: i,
-            stepPath: [i],
-            isInputOutputPair: false
+            stepPath: currentPath,
+            isInputOutputPair: false,
+            isNested: level > 0,
+            nestingLevel: level
           });
         }
         // Skip standalone output steps (they should be handled with input steps)
@@ -187,7 +196,7 @@
       }
     }
     
-    // Only process top-level steps
+    // Process all steps, including nested ones when expanded
     processSteps(testStructure.steps, 0);
     return commands;
   }
@@ -211,11 +220,21 @@
 
     // Create updated structure
     const updatedStructure = { ...testStructure };
-    const stepIndex = command.stepIndex;
     
-    if (stepIndex >= 0 && stepIndex < updatedStructure.steps.length) {
-      const updatedSteps = [...updatedStructure.steps];
-      const step = { ...updatedSteps[stepIndex] };
+    // Navigate to the correct location using stepPath
+    let targetSteps = updatedStructure.steps;
+    const stepPath = command.stepPath;
+    
+    // Navigate to the parent container
+    for (let i = 0; i < stepPath.length - 1; i++) {
+      targetSteps = targetSteps[stepPath[i]].steps;
+    }
+    
+    // Get the final index and update the step
+    const finalIndex = stepPath[stepPath.length - 1];
+    
+    if (finalIndex >= 0 && finalIndex < targetSteps.length) {
+      const step = { ...targetSteps[finalIndex] };
       
       if (step.type === 'input') {
         step.content = newValue;
@@ -225,8 +244,7 @@
         step.content = newValue;
       }
       
-      updatedSteps[stepIndex] = step;
-      updatedStructure.steps = updatedSteps;
+      targetSteps[finalIndex] = step;
       
       // Update the store with new structure
       filesStore.updateTestStructure(updatedStructure);
@@ -250,17 +268,25 @@
 
     // Create updated structure
     const updatedStructure = { ...testStructure };
-    const stepIndex = command.stepIndex;
     
-    // Update the output step (should be at stepIndex + 1)
-    if (stepIndex + 1 >= 0 && stepIndex + 1 < updatedStructure.steps.length) {
-      const updatedSteps = [...updatedStructure.steps];
-      const outputStep = { ...updatedSteps[stepIndex + 1] };
+    // Navigate to the correct location using stepPath
+    let targetSteps = updatedStructure.steps;
+    const stepPath = command.stepPath;
+    
+    // Navigate to the parent container
+    for (let i = 0; i < stepPath.length - 1; i++) {
+      targetSteps = targetSteps[stepPath[i]].steps;
+    }
+    
+    // Get the final index and update the output step (should be at finalIndex + 1)
+    const finalIndex = stepPath[stepPath.length - 1];
+    
+    if (finalIndex + 1 >= 0 && finalIndex + 1 < targetSteps.length) {
+      const outputStep = { ...targetSteps[finalIndex + 1] };
       
       if (outputStep.type === 'output') {
         outputStep.content = newValue;
-        updatedSteps[stepIndex + 1] = outputStep;
-        updatedStructure.steps = updatedSteps;
+        targetSteps[finalIndex + 1] = outputStep;
         
         // Update the store with new structure
         filesStore.updateTestStructure(updatedStructure);
@@ -470,24 +496,49 @@
 
     // Handle structured format
     const updatedStructure = { ...testStructure };
-    const updatedSteps = [...updatedStructure.steps];
     
     // Calculate the correct insertion position by walking through current steps
     let insertIndex;
+    let targetSteps = updatedStructure.steps;
+    let nestingPath: number[] = [];
+    
     if (index === 0) {
-      insertIndex = 0; // Insert at beginning
+      insertIndex = 0; // Insert at beginning of top level
     } else if (index >= commands.length) {
-      insertIndex = updatedSteps.length; // Insert at end
+      insertIndex = targetSteps.length; // Insert at end of top level
     } else {
-      // Calculate position by counting steps for commands before the target index
-      insertIndex = 0;
-      for (let i = 0; i < index; i++) {
-        if (i < commands.length) {
-          const cmd = commands[i];
-          if (cmd.isInputOutputPair) {
-            insertIndex += 2; // Skip input + output steps
-          } else {
-            insertIndex += 1; // Skip single step (block/comment)
+      // Find the command we're inserting after
+      const targetCommand = commands[index - 1];
+      
+      if (targetCommand.isNested) {
+        // We're inserting into a nested context
+        nestingPath = targetCommand.stepPath.slice(0, -1); // Remove last index to get parent path
+        
+        // Navigate to the parent block's steps
+        let currentSteps = updatedStructure.steps;
+        for (const pathIndex of nestingPath) {
+          currentSteps = currentSteps[pathIndex].steps;
+        }
+        targetSteps = currentSteps;
+        
+        // Calculate position within the nested steps
+        insertIndex = targetCommand.stepPath[targetCommand.stepPath.length - 1] + 1;
+        if (targetCommand.isInputOutputPair) {
+          insertIndex += 1; // Account for output step
+        }
+      } else {
+        // We're inserting at top level
+        insertIndex = 0;
+        for (let i = 0; i < index; i++) {
+          if (i < commands.length) {
+            const cmd = commands[i];
+            if (!cmd.isNested) { // Only count top-level commands
+              if (cmd.isInputOutputPair) {
+                insertIndex += 2; // Skip input + output steps
+              } else {
+                insertIndex += 1; // Skip single step (block/comment)
+              }
+            }
           }
         }
       }
@@ -500,8 +551,9 @@
         type: 'block',
         args: ['path/to/file'],
         content: null,
-        steps: null,
-        status: 'pending'
+        steps: [],
+        status: 'pending',
+        isExpanded: false
       }];
     } else if (commandType === 'comment') {
       newSteps = [{
@@ -531,9 +583,8 @@
       ];
     }
     
-    // Insert the new steps
-    updatedSteps.splice(insertIndex, 0, ...newSteps);
-    updatedStructure.steps = updatedSteps;
+    // Insert the new steps at the correct location
+    targetSteps.splice(insertIndex, 0, ...newSteps);
     filesStore.updateTestStructure(updatedStructure);
   }
 
@@ -552,58 +603,65 @@
     }
 
     const updatedStructure = { ...testStructure };
-    const updatedSteps = [...updatedStructure.steps];
-    const stepIndex = command.stepIndex;
     
-    if (stepIndex >= 0 && stepIndex < updatedSteps.length) {
+    // Navigate to the correct location using stepPath
+    let targetSteps = updatedStructure.steps;
+    const stepPath = command.stepPath;
+    
+    // Navigate to the parent container
+    for (let i = 0; i < stepPath.length - 1; i++) {
+      targetSteps = targetSteps[stepPath[i]].steps;
+    }
+    
+    // Get the final index within the target container
+    const finalIndex = stepPath[stepPath.length - 1];
+    
+    if (finalIndex >= 0 && finalIndex < targetSteps.length) {
       if (command.isInputOutputPair) {
         // Remove both input and output steps
-        updatedSteps.splice(stepIndex, 2);
+        targetSteps.splice(finalIndex, 2);
       } else {
         // Remove single step (block/comment)
-        updatedSteps.splice(stepIndex, 1);
+        targetSteps.splice(finalIndex, 1);
       }
       
-      updatedStructure.steps = updatedSteps;
       filesStore.updateTestStructure(updatedStructure);
     }
   }
 
   // Toggle block expansion
-  function toggleBlockExpansion(stepPath: number[]) {
-    if (!$filesStore.currentFile?.testStructure) return;
+  function toggleBlockExpansion(commandIndex: number) {
+    if (!testStructure) return;
 
-    // Update the isExpanded property of the specific step
-    const updateStepExpansion = (steps: TestStepType[], path: number[]): TestStepType[] => {
-      if (path.length === 0) return steps;
+    const command = commands[commandIndex];
+    if (!command || command.type !== 'block') {
+      console.error('Command is not a block or not found:', commandIndex);
+      return;
+    }
 
-      return steps.map((step, index) => {
-        if (index === path[0]) {
-          if (path.length === 1) {
-            // This is the target step
-            return {
-              ...step,
-              isExpanded: !step.isExpanded
-            };
-          } else {
-            // Continue down the path
-            return {
-              ...step,
-              steps: step.steps ? updateStepExpansion(step.steps, path.slice(1)) : null
-            };
-          }
-        }
-        return step;
-      });
-    };
+    // Navigate to the correct step in the structure using stepPath
+    const updatedStructure = { ...testStructure };
+    let currentSteps = updatedStructure.steps;
+    const stepPath = command.stepPath;
 
-    const updatedSteps = updateStepExpansion($filesStore.currentFile.testStructure.steps, stepPath);
+    // Navigate through the path to find the correct step
+    let targetStep = null;
+    let targetSteps = currentSteps;
+    
+    for (let i = 0; i < stepPath.length; i++) {
+      const pathIndex = stepPath[i];
+      if (i === stepPath.length - 1) {
+        // This is the target step
+        targetStep = { ...targetSteps[pathIndex] };
+        targetStep.isExpanded = !targetStep.isExpanded;
+        targetSteps[pathIndex] = targetStep;
+      } else {
+        // Navigate deeper into nested structure
+        targetSteps = targetSteps[pathIndex].steps;
+      }
+    }
 
-    // Update the store with the new structure
-    filesStore.updateTestStructure({
-      ...$filesStore.currentFile.testStructure,
-      steps: updatedSteps
-    });
+    filesStore.updateTestStructure(updatedStructure);
   }
 
   function saveFile() {
@@ -972,13 +1030,28 @@
         <!-- Render the converted commands using the existing UI -->
         <div class="command-list">
           {#each commands as command, i}
-            <div class="command-card {(command.status === 'failed' && !command.initializing) ? 'failed-command' : ''} {command.type === 'block' ? 'block-command' : ''} {command.isBlockCommand ? 'is-block-command' : ''}">
+            {@const displayNumber = command.isNested ? 
+              (commands.slice(0, i).filter(c => c.isNested && c.nestingLevel === command.nestingLevel && JSON.stringify(c.stepPath.slice(0, -1)) === JSON.stringify(command.stepPath.slice(0, -1))).length + 1) : 
+              (commands.slice(0, i).filter(c => !c.isNested).length + 1)
+            }
+            <div class="command-card {(command.status === 'failed' && !command.initializing) ? 'failed-command' : ''} {command.type === 'block' ? 'block-command' : ''} {command.isBlockCommand ? 'is-block-command' : ''} {command.isNested ? 'nested-command' : ''}" style={command.isNested ? `margin-left: ${command.nestingLevel * 20}px;` : ''}>
               <!-- Command header -->
               <div class="command-header">
                 <div class="command-title">
-                  <span class="command-number">{i + 1}</span>
+                  <span class="command-number">{displayNumber}</span>
                   {#if command.type === 'block'}
                     <span>Block Reference</span>
+                    <!-- Expand/Collapse button for blocks -->
+                    <button
+                      class="expand-button"
+                      on:click={() => toggleBlockExpansion(i)}
+                      title={command.isExpanded ? 'Collapse block' : 'Expand block'}
+                      aria-label={command.isExpanded ? 'Collapse block' : 'Expand block'}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="expand-icon {command.isExpanded ? 'expanded' : ''}">
+                        <path d="M9 18l6-6-6-6"></path>
+                      </svg>
+                    </button>
                   {:else if command.type === 'comment'}
                     <span>Comment</span>
                   {:else if command.isBlockCommand}
@@ -1887,4 +1960,67 @@
     margin: 0;
     color: var(--color-text-secondary);
     line-height: 1.5;
+  }
+
+  /* Nested command styling */
+  .nested-command {
+    border-left: 3px solid var(--color-bg-info, #0ea5e9);
+    background-color: rgba(224, 242, 254, 0.15);
+    position: relative;
+  }
+
+  .nested-command::before {
+    content: '';
+    position: absolute;
+    left: -3px;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: linear-gradient(to bottom, var(--color-bg-info, #0ea5e9), rgba(224, 242, 254, 0.3));
+  }
+
+  /* Expand button styling */
+  .expand-button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    margin-left: 8px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    color: var(--color-text-secondary);
+  }
+
+  .expand-button:hover {
+    background-color: var(--color-bg-secondary);
+    color: var(--color-text-primary);
+  }
+
+  .expand-icon {
+    transition: transform 0.2s ease;
+  }
+
+  .expand-icon.expanded {
+    transform: rotate(90deg);
+  }
+
+  /* Enhanced block command styling for better nesting visualization */
+  .command-card.block-command {
+    border-left: 5px solid var(--color-bg-info, #0ea5e9);
+    background-color: rgba(224, 242, 254, 0.25);
+    position: relative;
+  }
+
+  .command-card.block-command.expanded {
+    border-bottom: 2px solid var(--color-bg-info, #0ea5e9);
+  }
+
+  /* Nested command numbering adjustment */
+  .nested-command .command-number {
+    background-color: rgba(224, 242, 254, 0.8);
+    color: var(--color-text-info, #0369a1);
+    border: 1px solid var(--color-bg-info, #0ea5e9);
   }</style>
