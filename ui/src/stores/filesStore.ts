@@ -18,7 +18,7 @@ interface TestStep {
   steps: TestStep[] | null; // For blocks: nested steps
   
   // Runtime properties (added by UI)
-  status?: 'pending' | 'matched' | 'failed';
+  status?: 'success' | 'failed';
   actualOutput?: string;
   duration?: number;
   isExpanded?: boolean;   // For block expansion
@@ -34,7 +34,7 @@ interface RecordingCommand {
   command: string;
   expectedOutput?: string;
   actualOutput?: string;
-  status?: 'pending' | 'matched' | 'failed';
+  status?: 'success' | 'failed';
   changed?: boolean; // Track whether this command has been changed
   initializing?: boolean; // Flag to hide output sections until test is run
   duration?: number; // Command execution duration
@@ -54,7 +54,7 @@ interface RecordingFile {
   commands?: RecordingCommand[];
   dirty: boolean;
   lastSaved?: Date;
-  status?: 'pending' | 'passed' | 'failed';
+  status?: 'success' | 'failed';
 }
 
 interface FilesState {
@@ -529,21 +529,79 @@ function createFilesStore() {
         });
       }
 
-      // Log WASM validation results (no UI changes, just console logging)
-      if (result.validationResults) {
-        console.log('🔍 WASM Validation Results:', result.validationResults);
+      // Process enriched testStructure (ONLY new format, NO LEGACY)
+      if (result.testStructure) {
+        console.log('🔍 Processing enriched testStructure with actual outputs and error flags');
+        
+        update(state => {
+          if (!state.currentFile?.testStructure) return state;
+          
+          // Update the testStructure directly with enriched data
+          const enrichedSteps = result.testStructure.steps.map((step, index) => {
+            return {
+              ...step,
+              actualOutput: step.actualOutput || '', // From .rep file
+              status: step.error ? 'failed' : 'success', // From validation
+              error: step.error || false
+            };
+          });
+          
+          console.log(`📋 Updated ${enrichedSteps.length} steps with enriched data`);
+          
+          return {
+            ...state,
+            currentFile: {
+              ...state.currentFile,
+              testStructure: {
+                ...state.currentFile.testStructure,
+                steps: enrichedSteps
+              }
+            }
+          };
+        });
+      }
+      
+      // Legacy validation results processing (fallback)
+      else if (result.validationResults) {
+        console.log('🔍 Processing WASM Validation Results:', result.validationResults);
+        
+        update(state => {
+          if (!state.currentFile) return state;
+          
+          const updatedCommands = [...state.currentFile.commands];
+          
+          // Set all commands to success first (commands that ran successfully)
+          updatedCommands.forEach(cmd => {
+            if (cmd.status === 'pending') {
+              cmd.status = 'success'; // Only update pending commands
+            }
+          });
+          
+          // Apply validation errors to specific commands
+          if (result.validationResults.errors && result.validationResults.errors.length > 0) {
+            result.validationResults.errors.forEach((error) => {
+              const commandIndex = error.step - 1; // Convert 1-based step to 0-based index
+              if (commandIndex >= 0 && commandIndex < updatedCommands.length) {
+                updatedCommands[commandIndex].status = 'failed';
+                updatedCommands[commandIndex].actualOutput = error.actual;
+                console.log(`📍 Updated command ${commandIndex + 1}: status=failed, actualOutput set`);
+              }
+            });
+          }
+          
+          return {
+            ...state,
+            currentFile: {
+              ...state.currentFile,
+              commands: updatedCommands
+            }
+          };
+        });
+        
         if (result.validationResults.success) {
           console.log('✅ WASM Validation: PASSED -', result.validationResults.summary);
         } else {
           console.log('❌ WASM Validation: FAILED -', result.validationResults.summary);
-          if (result.validationResults.errors && result.validationResults.errors.length > 0) {
-            console.log('🔍 WASM Validation Errors:');
-            result.validationResults.errors.forEach((error, i) => {
-              console.log(`  ${i + 1}. Step ${error.step + 1}: ${error.command}`);
-              console.log(`     Expected: ${error.expected}`);
-              console.log(`     Actual: ${error.actual}`);
-            });
-          }
         }
       }
 
