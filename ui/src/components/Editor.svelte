@@ -182,7 +182,7 @@
             isNested: level > 0,
             nestingLevel: level
           });
-          
+
           globalStepIndex++; // Increment global index for comment
         } else if (step.type === 'output') {
           // Increment global index for standalone output steps
@@ -734,18 +734,6 @@
           Running test...
         </span>
       {/if}
-      {#if $filesStore.currentFile}
-        <button class="share-button" on:click={copyShareUrl} title="Copy shareable link">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="18" cy="5" r="3"></circle>
-            <circle cx="6" cy="12" r="3"></circle>
-            <circle cx="18" cy="19" r="3"></circle>
-            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-          </svg>
-          Share
-        </button>
-      {/if}
       <div class="auto-save-toggle">
         <label class="auto-save-label">
           <input
@@ -814,9 +802,9 @@
               (commands.slice(0, i).filter(c => c.isNested && c.nestingLevel === command.nestingLevel && JSON.stringify(c.stepPath.slice(0, -1)) === JSON.stringify(command.stepPath.slice(0, -1))).length + 1) :
               (commands.slice(0, i).filter(c => !c.isNested).length + 1)
             }
-            <Step 
-              {command} 
-              index={i} 
+            <Step
+              {command}
+              index={i}
               {displayNumber}
               {wasmLoaded}
               {patternMatcher}
@@ -926,7 +914,7 @@
     gap: 8px;
   }
 
-  .save-button, .run-button, .share-button {
+  .save-button, .run-button {
     padding: 6px 12px;
     font-size: 14px;
     border-radius: 4px;
@@ -947,11 +935,6 @@
   .run-button {
     background-color: var(--color-bg-accent);
     color: white;
-  }
-
-  .share-button {
-    background-color: var(--color-bg-secondary);
-    color: var(--color-text-primary);
   }
 
   .save-button:disabled, .run-button:disabled {
