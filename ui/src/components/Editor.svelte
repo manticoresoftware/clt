@@ -111,6 +111,7 @@
     
     const commands: any[] = [];
     
+    // Only process top-level steps, ignore nested steps for now
     function processSteps(steps: TestStepType[], level = 0) {
       let i = 0;
       while (i < steps.length) {
@@ -125,7 +126,11 @@
             status: step.status || 'pending',
             type: 'command',
             initializing: false,
-            duration: step.duration
+            duration: step.duration,
+            // Add metadata to track back to structured format
+            stepIndex: i,
+            stepPath: [i],
+            isInputOutputPair: false
           };
           
           // Look for following output step
@@ -138,6 +143,7 @@
             if (outputStep.status) {
               command.status = outputStep.status;
             }
+            command.isInputOutputPair = true;
             i++; // Skip the output step since we processed it
           }
           
@@ -149,13 +155,31 @@
             type: 'block',
             initializing: false,
             isExpanded: step.isExpanded || false,
-            duration: step.duration
+            duration: step.duration,
+            // Add metadata to track back to structured format
+            stepIndex: i,
+            stepPath: [i],
+            isInputOutputPair: false,
+            // Store nested steps for potential expansion (but don't process them now)
+            nestedSteps: step.steps
           });
           
-          // Process nested steps if they exist
-          if (step.steps && step.steps.length > 0) {
-            processSteps(step.steps, level + 1);
-          }
+          // DO NOT process nested steps - they should be hidden under the block
+          // if (step.steps && step.steps.length > 0) {
+          //   processSteps(step.steps, level + 1);
+          // }
+        } else if (step.type === 'comment') {
+          commands.push({
+            command: step.content || '',
+            status: step.status || 'pending',
+            type: 'comment',
+            initializing: false,
+            duration: step.duration,
+            // Add metadata to track back to structured format
+            stepIndex: i,
+            stepPath: [i],
+            isInputOutputPair: false
+          });
         }
         // Skip standalone output steps (they should be handled with input steps)
         
@@ -163,9 +187,89 @@
       }
     }
     
-    processSteps(testStructure.steps);
+    // Only process top-level steps
+    processSteps(testStructure.steps, 0);
     return commands;
   }
+
+
+
+  // Update structured format when commands are modified
+  function updateStructuredCommand(commandIndex: number, newValue: string) {
+    if (!testStructure) {
+      // Fallback to legacy method
+      filesStore.updateCommand(commandIndex, newValue);
+      return;
+    }
+
+    // Find the corresponding step in structured format
+    const command = commands[commandIndex];
+    if (!command) {
+      console.error('Could not find command at index:', commandIndex);
+      return;
+    }
+
+    // Create updated structure
+    const updatedStructure = { ...testStructure };
+    const stepIndex = command.stepIndex;
+    
+    if (stepIndex >= 0 && stepIndex < updatedStructure.steps.length) {
+      const updatedSteps = [...updatedStructure.steps];
+      const step = { ...updatedSteps[stepIndex] };
+      
+      if (step.type === 'input') {
+        step.content = newValue;
+      } else if (step.type === 'block') {
+        step.args = [newValue];
+      } else if (step.type === 'comment') {
+        step.content = newValue;
+      }
+      
+      updatedSteps[stepIndex] = step;
+      updatedStructure.steps = updatedSteps;
+      
+      // Update the store with new structure
+      filesStore.updateTestStructure(updatedStructure);
+    }
+  }
+
+  // Update expected output in structured format
+  function updateStructuredExpectedOutput(commandIndex: number, newValue: string) {
+    if (!testStructure) {
+      // Fallback to legacy method
+      filesStore.updateExpectedOutput(commandIndex, newValue);
+      return;
+    }
+
+    // Find the corresponding step in structured format
+    const command = commands[commandIndex];
+    if (!command || !command.isInputOutputPair) {
+      console.error('Could not find input/output pair for command index:', commandIndex);
+      return;
+    }
+
+    // Create updated structure
+    const updatedStructure = { ...testStructure };
+    const stepIndex = command.stepIndex;
+    
+    // Update the output step (should be at stepIndex + 1)
+    if (stepIndex + 1 >= 0 && stepIndex + 1 < updatedStructure.steps.length) {
+      const updatedSteps = [...updatedStructure.steps];
+      const outputStep = { ...updatedSteps[stepIndex + 1] };
+      
+      if (outputStep.type === 'output') {
+        outputStep.content = newValue;
+        updatedSteps[stepIndex + 1] = outputStep;
+        updatedStructure.steps = updatedSteps;
+        
+        // Update the store with new structure
+        filesStore.updateTestStructure(updatedStructure);
+      }
+    }
+  }
+
+  // Define testStructure for template usage
+  $: testStructure = $filesStore.currentFile?.testStructure;
 
   $: commands = $filesStore.currentFile?.testStructure 
     ? convertStructuredToCommands($filesStore.currentFile.testStructure)
@@ -178,26 +282,135 @@
     console.log('DEBUG: converted commands:', commands);
   }
 
-  function duplicateCommand(index: number) {
-    if ($filesStore.currentFile) {
-      const command = commands[index];
-      filesStore.addCommand(index + 1, command.command, command.type || 'command');
-    }
-  }
-
   function moveCommandUp(index: number) {
-    if (index > 0 && $filesStore.currentFile) {
-      const command = commands[index];
-      filesStore.deleteCommand(index);
-      filesStore.addCommand(index - 1, command.command, command.type || 'command');
+    if (!testStructure) {
+      // Fallback to legacy method
+      if (index > 0 && $filesStore.currentFile) {
+        const command = commands[index];
+        filesStore.deleteCommand(index);
+        filesStore.addCommand(index - 1, command.command, command.type || 'command');
+      }
+      return;
+    }
+
+    if (index <= 0) return;
+
+    const command = commands[index];
+    if (!command || !command.stepPath) {
+      console.error('Could not find step path for command index:', index);
+      return;
+    }
+
+    const updatedStructure = { ...testStructure };
+    const updatedSteps = [...updatedStructure.steps];
+    const stepIndex = command.stepPath[0];
+    
+    if (stepIndex > 0 && stepIndex < updatedSteps.length) {
+      // Handle input/output pairs
+      if (updatedSteps[stepIndex].type === 'input' && 
+          stepIndex + 1 < updatedSteps.length && 
+          updatedSteps[stepIndex + 1].type === 'output') {
+        // Move input/output pair
+        const inputStep = updatedSteps[stepIndex];
+        const outputStep = updatedSteps[stepIndex + 1];
+        updatedSteps.splice(stepIndex, 2); // Remove both
+        updatedSteps.splice(stepIndex - 1, 0, inputStep, outputStep); // Insert both at new position
+      } else {
+        // Move single step
+        const step = updatedSteps[stepIndex];
+        updatedSteps.splice(stepIndex, 1); // Remove
+        updatedSteps.splice(stepIndex - 1, 0, step); // Insert at new position
+      }
+      
+      updatedStructure.steps = updatedSteps;
+      filesStore.updateTestStructure(updatedStructure);
     }
   }
 
   function moveCommandDown(index: number) {
-    if (index < commands.length - 1 && $filesStore.currentFile) {
-      const command = commands[index];
-      filesStore.deleteCommand(index);
-      filesStore.addCommand(index + 1, command.command, command.type || 'command');
+    if (!testStructure) {
+      // Fallback to legacy method
+      if (index < commands.length - 1 && $filesStore.currentFile) {
+        const command = commands[index];
+        filesStore.deleteCommand(index);
+        filesStore.addCommand(index + 1, command.command, command.type || 'command');
+      }
+      return;
+    }
+
+    if (index >= commands.length - 1) return;
+
+    const command = commands[index];
+    if (!command || !command.stepPath) {
+      console.error('Could not find step path for command index:', index);
+      return;
+    }
+
+    const updatedStructure = { ...testStructure };
+    const updatedSteps = [...updatedStructure.steps];
+    const stepIndex = command.stepPath[0];
+    
+    if (stepIndex >= 0 && stepIndex < updatedSteps.length - 1) {
+      // Handle input/output pairs
+      if (updatedSteps[stepIndex].type === 'input' && 
+          stepIndex + 1 < updatedSteps.length && 
+          updatedSteps[stepIndex + 1].type === 'output') {
+        // Move input/output pair
+        const inputStep = updatedSteps[stepIndex];
+        const outputStep = updatedSteps[stepIndex + 1];
+        updatedSteps.splice(stepIndex, 2); // Remove both
+        updatedSteps.splice(stepIndex + 1, 0, inputStep, outputStep); // Insert both at new position
+      } else {
+        // Move single step
+        const step = updatedSteps[stepIndex];
+        updatedSteps.splice(stepIndex, 1); // Remove
+        updatedSteps.splice(stepIndex + 1, 0, step); // Insert at new position
+      }
+      
+      updatedStructure.steps = updatedSteps;
+      filesStore.updateTestStructure(updatedStructure);
+    }
+  }
+
+  function duplicateCommand(index: number) {
+    if (!testStructure) {
+      // Fallback to legacy method
+      if ($filesStore.currentFile) {
+        const command = commands[index];
+        filesStore.addCommand(index + 1, command.command, command.type || 'command');
+      }
+      return;
+    }
+
+    const command = commands[index];
+    if (!command || !command.stepPath) {
+      console.error('Could not find step path for command index:', index);
+      return;
+    }
+
+    const updatedStructure = { ...testStructure };
+    const updatedSteps = [...updatedStructure.steps];
+    const stepIndex = command.stepPath[0];
+    
+    if (stepIndex >= 0 && stepIndex < updatedSteps.length) {
+      const step = updatedSteps[stepIndex];
+      
+      // Handle input/output pairs
+      if (step.type === 'input' && 
+          stepIndex + 1 < updatedSteps.length && 
+          updatedSteps[stepIndex + 1].type === 'output') {
+        // Duplicate input/output pair
+        const inputStep = { ...step };
+        const outputStep = { ...updatedSteps[stepIndex + 1] };
+        updatedSteps.splice(stepIndex + 2, 0, inputStep, outputStep);
+      } else {
+        // Duplicate single step
+        const duplicatedStep = { ...step };
+        updatedSteps.splice(stepIndex + 1, 0, duplicatedStep);
+      }
+      
+      updatedStructure.steps = updatedSteps;
+      filesStore.updateTestStructure(updatedStructure);
     }
   }
 
@@ -243,20 +456,117 @@
   }
 
   function addCommand(index: number, commandType: 'command' | 'block' | 'comment' = 'command') {
-    // Default placeholder text based on type
-    let defaultText = '';
-
-    if (commandType === 'block') {
-      defaultText = 'path/to/file'; // Default placeholder for block references
-    } else if (commandType === 'comment') {
-      defaultText = 'Add your comment here'; // Default placeholder for comments
+    if (!testStructure) {
+      // Fallback to legacy method
+      let defaultText = '';
+      if (commandType === 'block') {
+        defaultText = 'path/to/file';
+      } else if (commandType === 'comment') {
+        defaultText = 'Add your comment here';
+      }
+      filesStore.addCommand(index, defaultText, commandType);
+      return;
     }
 
-    filesStore.addCommand(index, defaultText, commandType);
+    // Handle structured format
+    const updatedStructure = { ...testStructure };
+    const updatedSteps = [...updatedStructure.steps];
+    
+    // Calculate the correct insertion position by walking through current steps
+    let insertIndex;
+    if (index === 0) {
+      insertIndex = 0; // Insert at beginning
+    } else if (index >= commands.length) {
+      insertIndex = updatedSteps.length; // Insert at end
+    } else {
+      // Calculate position by counting steps for commands before the target index
+      insertIndex = 0;
+      for (let i = 0; i < index; i++) {
+        if (i < commands.length) {
+          const cmd = commands[i];
+          if (cmd.isInputOutputPair) {
+            insertIndex += 2; // Skip input + output steps
+          } else {
+            insertIndex += 1; // Skip single step (block/comment)
+          }
+        }
+      }
+    }
+    
+    let newSteps: TestStepType[] = [];
+    
+    if (commandType === 'block') {
+      newSteps = [{
+        type: 'block',
+        args: ['path/to/file'],
+        content: null,
+        steps: null,
+        status: 'pending'
+      }];
+    } else if (commandType === 'comment') {
+      newSteps = [{
+        type: 'comment',
+        args: [],
+        content: 'Add your comment here',
+        steps: null,
+        status: 'pending'
+      }];
+    } else {
+      // Create input/output pair for command
+      newSteps = [
+        {
+          type: 'input',
+          args: [],
+          content: '',
+          steps: null,
+          status: 'pending'
+        },
+        {
+          type: 'output',
+          args: [],
+          content: '',
+          steps: null,
+          status: 'pending'
+        }
+      ];
+    }
+    
+    // Insert the new steps
+    updatedSteps.splice(insertIndex, 0, ...newSteps);
+    updatedStructure.steps = updatedSteps;
+    filesStore.updateTestStructure(updatedStructure);
   }
 
   function deleteCommand(index: number) {
-    filesStore.deleteCommand(index);
+    if (!testStructure) {
+      // Fallback to legacy method
+      filesStore.deleteCommand(index);
+      return;
+    }
+
+    // Handle structured format
+    const command = commands[index];
+    if (!command) {
+      console.error('Could not find command at index:', index);
+      return;
+    }
+
+    const updatedStructure = { ...testStructure };
+    const updatedSteps = [...updatedStructure.steps];
+    const stepIndex = command.stepIndex;
+    
+    if (stepIndex >= 0 && stepIndex < updatedSteps.length) {
+      if (command.isInputOutputPair) {
+        // Remove both input and output steps
+        updatedSteps.splice(stepIndex, 2);
+      } else {
+        // Remove single step (block/comment)
+        updatedSteps.splice(stepIndex, 1);
+      }
+      
+      updatedStructure.steps = updatedSteps;
+      filesStore.updateTestStructure(updatedStructure);
+    }
   }
 
   // Toggle block expansion
@@ -649,7 +959,7 @@
         </svg>
         <p>Select a file from the sidebar or create a new one</p>
       </div>
-    {:else}
+    {:else if testStructure}
       <!-- New structured format rendering -->
       <div class="test-structure">
         {#if testStructure.description}
@@ -659,28 +969,358 @@
           </div>
         {/if}
 
-        <div class="steps-container">
-          {#each testStructure.steps as step, i}
-            <TestStep
-              stepData={step}
-              stepPath={[i]}
-              level={0}
-              on:toggle-expansion={(e) => toggleBlockExpansion(e.detail.stepPath)}
-            />
-          {/each}
-        </div>
+        <!-- Render the converted commands using the existing UI -->
+        <div class="command-list">
+          {#each commands as command, i}
+            <div class="command-card {(command.status === 'failed' && !command.initializing) ? 'failed-command' : ''} {command.type === 'block' ? 'block-command' : ''} {command.isBlockCommand ? 'is-block-command' : ''}">
+              <!-- Command header -->
+              <div class="command-header">
+                <div class="command-title">
+                  <span class="command-number">{i + 1}</span>
+                  {#if command.type === 'block'}
+                    <span>Block Reference</span>
+                  {:else if command.type === 'comment'}
+                    <span>Comment</span>
+                  {:else if command.isBlockCommand}
+                    <span>Block Command</span>
+                  {:else}
+                    <span>Command</span>
+                  {/if}
+                  {#if command.initializing}
+                    <span class="command-status pending-status">
+                      {@html getStatusIcon('pending')}
+                      <span>Pending</span>
+                    </span>
+                  {:else if command.status === 'matched'}
+                    <span class="command-status matched-status">
+                      {@html getStatusIcon('matched')}
+                      <span>Matched</span>
+                    </span>
+                  {:else if command.status === 'failed'}
+                    <span class="command-status failed-status">
+                      {@html getStatusIcon('failed')}
+                      <span>Failed</span>
+                    </span>
+                  {:else if command.type === 'block'}
+                    <span class="command-status {command.status}-status">
+                      {@html getStatusIcon(command.status)}
+                      <span>{command.status.charAt(0).toUpperCase() + command.status.slice(1)}</span>
+                    </span>
+                  {:else if command.status}
+                    <span class="command-status {command.status}-status">
+                      {@html getStatusIcon(command.status)}
+                      <span>{command.status.charAt(0).toUpperCase() + command.status.slice(1)}</span>
+                    </span>
+                  {/if}
+                  {#if command.blockSource && command.isBlockCommand}
+                    <span class="block-source">From: {command.blockSource.split('/').pop()}</span>
+                  {/if}
+                  {#if command.duration}
+                    <span class="command-duration">{formatDuration(command.duration)}</span>
+                  {/if}
+                </div>
+                <div class="command-actions">
+                  <!-- Move Up Button -->
+                  <button
+                    class="action-button move-up"
+                    on:click={() => moveCommandUp(i)}
+                    title="Move up"
+                    aria-label="Move command up"
+                    disabled={i === 0}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M18 15l-6-6-6 6"></path>
+                    </svg>
+                  </button>
 
-        <!-- Add first step button if no steps -->
-        {#if testStructure.steps.length === 0}
-          <div class="no-steps">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-            <h3>No Steps Yet</h3>
-            <p>This test file is using the new structured format but has no steps</p>
-          </div>
-        {/if}
+                  <!-- Move Down Button -->
+                  <button
+                    class="action-button move-down"
+                    on:click={() => moveCommandDown(i)}
+                    title="Move down"
+                    aria-label="Move command down"
+                    disabled={i === commands.length - 1}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M6 9l6 6 6-6"></path>
+                    </svg>
+                  </button>
+
+                  <div class="action-separator"></div>
+
+                  <!-- Add Command Button -->
+                  <button
+                    class="action-button add-command"
+                    on:click={() => addCommand(i + 1, 'command')}
+                    title="Add command"
+                    aria-label="Add command"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="12" y1="5" x2="12" y2="19"></line>
+                      <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                  </button>
+
+                  <!-- Add Block Button -->
+                  <button
+                    class="action-button add-block"
+                    on:click={() => addCommand(i + 1, 'block')}
+                    title="Add block reference"
+                    aria-label="Add block reference"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                      <polyline points="14 2 14 8 20 8"></polyline>
+                    </svg>
+                  </button>
+
+                  <!-- Add Comment Button -->
+                  <button
+                    class="action-button add-comment"
+                    on:click={() => addCommand(i + 1, 'comment')}
+                    title="Add comment"
+                    aria-label="Add comment"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                    </svg>
+                  </button>
+
+                  <!-- Duplicate Button -->
+                  <button
+                    class="action-button duplicate"
+                    on:click={() => duplicateCommand(i)}
+                    title="Duplicate"
+                    aria-label="Duplicate command"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                  </button>
+
+                  <div class="action-separator"></div>
+
+                  <!-- Delete Button -->
+                  <button
+                    class="action-button delete"
+                    on:click={() => deleteCommand(i)}
+                    title="Delete"
+                    aria-label="Delete command"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M3 6h18" />
+                      <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                      <path d="M10 11v6" />
+                      <path d="M14 11v6" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Command input -->
+              <div class="command-body">
+                {#if command.type === 'block'}
+                  <!-- Block reference input -->
+                  <SimpleCodeMirror
+                    placeholder="Enter path to file (without .recb extension)"
+                    bind:value={command.command}
+                    on:input={(e) => {
+                      try {
+                        // Create a local copy of the value to avoid direct store manipulation
+                        const newValue = e.target.value;
+
+                        // Use a timeout to avoid reactive update cycles
+                        setTimeout(() => {
+                          updateStructuredCommand(i, newValue);
+                        }, 0);
+                      } catch (err) {
+                        console.error('Error updating block reference:', err);
+                      }
+                    }}
+                  />
+                {:else if command.type === 'comment'}
+                  <!-- Comment input -->
+                  <SimpleCodeMirror
+                    placeholder="Enter your comment here..."
+                    bind:value={command.command}
+                    on:input={(e) => {
+                      try {
+                        // Create a local copy of the value to avoid direct store manipulation
+                        const newValue = e.target.value;
+
+                        // Use a timeout to avoid reactive update cycles
+                        setTimeout(() => {
+                          updateStructuredCommand(i, newValue);
+                        }, 0);
+                      } catch (err) {
+                        console.error('Error updating comment:', err);
+                      }
+                    }}
+                  />
+                {:else}
+                  <!-- Standard command input with syntax highlighting -->
+                  <SimpleCodeMirror
+                    placeholder="Enter command..."
+                    bind:value={command.command}
+                    on:input={(e) => {
+                      try {
+                        // Create a local copy of the value to avoid direct store manipulation
+                        const newValue = e.target.value;
+
+                        // Use a timeout to avoid reactive update cycles
+                        setTimeout(() => {
+                          updateStructuredCommand(i, newValue);
+                        }, 0);
+                      } catch (err) {
+                        console.error('Error updating command:', err);
+                      }
+                    }}
+                  />
+
+                  <!-- Output section (only for regular commands) -->
+                  {#if !command.initializing}
+                  <div class="output-grid {command.isOutputExpanded ? 'has-expanded-outputs' : ''}">
+                    <div class="output-column">
+                      <div class="output-header">
+                        <span class="output-indicator expected-indicator"></span>
+                        <label for={`expected-output-${i}`}>Expected Output</label>
+                      </div>
+                      <textarea
+                        id={`expected-output-${i}`}
+                        class="expected-output {command.isOutputExpanded ? 'expanded' : ''}"
+                        bind:this={expectedEls[i]}
+                        on:scroll={() => syncScroll(i, true)}
+                        placeholder="Expected output..."
+                        rows="1"
+                        bind:value={command.expectedOutput}
+                        on:input={(e) => {
+                          try {
+                            // Auto-resize textarea based on content
+                            e.target.style.height = 'auto';
+                            e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
+
+                            // Use a local copy of the value to avoid direct store manipulation
+                            const newValue = e.target.value || '';
+
+                            // Use a timeout to avoid reactive update cycles
+                            setTimeout(() => {
+                              updateStructuredExpectedOutput(i, newValue);
+
+                              // Force a re-render of the diff - a small hack to make
+                              // sure the diff updates in real-time as we type
+                              if (command.actualOutput) {
+                                const actualOutput = parseActualOutputContent(command.actualOutput);
+                                const actualOutputElement = document.getElementById(`actual-output-${i}`);
+                                if (actualOutputElement) {
+                                  highlightDifferences(actualOutput, newValue).then(diffHtml => {
+                                    if (actualOutputElement.querySelector('.wasm-diff')) {
+                                      actualOutputElement.querySelector('.wasm-diff').innerHTML = diffHtml;
+                                    } else {
+                                      actualOutputElement.innerHTML = `<div class="wasm-diff">${diffHtml}</div>`;
+                                    }
+                                  });
+                                }
+                              }
+                            }, 0);
+                          } catch (err) {
+                            console.error('Error updating expected output:', err);
+                          }
+                        }}
+                        on:focus={() => {
+                          // Expand both outputs when focusing on the expected output
+                          filesStore.toggleOutputExpansion(i, true);
+                        }}
+                        on:click={() => {
+                          // Also expand on click (helps with touch devices)
+                          filesStore.toggleOutputExpansion(i, true);
+                        }}
+                        use:initTextArea
+                      ></textarea>
+                    </div>
+                    <div class="output-column">
+                      <div class="output-header">
+                        <span class="output-indicator actual-indicator"></span>
+                        <label for={`actual-output-${i}`}>Actual Output</label>
+                      </div>
+                      <div
+                        id={`actual-output-${i}`}
+                        class="actual-output {command.status === 'failed' ? 'failed-output' : ''} {command.isOutputExpanded ? 'expanded' : ''}"
+                        bind:this={actualEls[i]}
+                        on:scroll={() => syncScroll(i, false)}
+                        role="region"
+                        aria-label="Actual Output"
+                        on:click={() => {
+                          // Expand both outputs when clicking on actual output
+                          filesStore.toggleOutputExpansion(i, true);
+                        }}
+                      >
+                        {#if command.actualOutput}
+                          {#await highlightDifferences(parseActualOutputContent(command.actualOutput), command.expectedOutput || '')}
+                            <pre class="plain-output">{parseActualOutputContent(command.actualOutput)}</pre>
+                          {:then diffHtml}
+                            <div class="wasm-diff">{@html diffHtml}</div>
+                          {/await}
+                        {:else}
+                          <span class="no-output-message">Empty output.</span>
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+                  {/if}
+                {/if}
+              </div>
+            </div>
+          {/each}
+
+          <!-- Add first command button if no commands -->
+          {#if commands.length === 0}
+            <div class="no-commands">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              <h3>No Commands Yet</h3>
+              <p>Add your first item to start building your test</p>
+              <div class="first-command-buttons">
+                <button
+                  class="add-first-command-button"
+                  on:click={() => addCommand(0, 'command')}
+                  aria-label="Add first command"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                  Add Command
+                </button>
+
+                <button
+                  class="add-first-block-button"
+                  on:click={() => addCommand(0, 'block')}
+                  aria-label="Add first block reference"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                  </svg>
+                  Add Block
+                </button>
+
+                <button
+                  class="add-first-comment-button"
+                  on:click={() => addCommand(0, 'comment')}
+                  aria-label="Add first comment"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                  </svg>
+                  Add Comment
+                </button>
+              </div>
+            </div>
+          {/if}
+        </div>
       </div>
     {:else}
       <!-- Fallback for files without structured data -->
@@ -1194,4 +1834,57 @@
 
   .add-first-command-button:hover, .add-first-block-button:hover, .add-first-comment-button:hover {
     background-color: var(--color-bg-accent-hover);
+  }
+
+  /* Structured format styles */
+  .structured-format-note {
+    font-size: 12px;
+    color: var(--color-text-tertiary);
+    font-style: italic;
+  }
+
+  .command-display {
+    background-color: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 8px;
+    font-family: monospace;
+    white-space: pre-wrap;
+    line-height: 1.5;
+  }
+
+  .command-display.comment-display {
+    background-color: var(--color-bg-comment, #f8f9fa);
+    border-left: 4px solid var(--color-border-comment, #6c757d);
+  }
+
+  .expected-output-display {
+    background-color: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 8px;
+    font-family: monospace;
+    white-space: pre-wrap;
+    line-height: 1.5;
+    min-height: 24px;
+  }
+
+  .test-description {
+    margin-bottom: 20px;
+    padding: 16px;
+    background-color: var(--color-bg-secondary);
+    border-radius: 8px;
+    border-left: 4px solid var(--color-bg-accent);
+  }
+
+  .test-description h3 {
+    margin: 0 0 8px 0;
+    color: var(--color-text-primary);
+    font-size: 16px;
+  }
+
+  .test-description p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    line-height: 1.5;
   }</style>
