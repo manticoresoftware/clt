@@ -22,7 +22,7 @@
   $: if (expectedCodeMirror?.getEditorView) {
     expectedEditorView = expectedCodeMirror.getEditorView();
   }
-  
+
   $: if (actualCodeMirror?.getEditorView) {
     actualEditorView = actualCodeMirror.getEditorView();
   }
@@ -43,7 +43,7 @@
         syncScroll(true);
       }
     };
-    
+
     node.addEventListener('scroll', handleScroll);
 
     return {
@@ -233,7 +233,7 @@
 
   function handleExpectedOutputInput(e: any) {
     try {
-      const newValue = e.detail?.target?.value || '';
+      const newValue = e.target?.textContent || '';
 
       // Dispatch the update without direct mutation
       dispatch('updateExpectedOutput', { index, newValue });
@@ -269,7 +269,7 @@
   // Get actual output content without duration
   function getActualOutputContent(): string {
     if (!command.actualOutput) return '';
-    
+
     // Handle the case when there's a duration section in the output.
     const durationMatch = command.actualOutput.match(/–––\s*duration/);
     if (durationMatch) {
@@ -437,15 +437,15 @@
             <span class="output-indicator expected-indicator"></span>
             <label for={`expected-output-${index}`}>Expected Output</label>
           </div>
-          <div class="codemirror-output-wrapper {command.isOutputExpanded ? 'expanded' : ''}" on:click={handleExpectedOutputClick}>
-            <OutputCodeMirror
-              bind:this={expectedCodeMirror}
-              bind:value={command.expectedOutput}
-              placeholder="Expected output..."
-              editable={true}
-              syncScrollWith={actualEditorView}
-              on:input={handleExpectedOutputInput}
-            />
+          <div class="output-wrapper {command.isOutputExpanded ? 'expanded' : ''}">
+            <div class="line-numbers-gutter">
+              {#each (command.expectedOutput || '').split('\\n') as line, i}
+                <div class="line-number">{i + 1}</div>
+              {/each}
+            </div>
+            <div class="output-content" contenteditable="true" bind:textContent={command.expectedOutput} on:input={handleExpectedOutputInput}>
+              {command.expectedOutput || ''}
+            </div>
           </div>
         </div>
         <div class="output-column">
@@ -453,22 +453,23 @@
             <span class="output-indicator actual-indicator"></span>
             <label for={`actual-output-${index}`}>Actual Output</label>
           </div>
-          <div class="codemirror-output-wrapper {command.isOutputExpanded ? 'expanded' : ''}" on:click={handleActualOutputClick}>
-            {#if command.actualOutput}
-              {#await highlightDifferences(getActualOutputContent(), command.expectedOutput || '')}
-                <div class="actual-output-content">
+          <div class="output-wrapper {command.isOutputExpanded ? 'expanded' : ''}">
+            <div class="line-numbers-gutter">
+              {#each getActualOutputContent().split('\\n') as line, i}
+                <div class="line-number">{i + 1}</div>
+              {/each}
+            </div>
+            <div class="output-content">
+              {#if command.actualOutput}
+                {#await highlightDifferences(getActualOutputContent(), command.expectedOutput || '')}
                   <pre class="plain-output">{getActualOutputContent()}</pre>
-                </div>
-              {:then diffHtml}
-                <div class="actual-output-content">
+                {:then diffHtml}
                   <div class="wasm-diff">{@html diffHtml}</div>
-                </div>
-              {/await}
-            {:else}
-              <div class="actual-output-content">
+                {/await}
+              {:else}
                 <span class="no-output-message">Empty output.</span>
-              </div>
-            {/if}
+              {/if}
+            </div>
           </div>
         </div>
       </div>
@@ -939,18 +940,93 @@
     padding: 0 12px 12px 12px;
   }
 
-  /* WASM Diff Styles */
+  /* WASM Diff Styles - Match CodeMirror exactly */
   .actual-output-content {
-    padding: 8px 12px;
+    padding: 0;
     border: 1px solid var(--color-border);
     border-radius: 4px;
     background: var(--color-bg-secondary);
-    font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
+    font-family: "'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace";
     font-size: 12px;
-    line-height: 1.4;
+    line-height: 1;
     min-height: 60px;
     overflow-y: auto;
     cursor: pointer;
+    position: relative;
+    display: flex;
+    height: auto;
+  }
+
+  .actual-output-content::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 40px;
+    background: transparent;
+    border-right: 1px solid var(--color-border-light);
+    z-index: 1;
+  }
+
+  .wasm-diff, .plain-output {
+    font-family: "'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace";
+    font-size: 12px;
+    line-height: 1;
+    white-space: pre-wrap;
+    margin: 0;
+    flex: 1;
+    position: relative;
+    z-index: 2;
+    color: var(--color-text-primary);
+  }
+
+  .wasm-diff {
+    position: relative;
+  }
+
+  .diff-line {
+    position: relative;
+    padding: 0;
+    line-height: 1;
+    font-family: "'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace";
+    font-size: 12px;
+  }
+
+  .diff-line::before {
+    content: attr(data-line);
+    position: absolute;
+    left: -44px;
+    width: 32px;
+    text-align: right;
+    color: var(--color-text-tertiary);
+    font-family: "'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace";
+    font-size: 12px;
+    line-height: 1;
+    user-select: none;
+    padding-right: 8px;
+    background: transparent;
+  }
+
+  .plain-output {
+    counter-reset: line;
+  }
+
+  .plain-output::before {
+    content: '';
+    position: absolute;
+    left: 8px;
+    top: 8px;
+    bottom: 8px;
+    width: 32px;
+    background: repeating-linear-gradient(
+      to bottom,
+      transparent,
+      transparent calc(1.4em - 1px),
+      var(--color-text-tertiary) calc(1.4em - 1px),
+      var(--color-text-tertiary) 1.4em
+    );
+    opacity: 0.3;
   }
 
   .codemirror-output-wrapper.expanded .actual-output-content {
@@ -986,6 +1062,9 @@
     border-left: 3px solid #10b981;
     padding-left: 4px;
     margin-left: -7px;
+    font-family: "'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace";
+    font-size: 12px;
+    line-height: 1;
   }
 
   .diff-matched-line {
@@ -996,6 +1075,9 @@
     padding-left: 4px;
     margin-left: -7px;
     color: #15803d;
+    font-family: "'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace";
+    font-size: 12px;
+    line-height: 1;
   }
 
   .diff-removed-line {
@@ -1006,6 +1088,9 @@
     padding-left: 4px;
     margin-left: -7px;
     color: #b91c1e;
+    font-family: "'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace";
+    font-size: 12px;
+    line-height: 1;
   }
 
   .highlight-line {
@@ -1016,12 +1101,92 @@
     padding-left: 4px;
     margin-left: -7px;
     color: #b91c1e;
+    font-family: "'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace";
+    font-size: 12px;
+    line-height: 1;
   }
 
   .highlight-diff {
     background-color: #fca5a5; /* highlighted diff */
     color: #991b1b;
     border-bottom: 1px dashed #ef4444;
+    font-family: "'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace";
+    font-size: 12px;
+    line-height: 1;
+  }
+
+  /* Perfect alignment - identical structure for both sides */
+  .output-wrapper {
+    display: flex;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    background: var(--color-bg-secondary);
+    min-height: 60px;
+    overflow: hidden;
+  }
+
+  .output-wrapper.expanded {
+    max-height: none;
+  }
+
+  .output-wrapper:not(.expanded) {
+    max-height: 200px;
+  }
+
+  .line-numbers-gutter {
+    width: 40px;
+    background: transparent;
+    border-right: 1px solid var(--color-border-light);
+    padding: 8px 0;
+    font-family: "'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace";
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--color-text-tertiary);
+    user-select: none;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .line-number {
+    text-align: right;
+    padding: 0 8px 0 0;
+    height: 1.5em;
+    line-height: 1.5;
+  }
+
+  .output-content {
+    flex: 1;
+    padding: 8px 12px;
+		font-family: var(--font-mono) !important;
+		white-space: pre-wrap !important;
+		line-height: 1.5 !important;
+    font-size: 12px;
+    color: var(--color-text-primary);
+    white-space: pre-wrap;
+    overflow: auto;
+    outline: none;
+    min-height: 44px;
+  }
+
+  .output-content[contenteditable="true"] {
+    cursor: text;
+  }
+
+  .output-content[contenteditable="true"]:focus {
+    background: var(--color-bg-textarea);
+  }
+
+  .wasm-diff, .plain-output {
+    font-family: "'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace";
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 0;
+    white-space: pre-wrap;
+  }
+
+  .no-output-message {
+    color: var(--color-text-tertiary);
+    font-style: italic;
   }
 
   /* Dark mode styles */
