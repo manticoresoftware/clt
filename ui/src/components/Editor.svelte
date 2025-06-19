@@ -768,7 +768,7 @@
           }
 
           try {
-            patternMatcher = new PatternMatcher(JSON.stringify(patternsData));
+            patternMatcher = new module.PatternMatcher(JSON.stringify(patternsData));
             window.patternMatcher = patternMatcher;
             window.lastPatternRefresh = Date.now();
             console.log('Refreshed patterns for real-time comparison:', patternsData);
@@ -1205,8 +1205,8 @@
                     bind:value={command.command}
                     on:input={(e) => {
                       try {
-                        // Create a local copy of the value to avoid direct store manipulation
-                        const newValue = e.target.value;
+                        // Get value from CodeMirror dispatched event
+                        const newValue = e.detail?.target?.value || '';
 
                         // Use a timeout to avoid reactive update cycles
                         setTimeout(() => {
@@ -1224,8 +1224,8 @@
                     bind:value={command.command}
                     on:input={(e) => {
                       try {
-                        // Create a local copy of the value to avoid direct store manipulation
-                        const newValue = e.target.value;
+                        // Get value from CodeMirror dispatched event
+                        const newValue = e.detail?.target?.value || '';
 
                         // Use a timeout to avoid reactive update cycles
                         setTimeout(() => {
@@ -1243,8 +1243,8 @@
                     bind:value={command.command}
                     on:input={(e) => {
                       try {
-                        // Create a local copy of the value to avoid direct store manipulation
-                        const newValue = e.target.value;
+                        // Get value from CodeMirror dispatched event
+                        const newValue = e.detail?.target?.value || '';
 
                         // Use a timeout to avoid reactive update cycles
                         setTimeout(() => {
@@ -1278,8 +1278,8 @@
                             e.target.style.height = 'auto';
                             e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
 
-                            // Use a local copy of the value to avoid direct store manipulation
-                            const newValue = e.target.value || '';
+                            // Get value from textarea (this is a regular textarea, not CodeMirror)
+                            const newValue = e.target?.value || '';
 
                             // Use a timeout to avoid reactive update cycles
                             setTimeout(() => {
