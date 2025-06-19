@@ -653,47 +653,52 @@
       return exactMatch.status;
     }
     
-    // Try matching by filename ending
-    const endMatch = $gitStatusStore.modifiedFiles.find(file => file.path.endsWith(filePath));
-    if (endMatch) {
-      return endMatch.status;
-    }
+    // Git paths include testPath prefix (e.g., "test/clt-tests/buddy/file.rec")
+    // File explorer paths are relative to testPath (e.g., "buddy/file.rec")
+    // Strip the testPath prefix from git paths for comparison
+    const testPath = $gitStatusStore.testPath || '';
+    const testPathPrefix = testPath ? testPath + '/' : '';
     
-    // Try matching if the git path contains our file path
-    const containsMatch = $gitStatusStore.modifiedFiles.find(file => file.path.includes(filePath));
-    if (containsMatch) {
-      return containsMatch.status;
-    }
+    const matchWithPrefix = $gitStatusStore.modifiedFiles.find(file => {
+      // Remove testPath prefix from git path
+      const relativePath = file.path.startsWith(testPathPrefix) 
+        ? file.path.substring(testPathPrefix.length)
+        : file.path;
+      return relativePath === filePath;
+    });
     
-    return null;
+    return matchWithPrefix ? matchWithPrefix.status : null;
   }
 
   // Check if directory has changes (reactive)
   function isDirModified(dirPath: string): boolean {
-    // Try exact match first
+    // Git paths include testPath prefix, file explorer paths are relative to testPath
+    const testPath = $gitStatusStore.testPath || '';
+    const testPathPrefix = testPath ? testPath + '/' : '';
+    
+    // Try exact match first (with testPath prefix added)
+    const fullDirPath = testPathPrefix + dirPath;
+    if ($gitStatusStore.modifiedDirs.includes(fullDirPath)) {
+      return true;
+    }
+    
+    // Also try without prefix in case modifiedDirs already has relative paths
     if ($gitStatusStore.modifiedDirs.includes(dirPath)) {
       return true;
     }
     
-    // Try matching if any git modified dir ends with our dir path
-    const endMatch = $gitStatusStore.modifiedDirs.some(gitDir => gitDir.endsWith(dirPath));
-    if (endMatch) {
-      return true;
-    }
+    // Check if any modified files are within this directory
+    const hasModifiedFilesInDir = $gitStatusStore.modifiedFiles.some(file => {
+      // Remove testPath prefix from git file path
+      const relativePath = file.path.startsWith(testPathPrefix) 
+        ? file.path.substring(testPathPrefix.length)
+        : file.path;
+      
+      // Check if file is within this directory
+      return relativePath.startsWith(dirPath + '/');
+    });
     
-    // Try matching if any git modified dir contains our dir path
-    const containsMatch = $gitStatusStore.modifiedDirs.some(gitDir => gitDir.includes(dirPath));
-    if (containsMatch) {
-      return true;
-    }
-    
-    // Try matching if our dir path contains any git modified dir
-    const reverseMatch = $gitStatusStore.modifiedDirs.some(gitDir => dirPath.includes(gitDir));
-    if (reverseMatch) {
-      return true;
-    }
-    
-    return false;
+    return hasModifiedFilesInDir;
   }
 
   // Get git status display text
