@@ -917,47 +917,97 @@ fn compare_output_sequences(
     Ok(errors)
 }
 
-// Simple pattern matching logic (minimal version from cmp crate)
-fn has_diff_simple(expected: &str, actual: &str, patterns: &HashMap<String, String>) -> bool {
-    let processed_expected = replace_patterns(expected, patterns);
-    
-    // Log pattern replacement for debugging
-    if expected != processed_expected {
-        eprintln!("🔥 PATTERN REPLACEMENT: '{}' -> '{}'", expected, processed_expected);
-        eprintln!("🔥 AVAILABLE PATTERNS: {:?}", patterns.keys().collect::<Vec<_>>());
+// COPY the working PatternMatcher from CMP - DON'T REINVENT
+#[derive(Debug)]
+pub enum MatchingPart {
+    Static(String),
+    Pattern(String),
+}
+
+pub struct PatternMatcher {
+    config: HashMap<String, String>,
+    var_regex: Regex,
+}
+
+impl PatternMatcher {
+    /// Initialize with patterns HashMap (for WASM use)
+    pub fn from_patterns(patterns: HashMap<String, String>) -> Self {
+        // Convert patterns to CMP format: PATTERN_NAME REGEX -> PATTERN_NAME #!/REGEX/!#
+        let config: HashMap<String, String> = patterns.iter()
+            .map(|(name, regex)| (name.clone(), format!("#!/{}/!#", regex)))
+            .collect();
+        
+        let var_regex = Regex::new(r"%\{[A-Z]{1}[A-Z_0-9]*\}").unwrap();
+        Self { config, var_regex }
     }
-    
-    // Simple regex-based comparison
-    match Regex::new(&processed_expected) {
-        Ok(regex) => {
-            let has_diff = !regex.is_match(actual);
-            if has_diff {
-                eprintln!("🔥 REGEX MISMATCH: expected='{}' processed='{}' actual='{}'", expected, processed_expected, actual);
+
+    /// COPY the working has_diff method from CMP
+    pub fn has_diff(&self, rec_line: String, rep_line: String) -> bool {
+        let rec_line = self.replace_vars_to_patterns(rec_line);
+        let parts = self.split_into_parts(&rec_line);
+        let mut last_index = 0;
+
+        for part in parts {
+            match part {
+                MatchingPart::Static(static_part) => {
+                    if rep_line[last_index..].starts_with(&static_part) {
+                        last_index += static_part.len();
+                    } else {
+                        return true;
+                    }
+                }
+                MatchingPart::Pattern(pattern) => {
+                    let pattern_regex = Regex::new(&pattern).unwrap();
+                    if let Some(mat) = pattern_regex.find(&rep_line[last_index..]) {
+                        last_index += mat.end();
+                    } else {
+                        return true;
+                    }
+                }
             }
-            has_diff
-        },
-        Err(e) => {
-            eprintln!("🔥 REGEX COMPILE ERROR: '{}' -> {}", processed_expected, e);
-            expected != actual // Fallback to exact match if regex fails
         }
+
+        last_index != rep_line.len()
+    }
+
+    /// COPY split_into_parts from CMP
+    pub fn split_into_parts(&self, rec_line: &str) -> Vec<MatchingPart> {
+        let mut parts = Vec::new();
+
+        let first_splits: Vec<&str> = rec_line.split("#!/").collect();
+        for first_split in first_splits {
+            let second_splits: Vec<&str> = first_split.split("/!#").collect();
+            if second_splits.len() == 1 {
+                parts.push(MatchingPart::Static(second_splits.first().unwrap().to_string()));
+            } else {
+                for (i, second_split) in second_splits.iter().enumerate() {
+                    if i % 2 == 1 {
+                        parts.push(MatchingPart::Static(second_split.to_string()));
+                    } else {
+                        parts.push(MatchingPart::Pattern(second_split.to_string()));
+                    }
+                }
+            }
+        }
+        parts
+    }
+
+    /// COPY replace_vars_to_patterns from CMP
+    pub fn replace_vars_to_patterns(&self, line: String) -> String {
+        let result = self.var_regex.replace_all(&line, |caps: &regex::Captures| {
+            let matched = &caps[0];
+            let key = matched[2..matched.len() - 1].to_string();
+            self.config.get(&key).unwrap_or(&matched.to_string()).clone()
+        });
+
+        result.into_owned()
     }
 }
 
-fn replace_patterns(text: &str, patterns: &HashMap<String, String>) -> String {
-    let var_regex = Regex::new(r"%\{([A-Z][A-Z_0-9]*)\}").unwrap();
-    
-    var_regex.replace_all(text, |caps: &regex::Captures| {
-        let pattern_name = &caps[1];
-        patterns.get(pattern_name)
-            .map(|pattern| {
-                eprintln!("🔥 REPLACING %{{{}}}: {}", pattern_name, pattern);
-                format!("({})", pattern)
-            })
-            .unwrap_or_else(|| {
-                eprintln!("🔥 PATTERN NOT FOUND: %{{{}}}", pattern_name);
-                caps[0].to_string()
-            })
-    }).to_string()
+// Use the WORKING CMP PatternMatcher instead of broken logic
+fn has_diff_simple(expected: &str, actual: &str, patterns: &HashMap<String, String>) -> bool {
+    let pattern_matcher = PatternMatcher::from_patterns(patterns.clone());
+    pattern_matcher.has_diff(expected.to_string(), actual.to_string())
 }
 
 /// Load patterns from a specific file into the patterns map
@@ -1332,21 +1382,62 @@ pub fn validate_test_from_map_with_patterns(
     };
 
     // Use provided patterns or fall back to file map discovery
-    let pattern_map = if let Some(patterns_map) = patterns {
-        patterns_map
+    let pattern_file_path = if let Some(patterns_map) = patterns {
+        // We have patterns provided directly - create a temporary file content format
+        // that the working compare_output_sequences function can use
+        let pattern_content = patterns_map.iter()
+            .map(|(name, regex)| format!("{} {}", name, regex))
+            .collect::<Vec<_>>()
+            .join("\n");
+        
+        // Write to a temporary location that compare_output_sequences can read
+        // Actually, let's not use files - let's modify the approach
+        eprintln!("🔥 USING PROVIDED PATTERNS: {} patterns", patterns_map.len());
+        
+        // Use the working comparison logic directly with our patterns
+        let mut errors = Vec::new();
+        for (exp, act) in expected_outputs.iter().zip(actual_outputs.iter()) {
+            if has_diff_simple(&exp.expected_content, &act.actual_content, &patterns_map) {
+                errors.push(TestError {
+                    command: exp.command.clone(),
+                    expected: exp.expected_content.clone(),
+                    actual: act.actual_content.clone(),
+                    step: exp.command_index,
+                });
+            }
+        }
+        
+        // Check for count mismatch
+        if expected_outputs.len() != actual_outputs.len() {
+            errors.push(TestError {
+                command: "output_count_mismatch".to_string(),
+                expected: format!("{} outputs expected", expected_outputs.len()),
+                actual: format!("{} outputs found", actual_outputs.len()),
+                step: 0,
+            });
+        }
+        
+        let success = errors.is_empty();
+        let summary = if success {
+            "All outputs match expected results".to_string()
+        } else {
+            format!("{} validation error(s) found", errors.len())
+        };
+
+        return Ok(ValidationResult {
+            success,
+            errors,
+            summary,
+        });
     } else {
         // Fallback: try to find patterns in file map (existing behavior)
         let pattern_file = find_pattern_file_from_map(rec_file_path, file_map);
-        if let Some(pattern_content) = pattern_file {
-            parse_patterns_from_content(&pattern_content)
-        } else {
-            HashMap::new()
-        }
+        pattern_file
     };
 
-    // Compare output sequences using pattern matching logic
+    // Use the WORKING compare_output_sequences function
     let mut errors = Vec::new();
-    match compare_output_sequences_with_patterns(&expected_outputs, &actual_outputs, &pattern_map) {
+    match compare_output_sequences(&expected_outputs, &actual_outputs, pattern_file_path) {
         Ok(comparison_errors) => {
             errors.extend(comparison_errors);
         }
@@ -1411,8 +1502,9 @@ fn compare_output_sequences_with_patterns(
     for (i, (exp, act)) in expected.iter().zip(actual.iter()).enumerate() {
         eprintln!("🔥 COMPARING OUTPUT {}: expected='{}' actual='{}'", i, exp.expected_content, act.actual_content);
         
-        // Process the expected content with patterns for both comparison AND error reporting
-        let processed_expected = replace_patterns(&exp.expected_content, patterns);
+        // Process the expected content with patterns for error reporting
+        let pattern_matcher = PatternMatcher::from_patterns(patterns.clone());
+        let processed_expected = pattern_matcher.replace_vars_to_patterns(exp.expected_content.clone());
         eprintln!("🔥 PROCESSED EXPECTED: '{}'", processed_expected);
         
         // Use simple pattern matching for comparison
