@@ -16,7 +16,7 @@ interface TestStep {
   args: string[];         // For blocks: [blockPath], for outputs: [checker]
   content: string | null; // Command/output content
   steps: TestStep[] | null; // For blocks: nested steps
-  
+
   // Runtime properties (added by UI)
   status?: 'success' | 'failed';
   actualOutput?: string;
@@ -194,19 +194,19 @@ const checkFileLoaded = async (path: string) => {
 
     if (response.ok) {
       const data = await response.json();
-      
+
       // Check if we have structured data from backend (WASM-parsed)
       if (data.structuredData && data.wasmparsed) {
         console.log('✅ Using WASM-parsed structured data from backend');
-        return { 
-          success: true, 
+        return {
+          success: true,
           testStructure: data.structuredData,
           method: 'wasm'
         };
       } else if (data.structuredData) {
         console.log('✅ Using structured data from backend');
-        return { 
-          success: true, 
+        return {
+          success: true,
           testStructure: data.structuredData,
           method: 'structured'
         };
@@ -283,12 +283,12 @@ function createFilesStore() {
 
     // Format the file content according to the .rec format (manual fallback)
     let content = '';
-    
+
     // Check if file has commands (legacy format) or testStructure (new format)
     if (!file.commands && !file.testStructure) {
       throw new Error('File has neither commands nor testStructure');
     }
-    
+
     // For structured format files, we don't need to generate manual content
     if (file.testStructure) {
       try {
@@ -316,7 +316,7 @@ function createFilesStore() {
         throw error;
       }
     }
-    
+
     // Handle legacy format with commands
     file.commands!.forEach((cmd, index) => {
       // Add newline before section if not the first command
@@ -335,19 +335,19 @@ function createFilesStore() {
         // Default - regular command (input/output format)
         content += '––– input –––\\n';
         content += cmd.command;
-        
+
         // Don't add extra newline if command already ends with one
         if (!cmd.command.endsWith('\\n')) {
           content += '\\n';
         }
-        
+
         // Add output section marker - no extra newline for empty outputs
         content += '––– output –––';
 
         // Use the expected output if provided, otherwise use actual output if available
         // Make sure to maintain all whitespace and newlines exactly as in the expected output
         const outputToSave = cmd.expectedOutput || cmd.actualOutput || '';
-        
+
         // Only add a newline before the output if there's actual content
         if (outputToSave && outputToSave.trim() !== '') {
           content += '\\n' + outputToSave;
@@ -358,7 +358,7 @@ function createFilesStore() {
     try {
       // Prepare structured data for WASM backend
       const structuredData = convertUIToStructured(file.commands!);
-      
+
       const response = await fetch(`${API_URL}/api/save-file`, {
         method: 'POST',
         headers: {
@@ -473,80 +473,61 @@ function createFilesStore() {
 
       console.log('Run test completed successfully');
 
-      // Process enriched testStructure (ONLY new format, NO LEGACY)
+      // Process enhanced testStructure (preferred method)
       if (result.testStructure) {
-        console.log('🔍 Processing enriched testStructure with actual outputs and error flags');
-        
+        console.log('🔍 Processing enriched testStructure with actual outputs');
+
         update(state => {
           if (!state.currentFile?.testStructure) return state;
+
+          // Recursive function to process nested steps
+          function processStepsRecursively(steps) {
+            return steps.map(step => {
+              const processedStep = {
+                ...step,
+                actualOutput: step.actualOutput || '', // From .rep file
+                status: step.status || 'success', // Backend already set status
+                error: step.error || false // Backend already set error flag
+              };
+              
+              // Process nested steps if they exist
+              if (step.steps && step.steps.length > 0) {
+                processedStep.steps = processStepsRecursively(step.steps);
+              }
+              
+              return processedStep;
+            });
+          }
           
-          // Update the testStructure directly with enriched data
-          const enrichedSteps = result.testStructure.steps.map((step, index) => {
-            return {
-              ...step,
-              actualOutput: step.actualOutput || '', // From .rep file
-              status: step.error ? 'failed' : 'success', // From validation
-              error: step.error || false
-            };
-          });
-          
+          // Update the testStructure directly with enriched data (backend already enhanced)
+          const enrichedSteps = processStepsRecursively(result.testStructure.steps);
+
           console.log(`📋 Updated ${enrichedSteps.length} steps with enriched data`);
-          
+
           return {
             ...state,
+            running: false,
             currentFile: {
               ...state.currentFile,
               testStructure: {
                 ...state.currentFile.testStructure,
                 steps: enrichedSteps
-              }
+              },
+              status: result.success ? 'success' : 'failed'
             }
           };
         });
       }
-      
-      // Legacy validation results processing (fallback)
-      else if (result.validationResults) {
-        console.log('🔍 Processing WASM Validation Results:', result.validationResults);
-        
-        update(state => {
-          if (!state.currentFile) return state;
-          
-          const updatedCommands = [...state.currentFile.commands];
-          
-          // Set all commands to success first (commands that ran successfully)
-          updatedCommands.forEach(cmd => {
-            if (cmd.status === 'pending') {
-              cmd.status = 'success'; // Only update pending commands
-            }
-          });
-          
-          // Apply validation errors to specific commands
-          if (result.validationResults.errors && result.validationResults.errors.length > 0) {
-            result.validationResults.errors.forEach((error) => {
-              const commandIndex = error.step - 1; // Convert 1-based step to 0-based index
-              if (commandIndex >= 0 && commandIndex < updatedCommands.length) {
-                updatedCommands[commandIndex].status = 'failed';
-                updatedCommands[commandIndex].actualOutput = error.actual;
-                console.log(`📍 Updated command ${commandIndex + 1}: status=failed, actualOutput set`);
-              }
-            });
-          }
-          
-          return {
-            ...state,
-            currentFile: {
-              ...state.currentFile,
-              commands: updatedCommands
-            }
-          };
-        });
-        
-        if (result.validationResults.success) {
-          console.log('✅ WASM Validation: PASSED -', result.validationResults.summary);
-        } else {
-          console.log('❌ WASM Validation: FAILED -', result.validationResults.summary);
-        }
+      else {
+        // No validation results - just update running status
+        update(state => ({
+          ...state,
+          running: false,
+          currentFile: state.currentFile ? {
+            ...state.currentFile,
+            status: result.success ? 'success' : 'failed'
+          } : null
+        }));
       }
 
       return result;
@@ -626,30 +607,55 @@ function createFilesStore() {
       update(state => {
         if (!state.currentFile) return state;
 
-        // Handle structured format
-        if (state.currentFile.testStructure) {
-          // For structured format, we need to update the testStructure with results
-          // TODO: Implement structured format result handling
+        // Handle structured format with enhanced testStructure
+        if (state.currentFile.testStructure && result.testStructure) {
           console.log('✅ Test completed for structured format file');
           console.log('Result:', result);
-          
-          // For now, just update the status and clear running flag
+
+          // Use enhanced testStructure from backend (already has actualOutput, status, error)
+          function processStepsRecursively(steps) {
+            return steps.map(step => {
+              const processedStep = {
+                ...step,
+                actualOutput: step.actualOutput || '',
+                status: step.status || 'success',
+                error: step.error || false
+              };
+              
+              // Process nested steps if they exist
+              if (step.steps && step.steps.length > 0) {
+                processedStep.steps = processStepsRecursively(step.steps);
+              }
+              
+              return processedStep;
+            });
+          }
+
+          const enhancedSteps = processStepsRecursively(result.testStructure.steps);
+
           return {
             ...state,
             running: false,
             currentFile: {
               ...state.currentFile,
-              status: result.success ? 'passed' : 'failed'
+              testStructure: {
+                ...state.currentFile.testStructure,
+                steps: enhancedSteps
+              },
+              status: result.success ? 'success' : 'failed'
+            }
+          };
+        } else {
+          // Fallback - just update overall status
+          return {
+            ...state,
+            running: false,
+            currentFile: {
+              ...state.currentFile,
+              status: result.success ? 'success' : 'failed'
             }
           };
         }
-
-        // If no testStructure, something is wrong
-        console.error('File has no testStructure');
-        return {
-          ...state,
-          running: false
-        };
       });
     } catch (error) {
       console.error('Failed to run test:', error);
@@ -918,7 +924,7 @@ function createFilesStore() {
           // Handle new structured format (preferred)
           if (result.testStructure) {
             console.log('✅ Using new structured format for file:', path);
-            
+
             // Add runtime properties to all steps (status: pending, isExpanded: false)
             const processSteps = (steps: TestStep[]): TestStep[] => {
               return steps.map(step => ({

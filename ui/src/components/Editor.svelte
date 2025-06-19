@@ -110,6 +110,7 @@
     if (!testStructure || !testStructure.steps) return [];
 
     const commands: any[] = [];
+    let globalStepIndex = 0; // Track global step index across all levels
 
     // Process steps, including nested steps when blocks are expanded
     function processSteps(steps: TestStepType[], level = 0, parentBlockPath: number[] = []) {
@@ -117,6 +118,7 @@
       while (i < steps.length) {
         const step = steps[i];
         const currentPath = level === 0 ? [i] : [...parentBlockPath, i];
+        const currentGlobalIndex = globalStepIndex; // Capture current global index
 
         if (step.type === 'input') {
           // Create command from input step
@@ -129,12 +131,14 @@
             initializing: false,
             duration: step.duration,
             // Add metadata to track back to structured format
-            stepIndex: i,
+            stepIndex: currentGlobalIndex, // Use global step index
             stepPath: currentPath,
             isInputOutputPair: false,
             isNested: level > 0,
             nestingLevel: level
           };
+
+          globalStepIndex++; // Increment global index
 
           // Look for following output step
           if (i + 1 < steps.length && steps[i + 1].type === 'output') {
@@ -147,6 +151,7 @@
               command.status = outputStep.status;
             }
             command.isInputOutputPair = true;
+            globalStepIndex++; // Increment for the output step too
             i++; // Skip the output step since we processed it
           }
 
@@ -160,7 +165,7 @@
             isExpanded: step.isExpanded || false,
             duration: step.duration,
             // Add metadata to track back to structured format
-            stepIndex: i,
+            stepIndex: currentGlobalIndex, // Use global step index
             stepPath: currentPath,
             isInputOutputPair: false,
             isNested: level > 0,
@@ -168,6 +173,8 @@
             // Store nested steps for expansion
             nestedSteps: step.steps
           };
+
+          globalStepIndex++; // Increment global index for block
 
           commands.push(blockCommand);
 
@@ -183,12 +190,17 @@
             initializing: false,
             duration: step.duration,
             // Add metadata to track back to structured format
-            stepIndex: i,
+            stepIndex: currentGlobalIndex, // Use global step index
             stepPath: currentPath,
             isInputOutputPair: false,
             isNested: level > 0,
             nestingLevel: level
           });
+          
+          globalStepIndex++; // Increment global index for comment
+        } else if (step.type === 'output') {
+          // Increment global index for standalone output steps
+          globalStepIndex++;
         }
         // Skip standalone output steps (they should be handled with input steps)
 
