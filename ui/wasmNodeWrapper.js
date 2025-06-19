@@ -400,8 +400,13 @@ export async function validateTestFromMapWasm(recFilePath, fileMap, patterns = n
   
   try {
     console.log(`🔄 Validating test from map with WASM: ${recFilePath}`);
+    console.log(`🔥 WASM WRAPPER PATTERNS DUMP:`, patterns ? JSON.stringify(patterns, null, 2) : 'NULL');
+    console.log(`🔥 WASM WRAPPER PATTERNS COUNT:`, patterns ? Object.keys(patterns).length : 0);
+    
     const fileMapJson = JSON.stringify(fileMap);
     const patternsJson = patterns ? JSON.stringify(patterns) : null;
+    
+    console.log(`🔥 CALLING WASM WITH PATTERNS JSON:`, patternsJson);
     
     const validationJson = wasm.validate_test_from_map_wasm(recFilePath, fileMapJson, patternsJson);
 
