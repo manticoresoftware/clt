@@ -113,6 +113,7 @@
             expectedOutput: '',
             actualOutput: step.actualOutput || '',
             status: step.status || 'pending',
+            error: step.error || false,
             type: 'command',
             initializing: false,
             duration: step.duration,
@@ -133,9 +134,21 @@
             if (outputStep.actualOutput) {
               command.actualOutput = outputStep.actualOutput;
             }
-            if (outputStep.status) {
-              command.status = outputStep.status;
+            
+            // For input-output pairs, combine error status from both steps
+            const inputHasError = step.error || false;
+            const outputHasError = outputStep.error || false;
+            const combinedError = inputHasError || outputHasError;
+            
+            // Use the most severe status (failed > success)
+            if (combinedError || outputStep.status === 'failed' || step.status === 'failed') {
+              command.status = 'failed';
+              command.error = true;
+            } else {
+              command.status = outputStep.status || step.status || 'success';
+              command.error = false;
             }
+            
             command.isInputOutputPair = true;
             globalStepIndex++; // Increment for the output step too
             i++; // Skip the output step since we processed it
@@ -146,6 +159,7 @@
           const blockCommand = {
             command: step.args[0] || '',
             status: step.status || 'pending',
+            error: step.error || false,
             type: 'block',
             initializing: false,
             isExpanded: step.isExpanded || false,
@@ -172,6 +186,7 @@
           commands.push({
             command: step.content || '',
             status: step.status || 'pending',
+            error: step.error || false,
             type: 'comment',
             initializing: false,
             duration: step.duration,
