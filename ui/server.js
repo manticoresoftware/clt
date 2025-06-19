@@ -636,8 +636,8 @@ app.post('/api/save-file', isAuthenticated, async (req, res) => {
 	try {
 		const { path: filePath, content, structuredData } = req.body;
 
-		if (!filePath || content === undefined) {
-			return res.status(400).json({ error: 'File path and content are required' });
+		if (!filePath) {
+			return res.status(400).json({ error: 'File path is required' });
 		}
 
 		// Use the user's test directory as the base
@@ -657,35 +657,47 @@ app.post('/api/save-file', isAuthenticated, async (req, res) => {
 		if ((filePath.endsWith('.rec') || filePath.endsWith('.recb')) && structuredData) {
 			console.log(`💾 Saving structured test file via WASM: ${absolutePath}`);
 			
-			// Use WASM with file content map (no file I/O in WASM)
-			const relativeFilePath = path.relative(testDir, absolutePath);
-			const fileContentMap = await generateRecFileToMapWasm(relativeFilePath, structuredData);
-			
-			// Get the generated content for the main file
-			const generatedContent = fileContentMap[relativeFilePath];
-			
-			if (generatedContent && generatedContent.length > 0) {
-				// JavaScript writes the file (WASM doesn't touch filesystem)
-				await fs.writeFile(absolutePath, generatedContent, 'utf8');
-				console.log('✅ File saved via WASM generation');
-				res.json({ 
-					success: true,
-					method: 'wasm',
-					generatedContent: generatedContent
-				});
-				return;
-			} else {
-				console.warn('WASM generation returned empty content, falling back to manual content');
+			try {
+				// Create file content map for any referenced block files (same as reading)
+				const existingFileMap = await createFileContentMap(absolutePath, testDir).catch(() => ({}));
+				
+				// Use WASM to generate file content map from structured data
+				const relativeFilePath = path.relative(testDir, absolutePath);
+				const generatedFileContentMap = await generateRecFileToMapWasm(relativeFilePath, structuredData);
+				
+				// Get the generated content for the main file
+				const generatedContent = generatedFileContentMap[relativeFilePath];
+				
+				if (generatedContent && generatedContent.length > 0) {
+					// Write the generated content to disk
+					await fs.writeFile(absolutePath, generatedContent, 'utf8');
+					console.log('✅ File saved via WASM generation');
+					res.json({ 
+						success: true,
+						method: 'wasm',
+						generatedContent: generatedContent
+					});
+					return;
+				} else {
+					console.warn('WASM generation returned empty content, falling back to manual content');
+				}
+			} catch (error) {
+				console.error('WASM generation failed:', error);
+				console.warn('Falling back to manual content');
 			}
 		}
 		
 		// Fallback: save the manual content directly
-		await fs.writeFile(absolutePath, content, 'utf8');
-		console.log('✅ File saved via manual content');
-		res.json({ 
-			success: true,
-			method: 'manual'
-		});
+		if (content !== undefined) {
+			await fs.writeFile(absolutePath, content, 'utf8');
+			console.log('✅ File saved via manual content');
+			res.json({ 
+				success: true,
+				method: 'manual'
+			});
+		} else {
+			return res.status(400).json({ error: 'File path and content (or structuredData) are required' });
+		}
 	} catch (error) {
 		console.error('Error saving file:', error);
 		res.status(500).json({ error: 'Failed to save file' });

@@ -319,7 +319,7 @@ function createFilesStore() {
           credentials: 'include',
           body: JSON.stringify({
             path: file.path,
-            structuredData: file.testStructure
+            structuredData: file.testStructure // Send structured data, let backend handle WASM
           })
         });
 
