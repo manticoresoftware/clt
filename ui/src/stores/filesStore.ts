@@ -529,6 +529,24 @@ function createFilesStore() {
         });
       }
 
+      // Log WASM validation results (no UI changes, just console logging)
+      if (result.validationResults) {
+        console.log('🔍 WASM Validation Results:', result.validationResults);
+        if (result.validationResults.success) {
+          console.log('✅ WASM Validation: PASSED -', result.validationResults.summary);
+        } else {
+          console.log('❌ WASM Validation: FAILED -', result.validationResults.summary);
+          if (result.validationResults.errors && result.validationResults.errors.length > 0) {
+            console.log('🔍 WASM Validation Errors:');
+            result.validationResults.errors.forEach((error, i) => {
+              console.log(`  ${i + 1}. Step ${error.step + 1}: ${error.command}`);
+              console.log(`     Expected: ${error.expected}`);
+              console.log(`     Actual: ${error.actual}`);
+            });
+          }
+        }
+      }
+
       return result;
     } catch (error) {
       console.error('Error running test:', error);
