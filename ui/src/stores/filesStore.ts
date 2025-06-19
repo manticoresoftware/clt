@@ -1166,36 +1166,92 @@ function createFilesStore() {
         update(state => {
           if (!state.currentFile) return state;
 
-          // Create a fresh copy of commands to avoid any reference issues
-          const newCommands = state.currentFile.commands.map(cmd => ({...cmd}));
-
-          // Only update if the index is valid
-          if (index < 0 || index >= newCommands.length) {
-            console.error('Invalid command index:', index);
-            return state;
+          // Handle new structured format
+          if (state.currentFile.testStructure) {
+            // Find the command at the given index in the flattened structure
+            let currentIndex = 0;
+            
+            function updateStepRecursively(steps: any[]): any[] {
+              return steps.map(step => {
+                if (step.type === 'input' && currentIndex === index) {
+                  currentIndex++;
+                  return {
+                    ...step,
+                    input: command,
+                    content: command
+                  };
+                } else if (step.type === 'input') {
+                  currentIndex++;
+                } else if (step.type === 'output') {
+                  currentIndex++;
+                }
+                
+                if (step.steps) {
+                  return {
+                    ...step,
+                    steps: updateStepRecursively(step.steps)
+                  };
+                }
+                
+                return step;
+              });
+            }
+            
+            const updatedSteps = updateStepRecursively(state.currentFile.testStructure.steps);
+            
+            const updatedFile = {
+              ...state.currentFile,
+              testStructure: {
+                ...state.currentFile.testStructure,
+                steps: updatedSteps
+              },
+              dirty: true
+            };
+            
+            // Always trigger autosave
+            debouncedSave(updatedFile);
+            
+            return {
+              ...state,
+              currentFile: updatedFile
+            };
           }
+          
+          // Handle legacy commands format
+          else if (state.currentFile.commands) {
+            // Create a fresh copy of commands to avoid any reference issues
+            const newCommands = state.currentFile.commands.map(cmd => ({...cmd}));
 
-          // Always mark as changed - this will force debouncedSave to trigger
-          newCommands[index] = {
-            ...newCommands[index],
-            command,
-            status: 'pending',
-            changed: true
-          };
+            // Only update if the index is valid
+            if (index < 0 || index >= newCommands.length) {
+              console.error('Invalid command index:', index);
+              return state;
+            }
 
-          const updatedFile = {
-            ...state.currentFile,
-            commands: newCommands,
-            dirty: true
-          };
+            // Always mark as changed - this will force debouncedSave to trigger
+            newCommands[index] = {
+              ...newCommands[index],
+              command,
+              status: 'pending',
+              changed: true
+            };
 
-          // Always trigger autosave
-          debouncedSave(updatedFile);
+            const updatedFile = {
+              ...state.currentFile,
+              commands: newCommands,
+              dirty: true
+            };
 
-          return {
-            ...state,
-            currentFile: updatedFile
-          };
+            // Always trigger autosave
+            debouncedSave(updatedFile);
+
+            return {
+              ...state,
+              currentFile: updatedFile
+            };
+          }
+          
+          return state;
         });
       } catch (error) {
         console.error('Error in updateCommand:', error);
