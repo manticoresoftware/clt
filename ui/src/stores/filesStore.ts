@@ -1108,6 +1108,14 @@ function createFilesStore() {
           }
         };
       });
+    },
+
+    // Clear current file selection
+    clearCurrentFile: () => {
+      update(state => ({
+        ...state,
+        currentFile: null
+      }));
     }
   };
 

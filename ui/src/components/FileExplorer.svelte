@@ -163,11 +163,13 @@
     
     selectedFolder = null;
     
-    // Clear file selection by clearing the URL hash (same way selectFile works)
+    // Clear file selection by clearing the URL hash and updating the store
     if ($filesStore.currentFile) {
       // Clear the URL to deselect the file
       window.history.pushState({}, '', window.location.pathname);
-      // This should trigger the URL change handler to clear currentFile
+      
+      // Clear the current file from the store
+      filesStore.clearCurrentFile();
     }
     
     console.log('After clear - selectedFolder:', selectedFolder);
@@ -584,6 +586,10 @@
       if (!$filesStore.currentFile || $filesStore.currentFile.path !== filePath) {
         fetchFileContent(filePath);
       }
+    } else {
+      // No hash or invalid hash - clear the current file
+      // We need to clear the current file from the store when hash is removed
+      // This will be handled by the clearSelection function directly
     }
   }
 
