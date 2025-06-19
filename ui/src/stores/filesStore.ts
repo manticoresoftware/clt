@@ -302,7 +302,42 @@ function createFilesStore() {
 
     // Format the file content according to the .rec format (manual fallback)
     let content = '';
-    file.commands.forEach((cmd, index) => {
+    
+    // Check if file has commands (legacy format) or testStructure (new format)
+    if (!file.commands && !file.testStructure) {
+      throw new Error('File has neither commands nor testStructure');
+    }
+    
+    // For structured format files, we don't need to generate manual content
+    if (file.testStructure) {
+      try {
+        const response = await fetch(`${API_URL}/api/save-file`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            path: file.path,
+            structuredData: file.testStructure
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to save file: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        console.log('✅ File saved with structured format');
+        return result;
+      } catch (error) {
+        console.error('Error saving structured file:', error);
+        throw error;
+      }
+    }
+    
+    // Handle legacy format with commands
+    file.commands!.forEach((cmd, index) => {
       // Add newline before section if not the first command
       if (index > 0) {
         content += '\\n';
@@ -341,7 +376,7 @@ function createFilesStore() {
 
     try {
       // Prepare structured data for WASM backend
-      const structuredData = convertUIToStructured(file.commands);
+      const structuredData = convertUIToStructured(file.commands!);
       
       const response = await fetch(`${API_URL}/api/save-file`, {
         method: 'POST',
@@ -571,48 +606,68 @@ function createFilesStore() {
       update(state => {
         if (!state.currentFile) return state;
 
-        // Get the result commands
-        const resultCommands = result.commands || [];
-
-        // Preserve expected outputs by merging with current commands
-        const mergedCommands = state.currentFile.commands.map((cmd, index) => {
-          // Find matching command in results
-          const matchingResultCmd = resultCommands.find(resultCmd =>
-            resultCmd.command === cmd.command);
-
-          if (!matchingResultCmd) {
-            // If no matching command found, preserve original
-            return cmd;
-          }
-
-          // Always preserve the original expected output exactly as it was
-          // This prevents formatting changes between runs
+        // Handle structured format
+        if (state.currentFile.testStructure) {
+          // For structured format, we need to update the testStructure with results
+          // TODO: Implement structured format result handling
+          console.log('✅ Test completed for structured format file');
+          console.log('Result:', result);
+          
+          // For now, just update the status and clear running flag
           return {
-            ...cmd,
-            actualOutput: matchingResultCmd.actualOutput, // This comes from the replay file
-            status: matchingResultCmd.status,
-            duration: matchingResultCmd.duration,
-            initializing: false // Clear initializing flag once test is run
+            ...state,
+            running: false,
+            currentFile: {
+              ...state.currentFile,
+              status: result.success ? 'passed' : 'failed'
+            }
           };
-        });
-
-        // Determine overall file status
-        const exitCodeSuccess = result.exitCodeSuccess === true;
-
-        // Trust server's success value first, then exitCode status
-        let allPassed = false;
-        if (typeof result.success === 'boolean') {
-          allPassed = result.success;
-        } else {
-          allPassed = exitCodeSuccess;
         }
 
-        const anyRun = mergedCommands.some(cmd => cmd.status !== 'pending');
+        // Handle legacy format with commands
+        if (state.currentFile.commands) {
+          // Get the result commands
+          const resultCommands = result.commands || [];
 
-        // Update blocks with proper status based on test results
-        const updatedCommands = mergedCommands.map(cmd => {
-          if (cmd.type === 'block') {
-            // Log the specific block reference we're processing
+          // Preserve expected outputs by merging with current commands
+          const mergedCommands = state.currentFile.commands.map((cmd, index) => {
+            // Find matching command in results
+            const matchingResultCmd = resultCommands.find(resultCmd =>
+              resultCmd.command === cmd.command);
+
+            if (!matchingResultCmd) {
+              // If no matching command found, preserve original
+              return cmd;
+            }
+
+            // Always preserve the original expected output exactly as it was
+            // This prevents formatting changes between runs
+            return {
+              ...cmd,
+              actualOutput: matchingResultCmd.actualOutput, // This comes from the replay file
+              status: matchingResultCmd.status,
+              duration: matchingResultCmd.duration,
+              initializing: false // Clear initializing flag once test is run
+            };
+          });
+
+          // Determine overall file status
+          const exitCodeSuccess = result.exitCodeSuccess === true;
+
+          // Trust server's success value first, then exitCode status
+          let allPassed = false;
+          if (typeof result.success === 'boolean') {
+            allPassed = result.success;
+          } else {
+            allPassed = exitCodeSuccess;
+          }
+
+          const anyRun = mergedCommands.some(cmd => cmd.status !== 'pending');
+
+          // Update blocks with proper status based on test results
+          const updatedCommands = mergedCommands.map(cmd => {
+            if (cmd.type === 'block') {
+              // Log the specific block reference we're processing
             console.log(`Processing block reference: ${cmd.command}`);
 
             // Find all commands from this block by checking isBlockCommand flag and parentBlock reference
@@ -664,6 +719,14 @@ function createFilesStore() {
           ...state,
           running: false,
           currentFile: updatedFile
+        };
+        }
+
+        // If neither commands nor testStructure, something is wrong
+        console.error('File has neither commands nor testStructure');
+        return {
+          ...state,
+          running: false
         };
       });
     } catch (error) {
