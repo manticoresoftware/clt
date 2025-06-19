@@ -375,11 +375,25 @@ pub fn validate_test_from_map_wasm(
 
     // Parse patterns if provided
     let patterns = if let Some(patterns_str) = patterns_json {
+        // Log patterns received in WASM
+        web_sys::console::log_1(&format!("🔥 WASM RECEIVED PATTERNS JSON: {}", patterns_str).into());
+        
         match serde_json::from_str::<HashMap<String, String>>(&patterns_str) {
-            Ok(p) => Some(p),
-            Err(e) => return format!("{{\"error\": \"Invalid patterns JSON: {}\"}}", e),
+            Ok(p) => {
+                web_sys::console::log_1(&format!("🔥 WASM PARSED {} PATTERNS", p.len()).into());
+                web_sys::console::log_1(&format!("🔥 WASM PATTERN KEYS: {:?}", p.keys().collect::<Vec<_>>()).into());
+                if let Some(version_pattern) = p.get("VERSION") {
+                    web_sys::console::log_1(&format!("🔥 WASM VERSION PATTERN: {}", version_pattern).into());
+                }
+                Some(p)
+            },
+            Err(e) => {
+                web_sys::console::log_1(&format!("🔥 WASM PATTERN PARSE ERROR: {}", e).into());
+                return format!("{{\"error\": \"Invalid patterns JSON: {}\"}}", e);
+            }
         }
     } else {
+        web_sys::console::log_1(&"🔥 WASM NO PATTERNS PROVIDED".into());
         None
     };
 

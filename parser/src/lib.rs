@@ -921,10 +921,25 @@ fn compare_output_sequences(
 fn has_diff_simple(expected: &str, actual: &str, patterns: &HashMap<String, String>) -> bool {
     let processed_expected = replace_patterns(expected, patterns);
     
+    // Log pattern replacement for debugging
+    if expected != processed_expected {
+        eprintln!("🔥 PATTERN REPLACEMENT: '{}' -> '{}'", expected, processed_expected);
+        eprintln!("🔥 AVAILABLE PATTERNS: {:?}", patterns.keys().collect::<Vec<_>>());
+    }
+    
     // Simple regex-based comparison
     match Regex::new(&processed_expected) {
-        Ok(regex) => !regex.is_match(actual),
-        Err(_) => expected != actual, // Fallback to exact match if regex fails
+        Ok(regex) => {
+            let has_diff = !regex.is_match(actual);
+            if has_diff {
+                eprintln!("🔥 REGEX MISMATCH: expected='{}' processed='{}' actual='{}'", expected, processed_expected, actual);
+            }
+            has_diff
+        },
+        Err(e) => {
+            eprintln!("🔥 REGEX COMPILE ERROR: '{}' -> {}", processed_expected, e);
+            expected != actual // Fallback to exact match if regex fails
+        }
     }
 }
 
@@ -934,8 +949,14 @@ fn replace_patterns(text: &str, patterns: &HashMap<String, String>) -> String {
     var_regex.replace_all(text, |caps: &regex::Captures| {
         let pattern_name = &caps[1];
         patterns.get(pattern_name)
-            .map(|pattern| format!("({})", pattern))
-            .unwrap_or_else(|| caps[0].to_string())
+            .map(|pattern| {
+                eprintln!("🔥 REPLACING %{{{}}}: {}", pattern_name, pattern);
+                format!("({})", pattern)
+            })
+            .unwrap_or_else(|| {
+                eprintln!("🔥 PATTERN NOT FOUND: %{{{}}}", pattern_name);
+                caps[0].to_string()
+            })
     }).to_string()
 }
 
@@ -1381,16 +1402,30 @@ fn compare_output_sequences_with_patterns(
 ) -> Result<Vec<TestError>> {
     let mut errors = Vec::new();
 
+    eprintln!("🔥 COMPARE_OUTPUT_SEQUENCES_WITH_PATTERNS called with {} patterns", patterns.len());
+    eprintln!("🔥 PATTERNS: {:?}", patterns);
+    eprintln!("🔥 EXPECTED OUTPUTS COUNT: {}", expected.len());
+    eprintln!("🔥 ACTUAL OUTPUTS COUNT: {}", actual.len());
+
     // Compare each expected output with actual output
-    for (exp, act) in expected.iter().zip(actual.iter()) {
+    for (i, (exp, act)) in expected.iter().zip(actual.iter()).enumerate() {
+        eprintln!("🔥 COMPARING OUTPUT {}: expected='{}' actual='{}'", i, exp.expected_content, act.actual_content);
+        
+        // Process the expected content with patterns for both comparison AND error reporting
+        let processed_expected = replace_patterns(&exp.expected_content, patterns);
+        eprintln!("🔥 PROCESSED EXPECTED: '{}'", processed_expected);
+        
         // Use simple pattern matching for comparison
         if has_diff_simple(&exp.expected_content, &act.actual_content, patterns) {
+            eprintln!("🔥 DIFF FOUND FOR OUTPUT {}", i);
             errors.push(TestError {
                 command: exp.command.clone(),
-                expected: exp.expected_content.clone(),
+                expected: processed_expected, // Use processed version in error
                 actual: act.actual_content.clone(),
                 step: exp.command_index,
             });
+        } else {
+            eprintln!("🔥 NO DIFF FOR OUTPUT {}", i);
         }
     }
 
@@ -1404,6 +1439,7 @@ fn compare_output_sequences_with_patterns(
         });
     }
 
+    eprintln!("🔥 TOTAL ERRORS FOUND: {}", errors.len());
     Ok(errors)
 }
 

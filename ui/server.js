@@ -226,6 +226,48 @@ function getUserTestPath(req) {
 	return path.join(userRepo, 'test', 'clt-tests');
 }
 
+// Helper function to merge patterns like CLT does (system + project patterns)
+async function getMergedPatterns(userRepoPath) {
+	const patterns = {};
+	
+	// First, load system patterns from global .clt/patterns (like CLT binary directory)
+	const systemPatternsPath = path.join(__dirname, '.clt', 'patterns');
+	try {
+		const systemContent = await fs.readFile(systemPatternsPath, 'utf8');
+		parsePatternContent(systemContent, patterns);
+		console.log(`📋 Loaded ${Object.keys(patterns).length} system patterns from: ${systemPatternsPath}`);
+	} catch (error) {
+		console.log(`ℹ️  No system patterns file found: ${systemPatternsPath}`);
+	}
+	
+	// Then, load project patterns from user repo (these override system patterns)
+	const projectPatternsPath = path.join(userRepoPath, '.clt', 'patterns');
+	try {
+		const projectContent = await fs.readFile(projectPatternsPath, 'utf8');
+		parsePatternContent(projectContent, patterns); // This will override system patterns
+		console.log(`📋 Merged with ${Object.keys(patterns).length} total patterns after loading project patterns from: ${projectPatternsPath}`);
+	} catch (error) {
+		console.log(`ℹ️  No project patterns file found: ${projectPatternsPath}`);
+	}
+	
+	return patterns;
+}
+
+// Helper function to parse pattern file content
+function parsePatternContent(content, patterns) {
+	for (const line of content.split('\n')) {
+		const trimmedLine = line.trim();
+		if (trimmedLine && !trimmedLine.startsWith('#')) {
+			const parts = trimmedLine.split(' ');
+			if (parts.length >= 2) {
+				const name = parts[0];
+				const regex = parts.slice(1).join(' ');
+				patterns[name] = regex;
+			}
+		}
+	}
+}
+
 // Helper function to create file content map for WASM processing
 async function createFileContentMap(mainFilePath, baseDir, req = null) {
 	const fileMap = {};
@@ -1175,41 +1217,20 @@ app.post('/api/run-test', isAuthenticated, async (req, res) => {
 					
 					console.log(`🔍 Running validation with WASM: ${repFilePath}`);
 					
-					// Get patterns for validation
+					// Get patterns for validation (proper merging like CLT)
 					try {
 						const userRepoPath = getUserRepoPath(req);
+						const patterns = await getMergedPatterns(userRepoPath);
 						
-						// Read patterns directly from file instead of using broken getPatternsWasm
-						const patternsFilePath = path.join(userRepoPath, '.clt', 'patterns');
-						let patterns = {};
-						
-						try {
-							const patternsContent = await fs.readFile(patternsFilePath, 'utf8');
-							console.log(`📋 Reading patterns from: ${patternsFilePath}`);
-							
-							// Parse patterns file content (same format as CLT)
-							for (const line of patternsContent.split('\n')) {
-								const trimmedLine = line.trim();
-								if (trimmedLine && !trimmedLine.startsWith('#')) {
-									const parts = trimmedLine.split(' ');
-									if (parts.length >= 2) {
-										const name = parts[0];
-										const regex = parts.slice(1).join(' ');
-										patterns[name] = regex;
-									}
-								}
-							}
-							
-							console.log(`📋 Loaded ${Object.keys(patterns).length} patterns: ${Object.keys(patterns).join(', ')}`);
-						} catch (fileError) {
-							console.warn(`Could not read patterns file ${patternsFilePath}:`, fileError.message);
-							// Try fallback with getPatternsWasm
-							patterns = await getPatternsWasm(userRepoPath);
-							console.log(`📋 Fallback getPatternsWasm returned ${Object.keys(patterns).length} patterns`);
-						}
+						console.log(`🔥 VALIDATION PATTERNS DUMP - COUNT: ${Object.keys(patterns).length}`);
+						console.log(`🔥 PATTERNS OBJECT:`, JSON.stringify(patterns, null, 2));
+						console.log(`🔥 VERSION PATTERN:`, patterns.VERSION);
+						console.log(`🔥 PATTERN KEYS:`, Object.keys(patterns).join(', '));
 						
 						// Run validation with patterns
+						console.log(`🔥 CALLING validateTestFromMapWasm WITH PATTERNS`);
 						validationResults = await validateTestFromMapWasm(relativeFilePath, fileMap, patterns);
+						console.log(`🔥 VALIDATION RESULT:`, JSON.stringify(validationResults, null, 2));
 					} catch (patternError) {
 						console.warn('Could not load patterns for validation:', patternError.message);
 						// Fall back to validation without patterns
@@ -1756,7 +1777,7 @@ app.post('/api/create-pr', isAuthenticated, async (req, res) => {
 // API endpoint to get patterns file
 app.get('/api/get-patterns', isAuthenticated, async (req, res) => {
 	try {
-		console.log('🎯 Getting patterns via WASM for user repository');
+		console.log('🎯 Getting merged patterns for user repository');
 		
 		// Get the user's repository path for pattern context
 		const authConfig = getAuthConfig();
@@ -1768,13 +1789,13 @@ app.get('/api/get-patterns', isAuthenticated, async (req, res) => {
 			console.log(`Using user repo path for patterns: ${userRepoPath}`);
 		}
 		
-		// Try to get patterns using WASM with user's repo context
+		// Get merged patterns (system + project)
 		try {
-			const patterns = await getPatternsWasm(userRepoPath);
-			console.log(`✅ Found ${Object.keys(patterns).length} patterns via WASM`);
+			const patterns = await getMergedPatterns(userRepoPath || __dirname);
+			console.log(`✅ Found ${Object.keys(patterns).length} merged patterns`);
 			return res.json({ patterns });
-		} catch (wasmError) {
-			console.error('WASM pattern retrieval failed:', wasmError);
+		} catch (patternError) {
+			console.error('Pattern merging failed:', patternError);
 			// Return empty patterns instead of failing
 			return res.json({ patterns: {} });
 		}
