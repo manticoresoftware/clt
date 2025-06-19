@@ -438,11 +438,6 @@
             <label for={`expected-output-${index}`}>Expected Output</label>
           </div>
           <div class="output-wrapper {command.isOutputExpanded ? 'expanded' : ''}">
-            <div class="line-numbers-gutter">
-              {#each (command.expectedOutput || '').split('\\n') as line, i}
-                <div class="line-number">{i + 1}</div>
-              {/each}
-            </div>
             <div class="output-content" contenteditable="true" bind:textContent={command.expectedOutput} on:input={handleExpectedOutputInput}>
               {command.expectedOutput || ''}
             </div>
@@ -454,11 +449,6 @@
             <label for={`actual-output-${index}`}>Actual Output</label>
           </div>
           <div class="output-wrapper {command.isOutputExpanded ? 'expanded' : ''}">
-            <div class="line-numbers-gutter">
-              {#each getActualOutputContent().split('\\n') as line, i}
-                <div class="line-number">{i + 1}</div>
-              {/each}
-            </div>
             <div class="output-content">
               {#if command.actualOutput}
                 {#await highlightDifferences(getActualOutputContent(), command.expectedOutput || '')}
