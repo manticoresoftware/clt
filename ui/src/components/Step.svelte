@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { EditorView } from '@codemirror/view';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
   import OutputCodeMirror from './OutputCodeMirror.svelte';
@@ -18,6 +18,12 @@
   let expectedEditorView: EditorView | null = null;
   let actualEditorView: EditorView | null = null;
 
+  // Output elements for scroll sync
+  let expectedOutputEl: HTMLElement;
+  let actualOutputEl: HTMLElement;
+  let isScrollSyncing = false;
+  let isVisible = true; // Track if the component is visible
+
   // Update editor views when components are ready
   $: if (expectedCodeMirror?.getEditorView) {
     expectedEditorView = expectedCodeMirror.getEditorView();
@@ -27,33 +33,94 @@
     actualEditorView = actualCodeMirror.getEditorView();
   }
 
-  // Auto-resize action for textareas
-  function initTextArea(node: HTMLTextAreaElement) {
-    // Initial auto-resize
-    setTimeout(() => {
-      if (node.value) {
-        node.style.height = 'auto';
-        node.style.height = Math.max(24, node.scrollHeight) + 'px';
+  // Improved synchronized scroll function
+  function syncScroll(fromExpected: boolean) {
+    if (isScrollSyncing || !isVisible) return;
+    
+    isScrollSyncing = true;
+    
+    // Use requestAnimationFrame for smooth syncing
+    requestAnimationFrame(() => {
+      if (fromExpected && expectedOutputEl && actualOutputEl) {
+        const maxScroll = expectedOutputEl.scrollHeight - expectedOutputEl.clientHeight;
+        if (maxScroll > 0) {
+          const scrollPercentage = expectedOutputEl.scrollTop / maxScroll;
+          const targetMaxScroll = actualOutputEl.scrollHeight - actualOutputEl.clientHeight;
+          actualOutputEl.scrollTop = scrollPercentage * Math.max(0, targetMaxScroll);
+        }
+      } else if (!fromExpected && actualOutputEl && expectedOutputEl) {
+        const maxScroll = actualOutputEl.scrollHeight - actualOutputEl.clientHeight;
+        if (maxScroll > 0) {
+          const scrollPercentage = actualOutputEl.scrollTop / maxScroll;
+          const targetMaxScroll = expectedOutputEl.scrollHeight - expectedOutputEl.clientHeight;
+          expectedOutputEl.scrollTop = scrollPercentage * Math.max(0, targetMaxScroll);
+        }
       }
-    }, 0);
+      
+      // Reset sync flag immediately after sync
+      isScrollSyncing = false;
+    });
+  }
 
-    // Add scroll event listener for syncing
-    const handleScroll = (e) => {
-      if (!isScrollSyncing && node === expectedEl) {
-        syncScroll(true);
+  // Throttled scroll handler for better performance
+  let scrollTimeout: number | null = null;
+  
+  function createScrollHandler(isExpected: boolean) {
+    return () => {
+      if (isScrollSyncing) return;
+      
+      // Cancel previous timeout
+      if (scrollTimeout) {
+        cancelAnimationFrame(scrollTimeout);
+      }
+      
+      // Use requestAnimationFrame for smooth syncing
+      scrollTimeout = requestAnimationFrame(() => {
+        syncScroll(isExpected);
+        scrollTimeout = null;
+      });
+    };
+  }
+
+  // Output scroll action with comprehensive event handling
+  function initOutputScroll(node: HTMLElement, isExpected: boolean) {
+    const handleScroll = createScrollHandler(isExpected);
+    
+    // Also handle wheel events for immediate sync during fast scrolling
+    const handleWheel = (e: WheelEvent) => {
+      if (!isScrollSyncing) {
+        // Small delay to let the scroll happen first
+        setTimeout(() => {
+          if (!isScrollSyncing) {
+            syncScroll(isExpected);
+          }
+        }, 0);
       }
     };
 
-    node.addEventListener('scroll', handleScroll);
+    // Handle keyboard navigation that might cause scrolling
+    const handleKeydown = (e: KeyboardEvent) => {
+      if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
+        setTimeout(() => {
+          if (!isScrollSyncing) {
+            syncScroll(isExpected);
+          }
+        }, 0);
+      }
+    };
+
+    node.addEventListener('scroll', handleScroll, { passive: true });
+    node.addEventListener('wheel', handleWheel, { passive: true });
+    node.addEventListener('keydown', handleKeydown, { passive: true });
 
     return {
-      update() {
-        // Update height when value changes externally
-        node.style.height = 'auto';
-        node.style.height = Math.max(24, node.scrollHeight) + 'px';
-      },
       destroy() {
         node.removeEventListener('scroll', handleScroll);
+        node.removeEventListener('wheel', handleWheel);
+        node.removeEventListener('keydown', handleKeydown);
+        if (scrollTimeout) {
+          cancelAnimationFrame(scrollTimeout);
+        }
       }
     };
   }
@@ -231,12 +298,20 @@
     }
   }
 
+  // Enhanced input handler that also syncs scroll position
   function handleExpectedOutputInput(e: any) {
     try {
       const newValue = e.target?.textContent || '';
 
       // Dispatch the update without direct mutation
       dispatch('updateExpectedOutput', { index, newValue });
+      
+      // Also sync scroll position after content change
+      setTimeout(() => {
+        if (!isScrollSyncing) {
+          syncScroll(true);
+        }
+      }, 0);
     } catch (err) {
       console.error('Error updating expected output:', err);
     }
@@ -256,14 +331,47 @@
 
   // Handle expansion on click (simple toggle)
   function handleExpectedOutputClick(event: MouseEvent) {
-    const newExpanded = !command.isOutputExpanded;
-    dispatch('toggleExpansion', { index, expanded: newExpanded });
+    event.stopPropagation();
+    if (!command.isOutputExpanded) {
+      dispatch('toggleExpansion', { index, expanded: true });
+    }
   }
 
   // Handle expansion on actual output click
   function handleActualOutputClick(event: MouseEvent) {
-    const newExpanded = !command.isOutputExpanded;
-    dispatch('toggleExpansion', { index, expanded: newExpanded });
+    event.stopPropagation();
+    if (!command.isOutputExpanded) {
+      dispatch('toggleExpansion', { index, expanded: true });
+    }
+  }
+
+  // Handle focus to expand
+  function handleOutputFocus(event: FocusEvent) {
+    if (!command.isOutputExpanded) {
+      dispatch('toggleExpansion', { index, expanded: true });
+    }
+  }
+
+  // Handle click on content to expand
+  function handleContentClick(event: MouseEvent) {
+    event.stopPropagation();
+    if (!command.isOutputExpanded) {
+      dispatch('toggleExpansion', { index, expanded: true });
+    }
+  }
+
+  // Handle blur to collapse when moving out
+  function handleOutputBlur(event: FocusEvent) {
+    // Small delay to check if focus moved to related element
+    setTimeout(() => {
+      if (command.isOutputExpanded) {
+        const activeElement = document.activeElement;
+        const outputGrid = activeElement?.closest('.output-grid');
+        if (!outputGrid) {
+          dispatch('toggleExpansion', { index, expanded: false });
+        }
+      }
+    }, 100);
   }
 
   // Get actual output content without duration
@@ -280,6 +388,43 @@
     // If no duration marker found, return the whole output.
     return command.actualOutput.trim();
   }
+
+  // Global click listener for clicking outside
+  let outputGridEl: HTMLElement;
+
+  onMount(() => {
+    const handleGlobalClick = (event: Event) => {
+      if (command.isOutputExpanded && outputGridEl) {
+        const target = event.target as HTMLElement;
+        const isInsideOutputGrid = outputGridEl.contains(target);
+        if (!isInsideOutputGrid) {
+          dispatch('toggleExpansion', { index, expanded: false });
+        }
+      }
+    };
+
+    // Use capture phase to ensure we catch clicks before they bubble
+    document.addEventListener('click', handleGlobalClick, true);
+
+    // Intersection Observer for performance optimization
+    let observer: IntersectionObserver;
+    if (outputGridEl) {
+      observer = new IntersectionObserver(
+        (entries) => {
+          isVisible = entries[0].isIntersecting;
+        },
+        { threshold: 0.1 }
+      );
+      observer.observe(outputGridEl);
+    }
+
+    return () => {
+      document.removeEventListener('click', handleGlobalClick, true);
+      if (observer) {
+        observer.disconnect();
+      }
+    };
+  });
 
 
 </script>
@@ -431,14 +576,24 @@
 
       <!-- Output section (only for regular commands) -->
       {#if !command.initializing}
-      <div class="output-grid {command.isOutputExpanded ? 'has-expanded-outputs' : ''}">
+      <div class="output-grid {command.isOutputExpanded ? 'has-expanded-outputs' : ''}" bind:this={outputGridEl}>
         <div class="output-column">
           <div class="output-header">
             <span class="output-indicator expected-indicator"></span>
             <label for={`expected-output-${index}`}>Expected Output</label>
           </div>
-          <div class="output-wrapper {command.isOutputExpanded ? 'expanded' : ''}">
-            <div class="output-content" contenteditable="true" bind:textContent={command.expectedOutput} on:input={handleExpectedOutputInput}>
+          <div class="output-wrapper {command.isOutputExpanded ? 'expanded' : ''}" on:click={handleExpectedOutputClick}>
+            <div 
+              class="output-content" 
+              contenteditable="true" 
+              bind:textContent={command.expectedOutput} 
+              bind:this={expectedOutputEl}
+              on:input={handleExpectedOutputInput}
+              on:blur={handleOutputBlur}
+              on:focus={handleOutputFocus}
+              on:click={handleContentClick}
+              use:initOutputScroll={true}
+            >
               {command.expectedOutput || ''}
             </div>
           </div>
@@ -448,8 +603,16 @@
             <span class="output-indicator actual-indicator"></span>
             <label for={`actual-output-${index}`}>Actual Output</label>
           </div>
-          <div class="output-wrapper {command.isOutputExpanded ? 'expanded' : ''}">
-            <div class="output-content">
+          <div class="output-wrapper {command.isOutputExpanded ? 'expanded' : ''}" on:click={handleActualOutputClick}>
+            <div 
+              class="output-content"
+              bind:this={actualOutputEl}
+              on:blur={handleOutputBlur}
+              on:click={handleContentClick}
+              use:initOutputScroll={false}
+              tabindex="0"
+              on:focus={handleOutputFocus}
+            >
               {#if command.actualOutput}
                 {#await highlightDifferences(getActualOutputContent(), command.expectedOutput || '')}
                   <pre class="plain-output">{getActualOutputContent()}</pre>
@@ -1113,14 +1276,21 @@
     background: var(--color-bg-secondary);
     min-height: 60px;
     overflow: hidden;
+    cursor: pointer;
+    transition: max-height 0.3s ease-in-out;
   }
 
   .output-wrapper.expanded {
     max-height: none;
+    cursor: default;
   }
 
   .output-wrapper:not(.expanded) {
-    max-height: 200px;
+    max-height: 72px; /* ~3 lines at 1.5 line-height + padding */
+  }
+
+  .output-wrapper:not(.expanded):hover {
+    border-color: var(--color-bg-accent);
   }
 
   .line-numbers-gutter {
@@ -1147,15 +1317,17 @@
   .output-content {
     flex: 1;
     padding: 8px 12px;
-		font-family: var(--font-mono) !important;
-		white-space: pre-wrap !important;
-		line-height: 1.5 !important;
+	font-family: var(--font-mono) !important;
+	white-space: pre-wrap !important;
+	line-height: 1.5 !important;
     font-size: 12px;
     color: var(--color-text-primary);
     white-space: pre-wrap;
-    overflow: auto;
+    overflow-y: auto;
     outline: none;
     min-height: 44px;
+    position: relative;
+    cursor: pointer;
   }
 
   .output-content[contenteditable="true"] {
@@ -1164,6 +1336,68 @@
 
   .output-content[contenteditable="true"]:focus {
     background: var(--color-bg-textarea);
+    cursor: text;
+  }
+
+  .output-content:focus {
+    background: var(--color-bg-textarea);
+  }
+
+  /* Ensure actual output is focusable and clickable */
+  .output-content[tabindex="0"] {
+    cursor: pointer;
+  }
+
+  .output-content[tabindex="0"]:focus {
+    background: var(--color-bg-textarea);
+  }
+
+  /* Show ellipsis when collapsed - but allow scrolling */
+  .output-wrapper:not(.expanded) .output-content {
+    max-height: 56px; /* ~3 lines at 1.5 line-height */
+    overflow-y: auto;
+    position: relative;
+  }
+
+  .output-wrapper:not(.expanded) .output-content::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 100%;
+    height: 1.5em;
+    background: linear-gradient(to bottom, transparent, var(--color-bg-secondary));
+    pointer-events: none;
+  }
+
+  /* Add expand indicator */
+  .output-wrapper:not(.expanded)::before {
+    content: '⌄';
+    position: absolute;
+    bottom: 4px;
+    right: 8px;
+    color: var(--color-text-tertiary);
+    font-size: 14px;
+    z-index: 10;
+    pointer-events: none;
+    opacity: 0.7;
+  }
+
+  .output-wrapper.expanded::before {
+    content: '⌃';
+    position: absolute;
+    bottom: 4px;
+    right: 8px;
+    color: var(--color-text-tertiary);
+    font-size: 14px;
+    z-index: 10;
+    pointer-events: none;
+    opacity: 0.7;
+  }
+
+  .output-wrapper.expanded .output-content {
+    overflow-y: auto;
+    max-height: 400px;
   }
 
   .wasm-diff, .plain-output {
