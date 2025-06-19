@@ -29,29 +29,10 @@ interface TestStructure {
   steps: TestStep[];
 }
 
-// Legacy interface (deprecated, keeping for backward compatibility)
-interface RecordingCommand {
-  command: string;
-  expectedOutput?: string;
-  actualOutput?: string;
-  status?: 'success' | 'failed';
-  changed?: boolean; // Track whether this command has been changed
-  initializing?: boolean; // Flag to hide output sections until test is run
-  duration?: number; // Command execution duration
-  isOutputExpanded?: boolean; // Track whether outputs are expanded
-  type?: 'command' | 'block' | 'comment'; // Type of the command
-  // New structured properties
-  isBlockCommand?: boolean; // Command from a block reference
-  blockSource?: string; // Source file for block commands
-  parentBlock?: { command: string; type: string }; // Reference to parent block
-}
-
 interface RecordingFile {
   path: string;
-  // New structured format (preferred)
+  // Structured format (WASM-based)
   testStructure?: TestStructure;
-  // Legacy format (deprecated)
-  commands?: RecordingCommand[];
   dirty: boolean;
   lastSaved?: Date;
   status?: 'success' | 'failed';
@@ -490,44 +471,7 @@ function createFilesStore() {
 
       const result = await response.json();
 
-      // Update the commands with expected outputs if they don't already have them
-      if (result.commands && result.commands.length > 0) {
-        update(state => {
-          if (!state.currentFile) return state;
-
-          // Map the current commands with updated expected outputs from rep file if empty
-          const updatedCommands = state.currentFile.commands.map((cmd, index) => {
-            // Find matching command in rep file results
-            const matchingRepCmd = result.commands.find(repCmd => repCmd.command === cmd.command);
-
-            // Only use the rep file's expected output if the current one is empty
-            const expectedOutput = cmd.expectedOutput || (matchingRepCmd ? matchingRepCmd.expectedOutput : '');
-
-            // Check if the expected output was updated
-            const wasUpdated = !cmd.expectedOutput && matchingRepCmd && matchingRepCmd.expectedOutput;
-
-            return {
-              ...cmd,
-              expectedOutput
-            };
-          });
-
-          // Create updated file with dirty flag if any outputs were updated
-          const updatedFile = {
-            ...state.currentFile,
-            commands: updatedCommands,
-            dirty: true
-          };
-
-          // Trigger autosave if outputs were updated
-          debouncedSave(updatedFile);
-
-          return {
-            ...state,
-            currentFile: updatedFile
-          };
-        });
-      }
+      console.log('Run test completed successfully');
 
       // Process enriched testStructure (ONLY new format, NO LEGACY)
       if (result.testStructure) {
@@ -700,106 +644,8 @@ function createFilesStore() {
           };
         }
 
-        // Handle legacy format with commands
-        if (state.currentFile.commands) {
-          // Get the result commands
-          const resultCommands = result.commands || [];
-
-          // Preserve expected outputs by merging with current commands
-          const mergedCommands = state.currentFile.commands.map((cmd, index) => {
-            // Find matching command in results
-            const matchingResultCmd = resultCommands.find(resultCmd =>
-              resultCmd.command === cmd.command);
-
-            if (!matchingResultCmd) {
-              // If no matching command found, preserve original
-              return cmd;
-            }
-
-            // Always preserve the original expected output exactly as it was
-            // This prevents formatting changes between runs
-            return {
-              ...cmd,
-              actualOutput: matchingResultCmd.actualOutput, // This comes from the replay file
-              status: matchingResultCmd.status,
-              duration: matchingResultCmd.duration,
-              initializing: false // Clear initializing flag once test is run
-            };
-          });
-
-          // Determine overall file status
-          const exitCodeSuccess = result.exitCodeSuccess === true;
-
-          // Trust server's success value first, then exitCode status
-          let allPassed = false;
-          if (typeof result.success === 'boolean') {
-            allPassed = result.success;
-          } else {
-            allPassed = exitCodeSuccess;
-          }
-
-          const anyRun = mergedCommands.some(cmd => cmd.status !== 'pending');
-
-          // Update blocks with proper status based on test results
-          const updatedCommands = mergedCommands.map(cmd => {
-            if (cmd.type === 'block') {
-              // Log the specific block reference we're processing
-            console.log(`Processing block reference: ${cmd.command}`);
-
-            // Find all commands from this block by checking isBlockCommand flag and parentBlock reference
-            const blockCommands = mergedCommands.filter(c => {
-              return c.isBlockCommand &&
-                     c.parentBlock &&
-                     cmd.command === c.parentBlock.command;
-            });
-
-            console.log(`Found ${blockCommands.length} commands for this block`);
-
-            if (blockCommands.length > 0) {
-              // If any block command failed, mark the block as failed
-              const anyFailed = blockCommands.some(bc => bc.status === 'failed');
-              // If any block command is matched, consider the block matched
-              const anyMatched = blockCommands.some(bc => bc.status === 'matched');
-
-              console.log(`Block ${cmd.command}: anyFailed=${anyFailed}, anyMatched=${anyMatched}`);
-
-              // If no failures and at least one command matched, mark as matched
-              return {
-                ...cmd,
-                status: anyFailed ? 'failed' : (anyMatched ? 'matched' : 'pending'),
-                initializing: false
-              };
-            } else {
-              // Debug when no block commands were found
-              console.log(`No block commands found for block: ${cmd.command}`);
-              console.log('All commands in merged results:', mergedCommands.length);
-              console.log('Current command:', cmd);
-              // No child commands found, keep existing status
-              return {
-                ...cmd,
-                initializing: false
-              };
-            }
-          }
-          return cmd;
-        });
-
-        // Create updated file with commands
-        const updatedFile = {
-          ...state.currentFile,
-          commands: updatedCommands,
-          status: anyRun ? (allPassed ? 'passed' : 'failed') : 'pending',
-        };
-
-        return {
-          ...state,
-          running: false,
-          currentFile: updatedFile
-        };
-        }
-
-        // If neither commands nor testStructure, something is wrong
-        console.error('File has neither commands nor testStructure');
+        // If no testStructure, something is wrong
+        console.error('File has no testStructure');
         return {
           ...state,
           running: false
@@ -1101,30 +947,6 @@ function createFilesStore() {
 
             return true;
           }
-          // Handle legacy format (deprecated)
-          else if (result.commands) {
-            console.log('⚠️ Using legacy commands format for file:', path);
-            
-            // Set initializing flag for all commands to hide output sections until test is run
-            const commandsWithInitFlag = result.commands.map(cmd => ({
-              ...cmd,
-              status: cmd.status || 'pending', // Set default status to pending
-              initializing: true
-            }));
-
-            // Update store with the legacy file data
-            update(state => ({
-              ...state,
-              currentFile: {
-                path,
-                commands: commandsWithInitFlag,
-                dirty: false,
-                status: 'pending'
-              }
-            }));
-
-            return true;
-          }
         } else {
           console.error('Failed to load file:', result.error);
           return false;
@@ -1134,190 +956,6 @@ function createFilesStore() {
         return false;
       }
     },
-    addCommand: (index: number, command: string, commandType: 'command' | 'block' | 'comment' = 'command') => update(state => {
-      if (!state.currentFile) return state;
-
-      const newCommands = [...state.currentFile.commands];
-      newCommands.splice(index, 0, {
-        command,
-        expectedOutput: '',
-        status: 'pending',
-        changed: true,
-        initializing: true, // Mark as initializing to hide output sections until test is run
-        type: commandType
-      });
-
-      const updatedFile = {
-        ...state.currentFile,
-        commands: newCommands,
-        dirty: true
-      };
-
-      // Trigger autosave
-      debouncedSave(updatedFile, false);
-
-      return {
-        ...state,
-        currentFile: updatedFile
-      };
-    }),
-    updateCommand: (index: number, command: string) => {
-      try {
-        update(state => {
-          if (!state.currentFile) return state;
-
-          // Handle new structured format
-          if (state.currentFile.testStructure) {
-            // Find the command at the given index in the flattened structure
-            let currentIndex = 0;
-            
-            function updateStepRecursively(steps: any[]): any[] {
-              return steps.map(step => {
-                if (step.type === 'input' && currentIndex === index) {
-                  currentIndex++;
-                  return {
-                    ...step,
-                    input: command,
-                    content: command
-                  };
-                } else if (step.type === 'input') {
-                  currentIndex++;
-                } else if (step.type === 'output') {
-                  currentIndex++;
-                }
-                
-                if (step.steps) {
-                  return {
-                    ...step,
-                    steps: updateStepRecursively(step.steps)
-                  };
-                }
-                
-                return step;
-              });
-            }
-            
-            const updatedSteps = updateStepRecursively(state.currentFile.testStructure.steps);
-            
-            const updatedFile = {
-              ...state.currentFile,
-              testStructure: {
-                ...state.currentFile.testStructure,
-                steps: updatedSteps
-              },
-              dirty: true
-            };
-            
-            // Always trigger autosave
-            debouncedSave(updatedFile);
-            
-            return {
-              ...state,
-              currentFile: updatedFile
-            };
-          }
-          
-          // Handle legacy commands format
-          else if (state.currentFile.commands) {
-            // Create a fresh copy of commands to avoid any reference issues
-            const newCommands = state.currentFile.commands.map(cmd => ({...cmd}));
-
-            // Only update if the index is valid
-            if (index < 0 || index >= newCommands.length) {
-              console.error('Invalid command index:', index);
-              return state;
-            }
-
-            // Always mark as changed - this will force debouncedSave to trigger
-            newCommands[index] = {
-              ...newCommands[index],
-              command,
-              status: 'pending',
-              changed: true
-            };
-
-            const updatedFile = {
-              ...state.currentFile,
-              commands: newCommands,
-              dirty: true
-            };
-
-            // Always trigger autosave
-            debouncedSave(updatedFile);
-
-            return {
-              ...state,
-              currentFile: updatedFile
-            };
-          }
-          
-          return state;
-        });
-      } catch (error) {
-        console.error('Error in updateCommand:', error);
-      }
-    },
-    updateExpectedOutput: (index: number, expectedOutput: string) => {
-      try {
-        update(state => {
-          if (!state.currentFile) return state;
-
-          // Create a fresh copy of commands to avoid any reference issues
-          const newCommands = state.currentFile.commands.map(cmd => ({...cmd}));
-
-          // Only update if the index is valid
-          if (index < 0 || index >= newCommands.length) {
-            console.error('Invalid command index:', index);
-            return state;
-          }
-
-          // Update the specific command
-          newCommands[index] = {
-            ...newCommands[index],
-            expectedOutput,
-            status: 'pending',
-            changed: true
-          };
-
-          const updatedFile = {
-            ...state.currentFile,
-            commands: newCommands,
-            dirty: true
-          };
-
-          // Trigger autosave with the updated file
-          debouncedSave(updatedFile);
-
-          return {
-            ...state,
-            currentFile: updatedFile
-          };
-        });
-      } catch (error) {
-        console.error('Error in updateExpectedOutput:', error);
-      }
-    },
-    deleteCommand: (index: number) => update(state => {
-      if (!state.currentFile) return state;
-
-      const newCommands = [...state.currentFile.commands];
-      newCommands.splice(index, 1);
-
-      // Mark the file as having changes
-      const updatedFile = {
-        ...state.currentFile,
-        commands: newCommands,
-        dirty: true
-      };
-
-      // Immediately trigger autosave
-      debouncedSave(updatedFile, false);
-
-      return {
-        ...state,
-        currentFile: updatedFile
-      };
-    }),
     saveOnly: async () => {
       const state = getState();
       if (!state.currentFile) return;
@@ -1340,34 +978,6 @@ function createFilesStore() {
         update(state => ({ ...state, saving: false }));
         console.error('Failed to save file:', error);
       }
-    },
-    toggleOutputExpansion: (index: number, isExpanded: boolean) => {
-      update(state => {
-        if (!state.currentFile) return state;
-
-        // Create a fresh copy of commands to avoid any reference issues
-        const newCommands = state.currentFile.commands.map(cmd => ({...cmd}));
-
-        // Only update if the index is valid
-        if (index < 0 || index >= newCommands.length) {
-          console.error('Invalid command index:', index);
-          return state;
-        }
-
-        // Update the specific command's expansion state
-        newCommands[index] = {
-          ...newCommands[index],
-          isOutputExpanded: isExpanded
-        };
-
-        return {
-          ...state,
-          currentFile: {
-            ...state.currentFile,
-            commands: newCommands
-          }
-        };
-      });
     },
     saveAndRun: async () => {
       const state = getState();
@@ -1406,7 +1016,10 @@ function createFilesStore() {
     createNewFile: (path: string) => {
       const newFile = {
         path,
-        commands: [],
+        testStructure: {
+          description: null,
+          steps: []
+        },
         dirty: true,
         status: 'pending'
       };
