@@ -41,9 +41,10 @@ export class ScrollSyncManager {
     });
   }
 
-  // Throttled scroll handler for better performance
-  createScrollHandler(isExpected, expectedOutputEl, actualOutputEl) {
-    return () => {
+  // Output scroll action with comprehensive event handling
+  initOutputScroll(node, isExpected, getExpectedOutputEl, getActualOutputEl) {
+    // Create handlers that get fresh element references each time
+    const handleScroll = () => {
       if (this.isScrollSyncing) return;
       
       // Cancel previous timeout
@@ -53,15 +54,12 @@ export class ScrollSyncManager {
       
       // Use requestAnimationFrame for smooth syncing
       this.scrollTimeout = requestAnimationFrame(() => {
+        const expectedOutputEl = getExpectedOutputEl();
+        const actualOutputEl = getActualOutputEl();
         this.syncScroll(isExpected, expectedOutputEl, actualOutputEl);
         this.scrollTimeout = null;
       });
     };
-  }
-
-  // Output scroll action with comprehensive event handling
-  initOutputScroll(node, isExpected, expectedOutputEl, actualOutputEl) {
-    const handleScroll = this.createScrollHandler(isExpected, expectedOutputEl, actualOutputEl);
     
     // Also handle wheel events for immediate sync during fast scrolling
     const handleWheel = (e) => {
@@ -69,6 +67,8 @@ export class ScrollSyncManager {
         // Small delay to let the scroll happen first
         setTimeout(() => {
           if (!this.isScrollSyncing) {
+            const expectedOutputEl = getExpectedOutputEl();
+            const actualOutputEl = getActualOutputEl();
             this.syncScroll(isExpected, expectedOutputEl, actualOutputEl);
           }
         }, 0);
@@ -80,6 +80,8 @@ export class ScrollSyncManager {
       if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
         setTimeout(() => {
           if (!this.isScrollSyncing) {
+            const expectedOutputEl = getExpectedOutputEl();
+            const actualOutputEl = getActualOutputEl();
             this.syncScroll(isExpected, expectedOutputEl, actualOutputEl);
           }
         }, 0);
