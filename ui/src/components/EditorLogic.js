@@ -1,12 +1,17 @@
 // EditorLogic.js - WASM, patterns, and data conversion logic extracted from Editor.svelte
 
+import { writable } from 'svelte/store';
 import { filesStore } from '../stores/filesStore';
 import { API_URL } from '../config.js';
 
-// WASM and Pattern Management
+// WASM and Pattern Management - using Svelte stores for reactivity
 let wasmLoaded = false;
 let patternMatcher = null;
 let patterns = {};
+
+// Create reactive stores for WASM state
+export const wasmLoadedStore = writable(false);
+export const patternMatcherStore = writable(null);
 
 // Fetch patterns from server
 export async function fetchPatterns() {
@@ -71,6 +76,11 @@ export async function initWasm() {
     patternMatcher = new module.PatternMatcher(JSON.stringify(patternsData));
     window.patternMatcher = patternMatcher;
     wasmLoaded = true;
+    
+    // Update the reactive stores
+    wasmLoadedStore.set(true);
+    patternMatcherStore.set(patternMatcher);
+    
     console.log('WASM diff module initialized successfully with patterns:', patternsData);
   } catch (err) {
     console.error('Failed to initialize WASM diff module:', err);
