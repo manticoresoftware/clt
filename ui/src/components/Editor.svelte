@@ -1,9 +1,16 @@
 <script lang="ts">
   import { filesStore, type TestStep as TestStepType, type TestStructure } from '../stores/filesStore';
   import { onMount } from 'svelte';
-  import { API_URL } from '../config.js';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
   import Step from './Step.svelte';
+  import { 
+    initWasm, 
+    getWasmLoaded, 
+    getPatternMatcher, 
+    convertStructuredToCommands,
+    updateStructuredCommand,
+    updateStructuredExpectedOutput
+  } from './EditorLogic.js';
 
   // Add global TypeScript interface for window
   declare global {
@@ -13,302 +20,12 @@
     }
   }
 
-  let wasmLoaded = false;
-  let patternMatcher: any = null;
-  let patterns = {};
-
-  // Fetch patterns from server
-  async function fetchPatterns() {
-    try {
-      const response = await fetch(`${API_URL}/api/get-patterns`, {
-        credentials: 'include'
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        patterns = data.patterns || {};
-        console.log('Loaded patterns:', patterns);
-        return patterns;
-      } else {
-        console.warn('Could not load patterns:', await response.text());
-        return {};
-      }
-    } catch (err) {
-      console.error('Error fetching patterns:', err);
-      return {};
-    }
-  };
-
-  // Initialize WASM module
-  async function initWasm() {
-    try {
-      console.log('Initializing WASM diff module...');
-
-      // Use dynamic import to avoid build-time issues
-      const module = await import('../../pkg/wasm.js');
-
-      // Initialize the WASM module properly for web target
-      await module.default();
-
-      // Default patterns if API fails
-      const defaultPatterns = {
-        "NUMBER": "[0-9]+",
-        "DATE": "[0-9]{4}\\-[0-9]{2}\\-[0-9]{2}",
-        "DATETIME": "[0-9]{4}\\-[0-9]{2}\\-[0-9]{2}\\s[0-9]{2}:[0-9]{2}:[0-9]{2}",
-        "IPADDR": "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+",
-        "PATH": "[A-Za-z0-9\\/\\.\\-\\_]+",
-        "SEMVER": "[0-9]+\\.[0-9]+\\.[0-9]+",
-        "TIME": "[0-9]{2}:[0-9]{2}:[0-9]{2}",
-        "YEAR": "[0-9]{4}"
-      };
-
-      // Fetch patterns first
-      let patternsData;
-      try {
-        patternsData = await fetchPatterns();
-        // If patterns is empty, use default patterns
-        if (Object.keys(patternsData).length === 0) {
-          console.log('No patterns returned from API, using defaults');
-          patternsData = defaultPatterns;
-        }
-      } catch (err) {
-        console.error('Failed to fetch patterns, using defaults:', err);
-        patternsData = defaultPatterns;
-      }
-
-      // Initialize pattern matcher with fetched or default patterns
-      patternMatcher = new module.PatternMatcher(JSON.stringify(patternsData));
-      window.patternMatcher = patternMatcher;
-      wasmLoaded = true;
-      console.log('WASM diff module initialized successfully with patterns:', patternsData);
-    } catch (err) {
-      console.error('Failed to initialize WASM diff module:', err);
-    }
-  }
-
-// Scroll sync is now handled in individual Step components
-
   let commands: any[] = [];
   let autoSaveEnabled = true;
 
-  // Convert structured data to legacy command format for UI compatibility
-  function convertStructuredToCommands(testStructure: TestStructure | null): any[] {
-    if (!testStructure || !testStructure.steps) return [];
-
-    const commands: any[] = [];
-    let globalStepIndex = 0; // Track global step index across all levels
-
-    // Process steps, including nested steps when blocks are expanded
-    function processSteps(steps: TestStepType[], level = 0, parentBlockPath: number[] = []) {
-      let i = 0;
-      while (i < steps.length) {
-        const step = steps[i];
-        const currentPath = level === 0 ? [i] : [...parentBlockPath, i];
-        const currentGlobalIndex = globalStepIndex; // Capture current global index
-
-        if (step.type === 'input') {
-          // Create command from input step
-          const command = {
-            command: step.content || '',
-            expectedOutput: '',
-            actualOutput: step.actualOutput || '',
-            status: step.status || 'pending',
-            error: step.error || false,
-            type: 'command',
-            initializing: false,
-            duration: step.duration,
-            // Add metadata to track back to structured format
-            stepIndex: currentGlobalIndex, // Use global step index
-            stepPath: currentPath,
-            isInputOutputPair: false,
-            isNested: level > 0,
-            nestingLevel: level
-          };
-
-          globalStepIndex++; // Increment global index
-
-          // Look for following output step
-          if (i + 1 < steps.length && steps[i + 1].type === 'output') {
-            const outputStep = steps[i + 1];
-            command.expectedOutput = outputStep.content || '';
-            if (outputStep.actualOutput) {
-              command.actualOutput = outputStep.actualOutput;
-            }
-            
-            // For input-output pairs, combine error status from both steps
-            const inputHasError = step.error || false;
-            const outputHasError = outputStep.error || false;
-            const combinedError = inputHasError || outputHasError;
-            
-            // Use the most severe status (failed > success)
-            if (combinedError || outputStep.status === 'failed' || step.status === 'failed') {
-              command.status = 'failed';
-              command.error = true;
-            } else {
-              command.status = outputStep.status || step.status || 'success';
-              command.error = false;
-            }
-            
-            command.isInputOutputPair = true;
-            globalStepIndex++; // Increment for the output step too
-            i++; // Skip the output step since we processed it
-          }
-
-          commands.push(command);
-        } else if (step.type === 'block') {
-          const blockCommand = {
-            command: step.args[0] || '',
-            status: step.status || 'pending',
-            error: step.error || false,
-            type: 'block',
-            initializing: false,
-            isExpanded: step.isExpanded || false,
-            duration: step.duration,
-            // Add metadata to track back to structured format
-            stepIndex: currentGlobalIndex, // Use global step index
-            stepPath: currentPath,
-            isInputOutputPair: false,
-            isNested: level > 0,
-            nestingLevel: level,
-            // Store nested steps for expansion
-            nestedSteps: step.steps
-          };
-
-          globalStepIndex++; // Increment global index for block
-
-          commands.push(blockCommand);
-
-          // If block is expanded, process its nested steps
-          if (step.isExpanded && step.steps && step.steps.length > 0) {
-            processSteps(step.steps, level + 1, currentPath);
-          }
-        } else if (step.type === 'comment') {
-          commands.push({
-            command: step.content || '',
-            status: step.status || 'pending',
-            error: step.error || false,
-            type: 'comment',
-            initializing: false,
-            duration: step.duration,
-            // Add metadata to track back to structured format
-            stepIndex: currentGlobalIndex, // Use global step index
-            stepPath: currentPath,
-            isInputOutputPair: false,
-            isNested: level > 0,
-            nestingLevel: level
-          });
-
-          globalStepIndex++; // Increment global index for comment
-        } else if (step.type === 'output') {
-          // Increment global index for standalone output steps
-          globalStepIndex++;
-        }
-        // Skip standalone output steps (they should be handled with input steps)
-
-        i++;
-      }
-    }
-
-    // Process all steps, including nested ones when expanded
-    processSteps(testStructure.steps, 0);
-    return commands;
-  }
-
-
-
-  // Update structured format when commands are modified
-  function updateStructuredCommand(commandIndex: number, newValue: string) {
-    if (!testStructure) {
-      // Fallback to legacy method
-      filesStore.updateCommand(commandIndex, newValue);
-      return;
-    }
-
-    // Find the corresponding step in structured format
-    const command = commands[commandIndex];
-    if (!command) {
-      console.error('Could not find command at index:', commandIndex);
-      return;
-    }
-
-    // Create updated structure
-    const updatedStructure = { ...testStructure };
-
-    // Navigate to the correct location using stepPath
-    let targetSteps = updatedStructure.steps;
-    const stepPath = command.stepPath;
-
-    // Navigate to the parent container
-    for (let i = 0; i < stepPath.length - 1; i++) {
-      targetSteps = targetSteps[stepPath[i]].steps;
-    }
-
-    // Get the final index and update the step
-    const finalIndex = stepPath[stepPath.length - 1];
-
-    if (finalIndex >= 0 && finalIndex < targetSteps.length) {
-      const step = { ...targetSteps[finalIndex] };
-
-      if (step.type === 'input') {
-        step.content = newValue;
-      } else if (step.type === 'block') {
-        step.args = [newValue];
-      } else if (step.type === 'comment') {
-        step.content = newValue;
-      }
-
-      targetSteps[finalIndex] = step;
-
-      // Update the store with new structure
-      filesStore.updateTestStructure(updatedStructure);
-    }
-  }
-
-  // Update expected output in structured format
-  function updateStructuredExpectedOutput(commandIndex: number, newValue: string) {
-    if (!testStructure) {
-      // Fallback to legacy method
-      filesStore.updateExpectedOutput(commandIndex, newValue);
-      return;
-    }
-
-    // Find the corresponding step in structured format
-    const command = commands[commandIndex];
-    if (!command || !command.isInputOutputPair) {
-      console.error('Could not find input/output pair for command index:', commandIndex);
-      return;
-    }
-
-    // Update the command directly in the commands array to avoid re-rendering all components
-    commands[commandIndex] = { ...command, expectedOutput: newValue };
-
-    // Also update the structured format for persistence
-    const updatedStructure = { ...testStructure };
-
-    // Navigate to the correct location using stepPath
-    let targetSteps = updatedStructure.steps;
-    const stepPath = command.stepPath;
-
-    // Navigate to the parent container
-    for (let i = 0; i < stepPath.length - 1; i++) {
-      targetSteps = targetSteps[stepPath[i]].steps;
-    }
-
-    // Get the final index and update the output step (should be at finalIndex + 1)
-    const finalIndex = stepPath[stepPath.length - 1];
-
-    if (finalIndex + 1 >= 0 && finalIndex + 1 < targetSteps.length) {
-      const outputStep = { ...targetSteps[finalIndex + 1] };
-
-      if (outputStep.type === 'output') {
-        outputStep.content = newValue;
-        targetSteps[finalIndex + 1] = outputStep;
-
-        // Update the store with new structure
-        filesStore.updateTestStructure(updatedStructure);
-      }
-    }
-  }
+  // Get WASM state from the extracted logic
+  $: wasmLoaded = getWasmLoaded();
+  $: patternMatcher = getPatternMatcher();
 
   // Define testStructure for template usage
   $: testStructure = $filesStore.currentFile?.testStructure;
@@ -322,6 +39,15 @@
     console.log('DEBUG: currentFile:', $filesStore.currentFile);
     console.log('DEBUG: testStructure:', $filesStore.currentFile?.testStructure);
     console.log('DEBUG: converted commands:', commands);
+  }
+
+  // Wrapper functions to pass testStructure and commands to extracted logic
+  function handleUpdateCommand(commandIndex: number, newValue: string) {
+    updateStructuredCommand(testStructure, commandIndex, commands, newValue);
+  }
+
+  function handleUpdateExpectedOutput(commandIndex: number, newValue: string) {
+    updateStructuredExpectedOutput(testStructure, commandIndex, commands, newValue);
   }
 
   function moveCommandUp(index: number) {
@@ -455,8 +181,6 @@
       filesStore.updateTestStructure(updatedStructure);
     }
   }
-
-  // Auto-resize is now handled in individual Step components
 
   // Initialize autoSaveEnabled from localStorage
   onMount(() => {
@@ -702,8 +426,6 @@
     });
   }
 
-  // These functions are now handled in individual Step components
-
   // Function to copy current URL with file hash to clipboard.
   function copyShareUrl() {
     if (!$filesStore.currentFile) return;
@@ -870,8 +592,8 @@
               {displayNumber}
               {wasmLoaded}
               {patternMatcher}
-              on:updateCommand={(e) => updateStructuredCommand(e.detail.index, e.detail.newValue)}
-              on:updateExpectedOutput={(e) => updateStructuredExpectedOutput(e.detail.index, e.detail.newValue)}
+              on:updateCommand={(e) => handleUpdateCommand(e.detail.index, e.detail.newValue)}
+              on:updateExpectedOutput={(e) => handleUpdateExpectedOutput(e.detail.index, e.detail.newValue)}
               on:toggleExpansion={(e) => handleToggleExpansion(e.detail)}
               on:addCommand={(e) => addCommand(e.detail.index, e.detail.type)}
               on:deleteCommand={(e) => deleteCommand(e.detail.index)}
@@ -1555,4 +1277,82 @@
     background-color: rgba(224, 242, 254, 0.8);
     color: var(--color-text-info, #0369a1);
     border: 1px solid var(--color-bg-info, #0ea5e9);
-  }</style>
+  }
+
+  .editor {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  .editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--color-border);
+    background-color: var(--color-bg-primary);
+  }
+
+  .editor-content {
+    flex: 1;
+    padding: 16px;
+    overflow-y: auto;
+  }
+
+  .editor-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--color-text-tertiary);
+    text-align: center;
+  }
+
+  .editor-empty svg {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+  }
+
+  .file-path {
+    font-weight: 500;
+    color: var(--color-text-primary);
+  }
+
+  .command-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .no-commands {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    color: var(--color-text-tertiary);
+    text-align: center;
+  }
+
+  .no-commands svg {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+  }
+
+  .no-commands h3 {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    color: var(--color-text-secondary);
+  }
+
+  .no-commands p {
+    margin: 0 0 20px 0;
+    font-size: 14px;
+  }
+</style>
