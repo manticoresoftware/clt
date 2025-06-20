@@ -951,6 +951,15 @@ function createFilesStore() {
               }
             }));
 
+            // Automatically run the test after loading
+            setTimeout(async () => {
+              try {
+                await runCurrentTest();
+              } catch (error) {
+                console.error('Failed to auto-run test after loading:', error);
+              }
+            }, 100);
+
             return true;
           }
         } else {

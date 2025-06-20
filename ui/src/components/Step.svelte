@@ -18,6 +18,15 @@
   export let wasmLoaded: boolean = false;
   export let patternMatcher: any = null;
 
+  // Debug log to see command structure
+  $: console.log('Step command debug:', { 
+    index, 
+    status: command.status, 
+    actualOutput: command.actualOutput, 
+    actualOutputLength: command.actualOutput?.length,
+    initializing: command.initializing 
+  });
+
   const dispatch = createEventDispatcher();
 
   // CodeMirror refs for scroll sync
@@ -347,8 +356,8 @@
         on:input={handleCommandInput}
       />
 
-      <!-- Output section (only for regular commands) -->
-      {#if !command.initializing}
+      <!-- Output section (only for regular commands and only when test has been run) -->
+      {#if !command.initializing && command.status !== 'pending'}
       <div class="output-grid {command.isOutputExpanded ? 'has-expanded-outputs' : ''}" bind:this={outputGridEl}>
         <div class="output-column">
           <div class="output-header">
