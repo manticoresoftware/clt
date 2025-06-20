@@ -283,7 +283,8 @@ export function updateStructuredExpectedOutput(testStructure, commandIndex, comm
   }
 
   // Update the command directly in the commands array to avoid re-rendering all components
-  commands[commandIndex] = { ...command, expectedOutput: newValue };
+  // IMPORTANT: Preserve isOutputExpanded state during updates
+  commands[commandIndex] = { ...command, expectedOutput: newValue, isOutputExpanded: command.isOutputExpanded };
 
   // Also update the structured format for persistence
   const updatedStructure = { ...testStructure };
