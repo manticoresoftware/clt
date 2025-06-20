@@ -10,24 +10,32 @@ interface FileNode {
   children?: FileNode[];
 }
 
-interface RecordingCommand {
-  command: string;
-  expectedOutput?: string;
+// New WASM structured format interfaces
+interface TestStep {
+  type: string;           // "input" | "output" | "block" | "comment"
+  args: string[];         // For blocks: [blockPath], for outputs: [checker]
+  content: string | null; // Command/output content
+  steps: TestStep[] | null; // For blocks: nested steps
+
+  // Runtime properties (added by UI)
+  status?: 'success' | 'failed';
   actualOutput?: string;
-  status?: 'pending' | 'matched' | 'failed';
-  changed?: boolean; // Track whether this command has been changed
-  initializing?: boolean; // Flag to hide output sections until test is run
-  duration?: number; // Command execution duration
-  isOutputExpanded?: boolean; // Track whether outputs are expanded
-  type?: 'command' | 'block' | 'comment'; // Type of the command
+  duration?: number;
+  isExpanded?: boolean;   // For block expansion
+}
+
+interface TestStructure {
+  description: string | null;
+  steps: TestStep[];
 }
 
 interface RecordingFile {
   path: string;
-  commands: RecordingCommand[];
+  // Structured format (WASM-based)
+  testStructure?: TestStructure;
   dirty: boolean;
   lastSaved?: Date;
-  status?: 'pending' | 'passed' | 'failed';
+  status?: 'success' | 'failed';
 }
 
 interface FilesState {
@@ -186,14 +194,29 @@ const checkFileLoaded = async (path: string) => {
 
     if (response.ok) {
       const data = await response.json();
-      const fileContent = data.content;
 
-      // Parse the file content into commands
-      const commands = parseRecFileContent(fileContent);
-
-      // Return the parsed commands
-      return { success: true, commands };
-    } else {
+      // Check if we have structured data from backend (WASM-parsed)
+      if (data.structuredData && data.wasmparsed) {
+        console.log('✅ Using WASM-parsed structured data from backend');
+        return {
+          success: true,
+          testStructure: data.structuredData,
+          method: 'wasm'
+        };
+      } else if (data.structuredData) {
+        console.log('✅ Using structured data from backend');
+        return {
+          success: true,
+          testStructure: data.structuredData,
+          method: 'structured'
+        };
+      } else {
+        // Fallback to manual parsing for backward compatibility
+        console.log('⚠️ Using manual parsing fallback');
+        const fileContent = data.content;
+        const commands = parseRecFileContent(fileContent);
+        return { success: true, commands, method: 'manual' };
+      }    } else {
       return { success: false, error: `Failed to load file: ${response.statusText}` };
     }
   } catch (error) {
@@ -206,7 +229,164 @@ function createFilesStore() {
   const { subscribe, set, update } = writable<FilesState>(defaultState);
   let runModule: any; // Reference to the module itself for self-referencing
 
+  // Helper function to get patterns using WASM
+  const getWasmPatterns = async (): Promise<Record<string, string>> => {
+    try {
+      const patternsArray = await getPatterns();
+      const patterns: Record<string, string> = {};
+
+      patternsArray.forEach(pattern => {
+        patterns[pattern.name] = pattern.pattern;
+      });
+
+      return patterns;
+    } catch (error) {
+      console.warn('Failed to load patterns via WASM:', error);
+      return {};
+    }
+  };
+
   const saveFileToBackend = async (file: RecordingFile) => {
+    // Convert UI commands to structured format for WASM backend
+    const convertUIToStructured = (commands: RecordingCommand[]) => {
+      const testSteps = commands.map(cmd => {
+        if (cmd.type === 'block') {
+          return {
+            Block: {
+              path: cmd.command,
+              source_file: cmd.blockSource || null
+            }
+          };
+        } else if (cmd.type === 'comment') {
+          return {
+            Comment: cmd.command
+          };
+        } else {
+          return {
+            Command: {
+              input: cmd.command,
+              expected_output: cmd.expectedOutput || '',
+              actual_output: cmd.actualOutput || null
+            }
+          };
+        }
+      });
+
+      return {
+        steps: testSteps,
+        metadata: {
+          created_at: new Date().toISOString(),
+          version: "1.0"
+        }
+      };
+    };
+
+    // Format the file content according to the .rec format (manual fallback)
+    let content = '';
+
+    // Check if file has commands (legacy format) or testStructure (new format)
+    if (!file.commands && !file.testStructure) {
+      throw new Error('File has neither commands nor testStructure');
+    }
+
+    // For structured format files, we don't need to generate manual content
+    if (file.testStructure) {
+      try {
+        const response = await fetch(`${API_URL}/api/save-file`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            path: file.path,
+            structuredData: file.testStructure // Send structured data, let backend handle WASM
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to save file: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        console.log('✅ File saved with structured format');
+        return result;
+      } catch (error) {
+        console.error('Error saving structured file:', error);
+        throw error;
+      }
+    }
+
+    // Handle legacy format with commands
+    file.commands!.forEach((cmd, index) => {
+      // Add newline before section if not the first command
+      if (index > 0) {
+        content += '\\n';
+      }
+
+      // Handle different command types
+      if (cmd.type === 'block') {
+        // Format as block reference - no extra newline after
+        content += `––– block: ${cmd.command} –––`;
+      } else if (cmd.type === 'comment') {
+        // Format as comment - no extra newline after
+        content += `––– comment –––\\n${cmd.command}`;
+      } else {
+        // Default - regular command (input/output format)
+        content += '––– input –––\\n';
+        content += cmd.command;
+
+        // Don't add extra newline if command already ends with one
+        if (!cmd.command.endsWith('\\n')) {
+          content += '\\n';
+        }
+
+        // Add output section marker - no extra newline for empty outputs
+        content += '––– output –––';
+
+        // Use the expected output if provided, otherwise use actual output if available
+        // Make sure to maintain all whitespace and newlines exactly as in the expected output
+        const outputToSave = cmd.expectedOutput || cmd.actualOutput || '';
+
+        // Only add a newline before the output if there's actual content
+        if (outputToSave && outputToSave.trim() !== '') {
+          content += '\\n' + outputToSave;
+        }
+      }
+    });
+
+    try {
+      // Prepare structured data for WASM backend
+      const structuredData = convertUIToStructured(file.commands!);
+
+      const response = await fetch(`${API_URL}/api/save-file`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include', // Add credentials for cookie passing
+        body: JSON.stringify({
+          path: file.path,
+          content, // Manual format as fallback
+          structuredData // Structured format for WASM
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to save file: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      console.log('✅ File saved via WASM backend');
+      return result;
+    } catch (error) {
+      console.error('Error saving file:', error);
+      throw error;
+    }
+  };
+
+  // Fallback manual save function
+  const saveFileToBackendManual = async (file: RecordingFile) => {
     // Format the file content according to the .rec format
     let content = '';
 
@@ -227,19 +407,19 @@ function createFilesStore() {
         // Default - regular command (input/output format)
         content += '––– input –––\n';
         content += cmd.command;
-        
+
         // Don't add extra newline if command already ends with one
         if (!cmd.command.endsWith('\n')) {
           content += '\n';
         }
-        
+
         // Add output section marker - no extra newline for empty outputs
         content += '––– output –––';
 
         // Use the expected output if provided, otherwise use actual output if available
         // Make sure to maintain all whitespace and newlines exactly as in the expected output
         const outputToSave = cmd.expectedOutput || cmd.actualOutput || '';
-        
+
         // Only add a newline before the output if there's actual content
         if (outputToSave && outputToSave.trim() !== '') {
           content += '\n' + outputToSave;
@@ -291,43 +471,63 @@ function createFilesStore() {
 
       const result = await response.json();
 
-      // Update the commands with expected outputs if they don't already have them
-      if (result.commands && result.commands.length > 0) {
+      console.log('Run test completed successfully');
+
+      // Process enhanced testStructure (preferred method)
+      if (result.testStructure) {
+        console.log('🔍 Processing enriched testStructure with actual outputs');
+
         update(state => {
-          if (!state.currentFile) return state;
+          if (!state.currentFile?.testStructure) return state;
 
-          // Map the current commands with updated expected outputs from rep file if empty
-          const updatedCommands = state.currentFile.commands.map((cmd, index) => {
-            // Find matching command in rep file results
-            const matchingRepCmd = result.commands.find(repCmd => repCmd.command === cmd.command);
+          // Recursive function to process nested steps
+          function processStepsRecursively(steps) {
+            return steps.map(step => {
+              const processedStep = {
+                ...step,
+                actualOutput: step.actualOutput || '', // From .rep file
+                status: step.status || 'success', // Backend already set status
+                error: step.error || false // Backend already set error flag
+              };
+              
+              // Process nested steps if they exist
+              if (step.steps && step.steps.length > 0) {
+                processedStep.steps = processStepsRecursively(step.steps);
+              }
+              
+              return processedStep;
+            });
+          }
+          
+          // Update the testStructure directly with enriched data (backend already enhanced)
+          const enrichedSteps = processStepsRecursively(result.testStructure.steps);
 
-            // Only use the rep file's expected output if the current one is empty
-            const expectedOutput = cmd.expectedOutput || (matchingRepCmd ? matchingRepCmd.expectedOutput : '');
-
-            // Check if the expected output was updated
-            const wasUpdated = !cmd.expectedOutput && matchingRepCmd && matchingRepCmd.expectedOutput;
-
-            return {
-              ...cmd,
-              expectedOutput
-            };
-          });
-
-          // Create updated file with dirty flag if any outputs were updated
-          const updatedFile = {
-            ...state.currentFile,
-            commands: updatedCommands,
-            dirty: true
-          };
-
-          // Trigger autosave if outputs were updated
-          debouncedSave(updatedFile);
+          console.log(`📋 Updated ${enrichedSteps.length} steps with enriched data`);
 
           return {
             ...state,
-            currentFile: updatedFile
+            running: false,
+            currentFile: {
+              ...state.currentFile,
+              testStructure: {
+                ...state.currentFile.testStructure,
+                steps: enrichedSteps
+              },
+              status: result.success ? 'success' : 'failed'
+            }
           };
         });
+      }
+      else {
+        // No validation results - just update running status
+        update(state => ({
+          ...state,
+          running: false,
+          currentFile: state.currentFile ? {
+            ...state.currentFile,
+            status: result.success ? 'success' : 'failed'
+          } : null
+        }));
       }
 
       return result;
@@ -407,100 +607,55 @@ function createFilesStore() {
       update(state => {
         if (!state.currentFile) return state;
 
-        // Get the result commands
-        const resultCommands = result.commands || [];
+        // Handle structured format with enhanced testStructure
+        if (state.currentFile.testStructure && result.testStructure) {
+          console.log('✅ Test completed for structured format file');
+          console.log('Result:', result);
 
-        // Preserve expected outputs by merging with current commands
-        const mergedCommands = state.currentFile.commands.map((cmd, index) => {
-          // Find matching command in results
-          const matchingResultCmd = resultCommands.find(resultCmd =>
-            resultCmd.command === cmd.command);
-
-          if (!matchingResultCmd) {
-            // If no matching command found, preserve original
-            return cmd;
-          }
-
-          // Always preserve the original expected output exactly as it was
-          // This prevents formatting changes between runs
-          return {
-            ...cmd,
-            actualOutput: matchingResultCmd.actualOutput, // This comes from the replay file
-            status: matchingResultCmd.status,
-            duration: matchingResultCmd.duration,
-            initializing: false // Clear initializing flag once test is run
-          };
-        });
-
-        // Determine overall file status
-        const exitCodeSuccess = result.exitCodeSuccess === true;
-        
-        // Trust server's success value first, then exitCode status
-        let allPassed = false;
-        if (typeof result.success === 'boolean') {
-          allPassed = result.success;
-        } else {
-          allPassed = exitCodeSuccess;
-        }
-
-        const anyRun = mergedCommands.some(cmd => cmd.status !== 'pending');
-
-        // Update blocks with proper status based on test results
-        const updatedCommands = mergedCommands.map(cmd => {
-          if (cmd.type === 'block') {
-            // Log the specific block reference we're processing
-            console.log(`Processing block reference: ${cmd.command}`);
-            
-            // Find all commands from this block by checking isBlockCommand flag and parentBlock reference
-            const blockCommands = mergedCommands.filter(c => {
-              return c.isBlockCommand && 
-                     c.parentBlock && 
-                     cmd.command === c.parentBlock.command;
+          // Use enhanced testStructure from backend (already has actualOutput, status, error)
+          function processStepsRecursively(steps) {
+            return steps.map(step => {
+              const processedStep = {
+                ...step,
+                actualOutput: step.actualOutput || '',
+                status: step.status || 'success',
+                error: step.error || false
+              };
+              
+              // Process nested steps if they exist
+              if (step.steps && step.steps.length > 0) {
+                processedStep.steps = processStepsRecursively(step.steps);
+              }
+              
+              return processedStep;
             });
-            
-            console.log(`Found ${blockCommands.length} commands for this block`);
-            
-            if (blockCommands.length > 0) {
-              // If any block command failed, mark the block as failed
-              const anyFailed = blockCommands.some(bc => bc.status === 'failed');
-              // If any block command is matched, consider the block matched
-              const anyMatched = blockCommands.some(bc => bc.status === 'matched');
-              
-              console.log(`Block ${cmd.command}: anyFailed=${anyFailed}, anyMatched=${anyMatched}`);
-              
-              // If no failures and at least one command matched, mark as matched
-              return {
-                ...cmd,
-                status: anyFailed ? 'failed' : (anyMatched ? 'matched' : 'pending'),
-                initializing: false
-              };
-            } else {
-              // Debug when no block commands were found
-              console.log(`No block commands found for block: ${cmd.command}`);
-              console.log('All commands in merged results:', mergedCommands.length);
-              console.log('Current command:', cmd);
-              // No child commands found, keep existing status
-              return {
-                ...cmd,
-                initializing: false
-              };
-            }
           }
-          return cmd;
-        });
 
-        // Create updated file with commands
-        const updatedFile = {
-          ...state.currentFile,
-          commands: updatedCommands,
-          status: anyRun ? (allPassed ? 'passed' : 'failed') : 'pending',
-        };
+          const enhancedSteps = processStepsRecursively(result.testStructure.steps);
 
-        return {
-          ...state,
-          running: false,
-          currentFile: updatedFile
-        };
+          return {
+            ...state,
+            running: false,
+            currentFile: {
+              ...state.currentFile,
+              testStructure: {
+                ...state.currentFile.testStructure,
+                steps: enhancedSteps
+              },
+              status: result.success ? 'success' : 'failed'
+            }
+          };
+        } else {
+          // Fallback - just update overall status
+          return {
+            ...state,
+            running: false,
+            currentFile: {
+              ...state.currentFile,
+              status: result.success ? 'success' : 'failed'
+            }
+          };
+        }
       });
     } catch (error) {
       console.error('Failed to run test:', error);
@@ -765,36 +920,48 @@ function createFilesStore() {
         // Load the file content
         const result = await checkFileLoaded(path);
 
-        if (result.success && result.commands) {
-          // Set initializing flag for all commands to hide output sections until test is run
-          const commandsWithInitFlag = result.commands.map(cmd => ({
-            ...cmd,
-            status: cmd.status || 'pending', // Set default status to pending
-            initializing: true
-          }));
+        if (result.success) {
+          // Handle new structured format (preferred)
+          if (result.testStructure) {
+            console.log('✅ Using new structured format for file:', path);
 
-          // Update store with the file data
-          update(state => ({
-            ...state,
-            currentFile: {
-              path,
-              commands: commandsWithInitFlag,
-              dirty: false,
-              status: 'pending'
-            }
-          }));
+            // Add runtime properties to all steps (status: pending, isExpanded: false)
+            const processSteps = (steps: TestStep[]): TestStep[] => {
+              return steps.map(step => ({
+                ...step,
+                status: 'pending',
+                isExpanded: step.type === 'block' ? false : undefined,
+                steps: step.steps ? processSteps(step.steps) : null
+              }));
+            };
 
-          // Use a small delay to make sure the store update is complete
-          // before running the test
-          setTimeout(async () => {
-            try {
-              await runCurrentTest();
-            } catch (error) {
-              console.error('Error running test after file load:', error);
-            }
-          }, 100);
+            const processedTestStructure: TestStructure = {
+              ...result.testStructure,
+              steps: processSteps(result.testStructure.steps)
+            };
 
-          return true;
+            // Update store with the new structured data
+            update(state => ({
+              ...state,
+              currentFile: {
+                path,
+                testStructure: processedTestStructure,
+                dirty: false,
+                status: 'pending'
+              }
+            }));
+
+            // Automatically run the test after loading
+            setTimeout(async () => {
+              try {
+                await runCurrentTest();
+              } catch (error) {
+                console.error('Failed to auto-run test after loading:', error);
+              }
+            }, 100);
+
+            return true;
+          }
         } else {
           console.error('Failed to load file:', result.error);
           return false;
@@ -804,134 +971,6 @@ function createFilesStore() {
         return false;
       }
     },
-    addCommand: (index: number, command: string, commandType: 'command' | 'block' | 'comment' = 'command') => update(state => {
-      if (!state.currentFile) return state;
-
-      const newCommands = [...state.currentFile.commands];
-      newCommands.splice(index, 0, {
-        command,
-        expectedOutput: '',
-        status: 'pending',
-        changed: true,
-        initializing: true, // Mark as initializing to hide output sections until test is run
-        type: commandType
-      });
-
-      const updatedFile = {
-        ...state.currentFile,
-        commands: newCommands,
-        dirty: true
-      };
-
-      // Trigger autosave
-      debouncedSave(updatedFile, false);
-
-      return {
-        ...state,
-        currentFile: updatedFile
-      };
-    }),
-    updateCommand: (index: number, command: string) => {
-      try {
-        update(state => {
-          if (!state.currentFile) return state;
-
-          // Create a fresh copy of commands to avoid any reference issues
-          const newCommands = state.currentFile.commands.map(cmd => ({...cmd}));
-
-          // Only update if the index is valid
-          if (index < 0 || index >= newCommands.length) {
-            console.error('Invalid command index:', index);
-            return state;
-          }
-
-          // Always mark as changed - this will force debouncedSave to trigger
-          newCommands[index] = {
-            ...newCommands[index],
-            command,
-            status: 'pending',
-            changed: true
-          };
-
-          const updatedFile = {
-            ...state.currentFile,
-            commands: newCommands,
-            dirty: true
-          };
-
-          // Always trigger autosave
-          debouncedSave(updatedFile);
-
-          return {
-            ...state,
-            currentFile: updatedFile
-          };
-        });
-      } catch (error) {
-        console.error('Error in updateCommand:', error);
-      }
-    },
-    updateExpectedOutput: (index: number, expectedOutput: string) => {
-      try {
-        update(state => {
-          if (!state.currentFile) return state;
-
-          // Create a fresh copy of commands to avoid any reference issues
-          const newCommands = state.currentFile.commands.map(cmd => ({...cmd}));
-
-          // Only update if the index is valid
-          if (index < 0 || index >= newCommands.length) {
-            console.error('Invalid command index:', index);
-            return state;
-          }
-
-          // Update the specific command
-          newCommands[index] = {
-            ...newCommands[index],
-            expectedOutput,
-            status: 'pending',
-            changed: true
-          };
-
-          const updatedFile = {
-            ...state.currentFile,
-            commands: newCommands,
-            dirty: true
-          };
-
-          // Trigger autosave with the updated file
-          debouncedSave(updatedFile);
-
-          return {
-            ...state,
-            currentFile: updatedFile
-          };
-        });
-      } catch (error) {
-        console.error('Error in updateExpectedOutput:', error);
-      }
-    },
-    deleteCommand: (index: number) => update(state => {
-      if (!state.currentFile) return state;
-
-      const newCommands = [...state.currentFile.commands];
-      newCommands.splice(index, 1);
-
-      // Mark the file as having changes
-      const updatedFile = {
-        ...state.currentFile,
-        commands: newCommands,
-        dirty: true
-      };
-
-      // Immediately trigger autosave
-      debouncedSave(updatedFile, false);
-
-      return {
-        ...state,
-        currentFile: updatedFile
-      };
-    }),
     saveOnly: async () => {
       const state = getState();
       if (!state.currentFile) return;
@@ -954,34 +993,6 @@ function createFilesStore() {
         update(state => ({ ...state, saving: false }));
         console.error('Failed to save file:', error);
       }
-    },
-    toggleOutputExpansion: (index: number, isExpanded: boolean) => {
-      update(state => {
-        if (!state.currentFile) return state;
-
-        // Create a fresh copy of commands to avoid any reference issues
-        const newCommands = state.currentFile.commands.map(cmd => ({...cmd}));
-
-        // Only update if the index is valid
-        if (index < 0 || index >= newCommands.length) {
-          console.error('Invalid command index:', index);
-          return state;
-        }
-
-        // Update the specific command's expansion state
-        newCommands[index] = {
-          ...newCommands[index],
-          isOutputExpanded: isExpanded
-        };
-
-        return {
-          ...state,
-          currentFile: {
-            ...state.currentFile,
-            commands: newCommands
-          }
-        };
-      });
     },
     saveAndRun: async () => {
       const state = getState();
@@ -1020,7 +1031,10 @@ function createFilesStore() {
     createNewFile: (path: string) => {
       const newFile = {
         path,
-        commands: [],
+        testStructure: {
+          description: null,
+          steps: []
+        },
         dirty: true,
         status: 'pending'
       };
@@ -1062,7 +1076,56 @@ function createFilesStore() {
         }
       }, 0);
     },
-    runTest: runCurrentTest
+    runTest: runCurrentTest,
+
+    // Add validation function
+    validateTest: async (filePath: string) => {
+      try {
+        const response = await fetch(`${API_URL}/api/validate-test`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include',
+          body: JSON.stringify({ filePath })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Validation failed: ${response.statusText}`);
+        }
+
+        const validationResult = await response.json();
+        console.log('✅ Test validation completed via WASM backend');
+        return validationResult;
+      } catch (error) {
+        console.error('Error validating test:', error);
+        throw error;
+      }
+    },
+
+    // Update test structure (for new structured format)
+    updateTestStructure: (newStructure: TestStructure) => {
+      update(state => {
+        if (!state.currentFile) return state;
+
+        return {
+          ...state,
+          currentFile: {
+            ...state.currentFile,
+            testStructure: newStructure,
+            dirty: true
+          }
+        };
+      });
+    },
+
+    // Clear current file selection
+    clearCurrentFile: () => {
+      update(state => ({
+        ...state,
+        currentFile: null
+      }));
+    }
   };
 
   // Set the self-reference to allow calling other methods
@@ -1141,3 +1204,6 @@ export function updateChildPaths(children: FileNode[], oldParentPath: string, ne
     }
   });
 }
+
+// Export types for use in components
+export type { TestStep, TestStructure, RecordingCommand, FileNode };

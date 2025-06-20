@@ -1,4 +1,5 @@
-use crate::mcp_protocol::{RunTestOutput, TestError, TestStructure};
+use crate::mcp_protocol::{RunTestOutput, TestError};
+use parser::{TestStructure, parse_rec_content};
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
@@ -233,7 +234,7 @@ impl TestRunner {
             )
         })?;
 
-        let test_structure = match crate::structured_test::parse_rec_content(&rec_content, base_dir)
+        let test_structure = match parse_rec_content(&rec_content, base_dir)
         {
             Ok(structure) => structure,
             Err(e) => {
@@ -319,7 +320,7 @@ impl TestRunner {
 
     fn extract_outputs_from_steps(
         &self,
-        steps: &[crate::mcp_protocol::TestStep],
+        steps: &[parser::TestStep],
         outputs: &mut Vec<OutputExpectation>,
         global_step_index: &mut usize,
     ) {

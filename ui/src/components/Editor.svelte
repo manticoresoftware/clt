@@ -1,9 +1,16 @@
 <script lang="ts">
-  import { filesStore, type RecordingCommand } from '../stores/filesStore';
+  import { filesStore, type TestStep as TestStepType, type TestStructure } from '../stores/filesStore';
   import { onMount } from 'svelte';
-  import { PatternMatcher } from '../../pkg/wasm_diff';
-  import { API_URL } from '../config.js';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
+  import Step from './Step.svelte';
+  import { 
+    initWasm, 
+    wasmLoadedStore,
+    patternMatcherStore,
+    convertStructuredToCommands,
+    updateStructuredCommand,
+    updateStructuredExpectedOutput
+  } from './EditorLogic.js';
 
   // Add global TypeScript interface for window
   declare global {
@@ -13,136 +20,182 @@
     }
   }
 
-  let wasmLoaded = false;
-  let patternMatcher: any = null;
-  let patterns = {};
-
-  // Fetch patterns from server
-  async function fetchPatterns() {
-    try {
-      const response = await fetch(`${API_URL}/api/get-patterns`, {
-        credentials: 'include'
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        patterns = data.patterns || {};
-        console.log('Loaded patterns:', patterns);
-        return patterns;
-      } else {
-        console.warn('Could not load patterns:', await response.text());
-        return {};
-      }
-    } catch (err) {
-      console.error('Error fetching patterns:', err);
-      return {};
-    }
-  }
-
-  // Initialize WASM module
-  async function initWasm() {
-    try {
-      console.log('Initializing WASM diff module...');
-      const module = await import('../../pkg/wasm_diff');
-      await module.default();
-
-      // Default patterns if API fails
-      const defaultPatterns = {
-        "NUMBER": "[0-9]+",
-        "DATE": "[0-9]{4}\\-[0-9]{2}\\-[0-9]{2}",
-        "DATETIME": "[0-9]{4}\\-[0-9]{2}\\-[0-9]{2}\\s[0-9]{2}:[0-9]{2}:[0-9]{2}",
-        "IPADDR": "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+",
-        "PATH": "[A-Za-z0-9\\/\\.\\-\\_]+",
-        "SEMVER": "[0-9]+\\.[0-9]+\\.[0-9]+",
-        "TIME": "[0-9]{2}:[0-9]{2}:[0-9]{2}",
-        "YEAR": "[0-9]{4}"
-      };
-
-      // Fetch patterns first
-      let patternsData;
-      try {
-        patternsData = await fetchPatterns();
-        // If patterns is empty, use default patterns
-        if (Object.keys(patternsData).length === 0) {
-          console.log('No patterns returned from API, using defaults');
-          patternsData = defaultPatterns;
-        }
-      } catch (err) {
-        console.error('Failed to fetch patterns, using defaults:', err);
-        patternsData = defaultPatterns;
-      }
-
-      // Initialize pattern matcher with fetched or default patterns
-      patternMatcher = new PatternMatcher(JSON.stringify(patternsData));
-      window.patternMatcher = patternMatcher;
-      wasmLoaded = true;
-      console.log('WASM diff module initialized successfully with patterns:', patternsData);
-    } catch (err) {
-      console.error('Failed to initialize WASM diff module:', err);
-    }
-  }
-
-// arrays for our refs
-  let expectedEls: HTMLElement[] = [];
-  let actualEls: HTMLElement[] = [];
-
-  /**
-   * syncScroll
-   * @param idx  index in the loop
-   * @param fromExpected  if true, copy from expectedElems[idx] → actualElems[idx], else vice versa
-   */
-  function syncScroll(idx: number, fromExpected = true) {
-    const from = fromExpected ? expectedEls[idx] : actualEls[idx];
-    const to   = fromExpected ? actualEls[idx]   : expectedEls[idx];
-    if (from && to) {
-      to.scrollTop = from.scrollTop;
-    }
-  }
-
-  let commands: RecordingCommand[] = [];
+  let commands: any[] = [];
   let autoSaveEnabled = true;
 
-  function duplicateCommand(index: number) {
-    if ($filesStore.currentFile) {
-      const command = commands[index];
-      filesStore.addCommand(index + 1, command.command, command.type || 'command');
-    }
+  // Get WASM state from the reactive stores
+  $: wasmLoaded = $wasmLoadedStore;
+  $: patternMatcher = $patternMatcherStore;
+
+  // Define testStructure for template usage
+  $: testStructure = $filesStore.currentFile?.testStructure;
+
+  // Preserve expanded states when commands are recreated
+  function preserveExpandedStates(newCommands: any[], oldCommands: any[]) {
+    return newCommands.map((newCmd, index) => {
+      const oldCmd = oldCommands[index];
+      if (oldCmd && oldCmd.isOutputExpanded !== undefined) {
+        return { ...newCmd, isOutputExpanded: oldCmd.isOutputExpanded };
+      }
+      return newCmd;
+    });
+  }
+
+  $: {
+    const newCommands = $filesStore.currentFile?.testStructure
+      ? convertStructuredToCommands($filesStore.currentFile.testStructure)
+      : ($filesStore.currentFile?.commands || []);
+    
+    // Preserve expanded states from previous commands array
+    commands = preserveExpandedStates(newCommands, commands || []);
+  }
+
+  // Debug logging
+  $: {
+    console.log('DEBUG: currentFile:', $filesStore.currentFile);
+    console.log('DEBUG: testStructure:', $filesStore.currentFile?.testStructure);
+    console.log('DEBUG: converted commands:', commands);
+  }
+
+  // Wrapper functions to pass testStructure and commands to extracted logic
+  function handleUpdateCommand(commandIndex: number, newValue: string) {
+    updateStructuredCommand(testStructure, commandIndex, commands, newValue);
+  }
+
+  function handleUpdateExpectedOutput(commandIndex: number, newValue: string) {
+    updateStructuredExpectedOutput(testStructure, commandIndex, commands, newValue);
   }
 
   function moveCommandUp(index: number) {
-    if (index > 0 && $filesStore.currentFile) {
-      const command = commands[index];
-      filesStore.deleteCommand(index);
-      filesStore.addCommand(index - 1, command.command, command.type || 'command');
+    if (!testStructure) {
+      // Fallback to legacy method
+      if (index > 0 && $filesStore.currentFile) {
+        const command = commands[index];
+        filesStore.deleteCommand(index);
+        filesStore.addCommand(index - 1, command.command, command.type || 'command');
+      }
+      return;
+    }
+
+    if (index <= 0) return;
+
+    const command = commands[index];
+    if (!command || !command.stepPath) {
+      console.error('Could not find step path for command index:', index);
+      return;
+    }
+
+    const updatedStructure = { ...testStructure };
+    const updatedSteps = [...updatedStructure.steps];
+    const stepIndex = command.stepPath[0];
+
+    if (stepIndex > 0 && stepIndex < updatedSteps.length) {
+      // Handle input/output pairs
+      if (updatedSteps[stepIndex].type === 'input' &&
+          stepIndex + 1 < updatedSteps.length &&
+          updatedSteps[stepIndex + 1].type === 'output') {
+        // Move input/output pair
+        const inputStep = updatedSteps[stepIndex];
+        const outputStep = updatedSteps[stepIndex + 1];
+        updatedSteps.splice(stepIndex, 2); // Remove both
+        updatedSteps.splice(stepIndex - 1, 0, inputStep, outputStep); // Insert both at new position
+      } else {
+        // Move single step
+        const step = updatedSteps[stepIndex];
+        updatedSteps.splice(stepIndex, 1); // Remove
+        updatedSteps.splice(stepIndex - 1, 0, step); // Insert at new position
+      }
+
+      updatedStructure.steps = updatedSteps;
+      filesStore.updateTestStructure(updatedStructure);
     }
   }
 
   function moveCommandDown(index: number) {
-    if (index < commands.length - 1 && $filesStore.currentFile) {
-      const command = commands[index];
-      filesStore.deleteCommand(index);
-      filesStore.addCommand(index + 1, command.command, command.type || 'command');
+    if (!testStructure) {
+      // Fallback to legacy method
+      if (index < commands.length - 1 && $filesStore.currentFile) {
+        const command = commands[index];
+        filesStore.deleteCommand(index);
+        filesStore.addCommand(index + 1, command.command, command.type || 'command');
+      }
+      return;
+    }
+
+    if (index >= commands.length - 1) return;
+
+    const command = commands[index];
+    if (!command || !command.stepPath) {
+      console.error('Could not find step path for command index:', index);
+      return;
+    }
+
+    const updatedStructure = { ...testStructure };
+    const updatedSteps = [...updatedStructure.steps];
+    const stepIndex = command.stepPath[0];
+
+    if (stepIndex >= 0 && stepIndex < updatedSteps.length - 1) {
+      // Handle input/output pairs
+      if (updatedSteps[stepIndex].type === 'input' &&
+          stepIndex + 1 < updatedSteps.length &&
+          updatedSteps[stepIndex + 1].type === 'output') {
+        // Move input/output pair
+        const inputStep = updatedSteps[stepIndex];
+        const outputStep = updatedSteps[stepIndex + 1];
+        updatedSteps.splice(stepIndex, 2); // Remove both
+        updatedSteps.splice(stepIndex + 1, 0, inputStep, outputStep); // Insert both at new position
+      } else {
+        // Move single step
+        const step = updatedSteps[stepIndex];
+        updatedSteps.splice(stepIndex, 1); // Remove
+        updatedSteps.splice(stepIndex + 1, 0, step); // Insert at new position
+      }
+
+      updatedStructure.steps = updatedSteps;
+      filesStore.updateTestStructure(updatedStructure);
     }
   }
-  $: commands = $filesStore.currentFile ? $filesStore.currentFile.commands : [];
 
-  // Auto-resize action for textareas
-  function initTextArea(node: HTMLTextAreaElement) {
-    // Initial auto-resize
-    setTimeout(() => {
-      if (node.value) {
-        node.style.height = 'auto';
-        node.style.height = Math.max(24, node.scrollHeight) + 'px';
+  function duplicateCommand(index: number) {
+    if (!testStructure) {
+      // Fallback to legacy method
+      if ($filesStore.currentFile) {
+        const command = commands[index];
+        filesStore.addCommand(index + 1, command.command, command.type || 'command');
       }
-    }, 0);
+      return;
+    }
 
-    return {
-      update() {
-        // Update height when value changes externally
-        node.style.height = 'auto';
-        node.style.height = Math.max(24, node.scrollHeight) + 'px';
+    const command = commands[index];
+    if (!command || !command.stepPath) {
+      console.error('Could not find step path for command index:', index);
+      return;
+    }
+
+    const updatedStructure = { ...testStructure };
+    const updatedSteps = [...updatedStructure.steps];
+    const stepIndex = command.stepPath[0];
+
+    if (stepIndex >= 0 && stepIndex < updatedSteps.length) {
+      const step = updatedSteps[stepIndex];
+
+      // Handle input/output pairs
+      if (step.type === 'input' &&
+          stepIndex + 1 < updatedSteps.length &&
+          updatedSteps[stepIndex + 1].type === 'output') {
+        // Duplicate input/output pair
+        const inputStep = { ...step };
+        const outputStep = { ...updatedSteps[stepIndex + 1] };
+        updatedSteps.splice(stepIndex + 2, 0, inputStep, outputStep);
+      } else {
+        // Duplicate single step
+        const duplicatedStep = { ...step };
+        updatedSteps.splice(stepIndex + 1, 0, duplicatedStep);
       }
-    };
+
+      updatedStructure.steps = updatedSteps;
+      filesStore.updateTestStructure(updatedStructure);
+    }
   }
 
   // Initialize autoSaveEnabled from localStorage
@@ -168,20 +221,206 @@
   }
 
   function addCommand(index: number, commandType: 'command' | 'block' | 'comment' = 'command') {
-    // Default placeholder text based on type
-    let defaultText = '';
-
-    if (commandType === 'block') {
-      defaultText = 'path/to/file'; // Default placeholder for block references
-    } else if (commandType === 'comment') {
-      defaultText = 'Add your comment here'; // Default placeholder for comments
+    if (!testStructure) {
+      // Fallback to legacy method
+      let defaultText = '';
+      if (commandType === 'block') {
+        defaultText = 'path/to/file';
+      } else if (commandType === 'comment') {
+        defaultText = 'Add your comment here';
+      }
+      filesStore.addCommand(index, defaultText, commandType);
+      return;
     }
 
-    filesStore.addCommand(index, defaultText, commandType);
+    // Handle structured format
+    const updatedStructure = { ...testStructure };
+
+    // Calculate the correct insertion position by walking through current steps
+    let insertIndex;
+    let targetSteps = updatedStructure.steps;
+    let nestingPath: number[] = [];
+
+    if (index === 0) {
+      insertIndex = 0; // Insert at beginning of top level
+    } else if (index >= commands.length) {
+      insertIndex = targetSteps.length; // Insert at end of top level
+    } else {
+      // Find the command we're inserting after
+      const targetCommand = commands[index - 1];
+
+      if (targetCommand.isNested) {
+        // We're inserting into a nested context
+        nestingPath = targetCommand.stepPath.slice(0, -1); // Remove last index to get parent path
+
+        // Navigate to the parent block's steps
+        let currentSteps = updatedStructure.steps;
+        for (const pathIndex of nestingPath) {
+          currentSteps = currentSteps[pathIndex].steps;
+        }
+        targetSteps = currentSteps;
+
+        // Calculate position within the nested steps
+        insertIndex = targetCommand.stepPath[targetCommand.stepPath.length - 1] + 1;
+        if (targetCommand.isInputOutputPair) {
+          insertIndex += 1; // Account for output step
+        }
+      } else {
+        // We're inserting at top level
+        insertIndex = 0;
+        for (let i = 0; i < index; i++) {
+          if (i < commands.length) {
+            const cmd = commands[i];
+            if (!cmd.isNested) { // Only count top-level commands
+              if (cmd.isInputOutputPair) {
+                insertIndex += 2; // Skip input + output steps
+              } else {
+                insertIndex += 1; // Skip single step (block/comment)
+              }
+            }
+          }
+        }
+      }
+    }
+
+    let newSteps: TestStepType[] = [];
+
+    if (commandType === 'block') {
+      newSteps = [{
+        type: 'block',
+        args: ['path/to/file'],
+        content: null,
+        steps: [],
+        status: 'pending',
+        isExpanded: false
+      }];
+    } else if (commandType === 'comment') {
+      newSteps = [{
+        type: 'comment',
+        args: [],
+        content: 'Add your comment here',
+        steps: null,
+        status: 'pending'
+      }];
+    } else {
+      // Create input/output pair for command
+      newSteps = [
+        {
+          type: 'input',
+          args: [],
+          content: '',
+          steps: null,
+          status: 'pending'
+        },
+        {
+          type: 'output',
+          args: [],
+          content: '',
+          steps: null,
+          status: 'pending'
+        }
+      ];
+    }
+
+    // Insert the new steps at the correct location
+    targetSteps.splice(insertIndex, 0, ...newSteps);
+    filesStore.updateTestStructure(updatedStructure);
   }
 
   function deleteCommand(index: number) {
-    filesStore.deleteCommand(index);
+    if (!testStructure) {
+      // Fallback to legacy method
+      filesStore.deleteCommand(index);
+      return;
+    }
+
+    // Handle structured format
+    const command = commands[index];
+    if (!command) {
+      console.error('Could not find command at index:', index);
+      return;
+    }
+
+    const updatedStructure = { ...testStructure };
+
+    // Navigate to the correct location using stepPath
+    let targetSteps = updatedStructure.steps;
+    const stepPath = command.stepPath;
+
+    // Navigate to the parent container
+    for (let i = 0; i < stepPath.length - 1; i++) {
+      targetSteps = targetSteps[stepPath[i]].steps;
+    }
+
+    // Get the final index within the target container
+    const finalIndex = stepPath[stepPath.length - 1];
+
+    if (finalIndex >= 0 && finalIndex < targetSteps.length) {
+      if (command.isInputOutputPair) {
+        // Remove both input and output steps
+        targetSteps.splice(finalIndex, 2);
+      } else {
+        // Remove single step (block/comment)
+        targetSteps.splice(finalIndex, 1);
+      }
+
+      filesStore.updateTestStructure(updatedStructure);
+    }
+  }
+
+  // Toggle block expansion
+  function toggleBlockExpansion(commandIndex: number) {
+    if (!testStructure) return;
+
+    const command = commands[commandIndex];
+    if (!command || command.type !== 'block') {
+      console.error('Command is not a block or not found:', commandIndex);
+      return;
+    }
+
+    // Navigate to the correct step in the structure using stepPath
+    const updatedStructure = { ...testStructure };
+    let currentSteps = updatedStructure.steps;
+    const stepPath = command.stepPath;
+
+    // Navigate through the path to find the correct step
+    let targetStep = null;
+    let targetSteps = currentSteps;
+
+    for (let i = 0; i < stepPath.length; i++) {
+      const pathIndex = stepPath[i];
+      if (i === stepPath.length - 1) {
+        // This is the target step
+        targetStep = { ...targetSteps[pathIndex] };
+        targetStep.isExpanded = !targetStep.isExpanded;
+        targetSteps[pathIndex] = targetStep;
+      } else {
+        // Navigate deeper into nested structure
+        targetSteps = targetSteps[pathIndex].steps;
+      }
+    }
+
+    filesStore.updateTestStructure(updatedStructure);
+  }
+
+  // Handle different types of toggle expansion
+  function handleToggleExpansion(detail: { index: number; expanded?: boolean }) {
+    const { index, expanded } = detail;
+    
+    console.log('EDITOR handleToggleExpansion', { index, expanded, currentState: commands[index]?.isOutputExpanded });
+    
+    if (expanded !== undefined) {
+      // This is output expansion - update the command's isOutputExpanded property
+      if (index >= 0 && index < commands.length) {
+        commands[index] = { ...commands[index], isOutputExpanded: expanded };
+        // Trigger reactivity
+        commands = commands;
+        console.log('EDITOR updated command expanded state', { index, expanded, newState: commands[index].isOutputExpanded });
+      }
+    } else {
+      // This is block expansion
+      toggleBlockExpansion(index);
+    }
   }
 
   function saveFile() {
@@ -206,9 +445,33 @@
     });
   }
 
+  // Function to copy current URL with file hash to clipboard.
+  function copyShareUrl() {
+    if (!$filesStore.currentFile) return;
+
+    // Create URL with file hash.
+    const url = new URL(window.location.href);
+    // Remove existing query parameters.
+    url.search = '';
+    // Set hash to file-{path}.
+    url.hash = `file-${encodeURIComponent($filesStore.currentFile.path)}`;
+
+    // Copy to clipboard.
+    navigator.clipboard.writeText(url.toString())
+      .then(() => {
+        // Show temporary notification.
+        alert('Shareable link copied to clipboard!');
+      })
+      .catch(err => {
+        console.error('Could not copy text: ', err);
+        // Fallback: show the URL and ask user to copy manually.
+        prompt('Copy this shareable link:', url.toString());
+      });
+  }
+
   function getStatusIcon(status: string | undefined) {
     // Create different status indicators for different item types
-    if (status === 'matched') {
+    if (status === 'matched' || status === 'success') {
       return `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
       </svg>`;
@@ -233,207 +496,7 @@
           </svg>`;
       }
     }
-  }
-
-  // Escape HTML special characters
-  function escapeHtml(text: string): string {
-    return text
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
-  }
-
-  // Highlight differences using the WASM module.
-  // Now we iterate over diffResult.diff_lines directly so that each line is rendered:
-  //   • unchanged lines are rendered as plain text
-  //   • added lines are prefixed with a "+", styled with diff-added-line
-  //   • removed lines are prefixed with a "−", styled with diff-removed-line
-  //   • changed lines include character-level highlight spans if available.
-  async function highlightDifferences(actual: string, expected: string): Promise<string> {
-    try {
-      if (!wasmLoaded || !patternMatcher) {
-        console.log('WASM module not loaded yet, showing plain text');
-        return escapeHtml(actual); // Return plain text if WASM isn't ready
-      }
-
-      // For real-time comparison, refresh patterns when showing the diff
-      try {
-        // Only refresh if we've gone more than 5 seconds since last refresh
-        if (!window.lastPatternRefresh || (Date.now() - window.lastPatternRefresh > 5000)) {
-          // Default patterns if API fails
-          const defaultPatterns = {
-            "NUMBER": "[0-9]+",
-            "DATE": "[0-9]{4}\\-[0-9]{2}\\-[0-9]{2}",
-            "DATETIME": "[0-9]{4}\\-[0-9]{2}\\-[0-9]{2}\\s[0-9]{2}:[0-9]{2}:[0-9]{2}",
-            "IPADDR": "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+",
-            "PATH": "[A-Za-z0-9\\/\\.\\-\\_]+",
-            "SEMVER": "[0-9]+\\.[0-9]+\\.[0-9]+",
-            "TIME": "[0-9]{2}:[0-9]{2}:[0-9]{2}",
-            "YEAR": "[0-9]{4}"
-          };
-
-          let patternsData;
-          try {
-            patternsData = await fetchPatterns();
-            // If patterns is empty, use default patterns
-            if (Object.keys(patternsData).length === 0) {
-              console.log('No patterns returned from API for refresh, using defaults');
-              patternsData = defaultPatterns;
-            }
-          } catch (refreshErr) {
-            console.warn('Could not refresh patterns, using defaults:', refreshErr);
-            patternsData = defaultPatterns;
-          }
-
-          try {
-            patternMatcher = new PatternMatcher(JSON.stringify(patternsData));
-            window.patternMatcher = patternMatcher;
-            window.lastPatternRefresh = Date.now();
-            console.log('Refreshed patterns for real-time comparison:', patternsData);
-          } catch (patternErr) {
-            console.warn('Error creating pattern matcher:', patternErr);
-          }
-        }
-      } catch (err) {
-        console.warn('Error in pattern refresh logic:', err);
-      }
-
-      // Return simple escaped text if inputs are identical
-      if (actual === expected) {
-        // Style as matched - no need for diff
-        if (actual && actual.trim() !== '') {
-          // Split by newlines to render properly
-          const lines = actual.split('\n');
-          let resultHtml = '';
-
-          lines.forEach((line, index) => {
-            resultHtml += `<span class="diff-matched-line">${escapeHtml(line)}</span>`;
-            if (index < lines.length - 1) {
-              resultHtml += '<br>';
-            }
-          });
-
-          return resultHtml;
-        }
-        return escapeHtml(actual);
-      }
-
-      // Get the diff result from the WASM module (returns a JSON string)
-      let diffResult;
-      try {
-        diffResult = JSON.parse(patternMatcher.diff_text(expected, actual));
-      } catch (diffErr) {
-        console.error('Error during diff processing:', diffErr);
-        return escapeHtml(actual);
-      }
-
-      if (!diffResult.has_diff) {
-        // No differences found; return with success styling
-        if (actual && actual.trim() !== '' && expected && expected.trim() !== '') {
-          // Split by newlines to render properly
-          const lines = actual.split('\n');
-          let resultHtml = '';
-
-          lines.forEach((line, index) => {
-            resultHtml += `<span class="diff-matched-line">${escapeHtml(line)}</span>`;
-            if (index < lines.length - 1) {
-              resultHtml += '<br>';
-            }
-          });
-
-          return resultHtml;
-        }
-        return escapeHtml(actual); // Simply escape if no meaningful content
-      }
-
-      let resultHtml = '';
-
-      // Iterate over each diff line. (Assumes diffResult.diff_lines is in sequential order.)
-      for (let i = 0; i < diffResult.diff_lines.length; i++) {
-        const diffLine = diffResult.diff_lines[i];
-        if (diffLine.line_type === "same") {
-          resultHtml += `${escapeHtml(diffLine.content)}`;
-          // Add a newline between content lines unless it's the last line
-          if (i < diffResult.diff_lines.length - 1) {
-            resultHtml += '<br>';
-          }
-        } else if (diffLine.line_type === "added") {
-          // Render added lines with a plus sign.
-          resultHtml += `<span class="diff-added-line">+ ${escapeHtml(diffLine.content)}</span>`;
-        } else if (diffLine.line_type === "removed") {
-          // Render removed lines with a minus sign.
-          resultHtml += `<span class="diff-removed-line">− ${escapeHtml(diffLine.content)}</span>`;
-        } else if (diffLine.line_type === "changed") {
-          // For changed lines, show a "~" marker.
-          if (diffLine.highlight_ranges && diffLine.highlight_ranges.length > 0) {
-            let lineHtml = '<span class="highlight-line">~ ';
-            let lastPos = 0;
-            for (const range of diffLine.highlight_ranges) {
-              // Append unchanged text
-              lineHtml += escapeHtml(diffLine.content.substring(lastPos, range.start));
-              // Append highlighted text
-              lineHtml += `<span class="highlight-diff">${escapeHtml(diffLine.content.substring(range.start, range.end))}</span>`;
-              lastPos = range.end;
-            }
-            // Append any remainder of the text.
-            lineHtml += escapeHtml(diffLine.content.substring(lastPos));
-            lineHtml += '</span>';
-            resultHtml += lineHtml;
-          } else {
-            resultHtml += `<span class="highlight-line">~ ${escapeHtml(diffLine.content)}</span>`;
-          }
-        }
-      }
-      return resultHtml;
-    } catch (err) {
-      console.error('Error highlighting differences:', err);
-      return escapeHtml(actual); // On error, return plain escaped text.
-    }
-  }
-
-  function formatDuration(ms: number | null): string {
-    if (ms === null) return '';
-    return `${ms}ms`;
-  }
-
-  function parseActualOutputContent(actualOutput: string | undefined): string {
-    if (!actualOutput) return '';
-
-    // Handle the case when there's a duration section in the output.
-    const durationMatch = actualOutput.match(/–––\s*duration/);
-    if (durationMatch) {
-      // Return everything before the duration marker.
-      return actualOutput.substring(0, durationMatch.index).trim();
-    }
-
-    // If no duration marker found, return the whole output.
-    return actualOutput.trim();
-  }
-
-  // Function to copy current URL with file hash to clipboard.
-  function copyShareUrl() {
-    if (!$filesStore.currentFile) return;
-
-    // Create URL with file hash.
-    const url = new URL(window.location.href);
-    // Remove existing query parameters.
-    url.search = '';
-    // Set hash to file-{path}.
-    url.hash = `file-${encodeURIComponent($filesStore.currentFile.path)}`;
-
-    // Copy to clipboard.
-    navigator.clipboard.writeText(url.toString())
-      .then(() => {
-        // Show temporary notification.
-        alert('Shareable link copied to clipboard!');
-      })
-      .catch(err => {
-        console.error('Could not copy text: ', err);
-        // Fallback: show the URL and ask user to copy manually.
-        prompt('Copy this shareable link:', url.toString());
-      });
+    return ''; // Return empty string for unknown statuses
   }
 </script>
 
@@ -473,18 +536,6 @@
           </svg>
           Running test...
         </span>
-      {/if}
-      {#if $filesStore.currentFile}
-        <button class="share-button" on:click={copyShareUrl} title="Copy shareable link">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="18" cy="5" r="3"></circle>
-            <circle cx="6" cy="12" r="3"></circle>
-            <circle cx="18" cy="19" r="3"></circle>
-            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-          </svg>
-          Share
-        </button>
       {/if}
       <div class="auto-save-toggle">
         <label class="auto-save-label">
@@ -537,358 +588,97 @@
         </svg>
         <p>Select a file from the sidebar or create a new one</p>
       </div>
-    {:else}
-      <div class="command-list">
-        {#each commands as command, i}
-          <div class="command-card {(command.status === 'failed' && !command.initializing) ? 'failed-command' : ''} {command.type === 'block' ? 'block-command' : ''} {command.isBlockCommand ? 'is-block-command' : ''}">
-            <!-- Command header -->
-            <div class="command-header">
-              <div class="command-title">
-                <span class="command-number">{i + 1}</span>
-                {#if command.type === 'block'}
-                  <span>Block Reference</span>
-                {:else if command.type === 'comment'}
-                  <span>Comment</span>
-                {:else if command.isBlockCommand}
-                  <span>Block Command</span>
-                {:else}
-                  <span>Command</span>
-                {/if}
-                {#if command.initializing}
-                  <span class="command-status pending-status">
-                    {@html getStatusIcon('pending')}
-                    <span>Pending</span>
-                  </span>
-                {:else if command.status === 'matched'}
-                  <span class="command-status matched-status">
-                    {@html getStatusIcon('matched')}
-                    <span>Matched</span>
-                  </span>
-                {:else if command.status === 'failed'}
-                  <span class="command-status failed-status">
-                    {@html getStatusIcon('failed')}
-                    <span>Failed</span>
-                  </span>
-                {:else if command.type === 'block'}
-                  <span class="command-status {command.status}-status">
-                    {@html getStatusIcon(command.status)}
-                    <span>{command.status.charAt(0).toUpperCase() + command.status.slice(1)}</span>
-                  </span>
-                {:else if command.status}
-                  <span class="command-status {command.status}-status">
-                    {@html getStatusIcon(command.status)}
-                    <span>{command.status.charAt(0).toUpperCase() + command.status.slice(1)}</span>
-                  </span>
-                {/if}
-                {#if command.blockSource && command.isBlockCommand}
-                  <span class="block-source">From: {command.blockSource.split('/').pop()}</span>
-                {/if}
-                {#if command.duration}
-                  <span class="command-duration">{formatDuration(command.duration)}</span>
-                {/if}
-              </div>
-              <div class="command-actions">
-                <!-- Move Up Button -->
-                <button
-                  class="action-button move-up"
-                  on:click={() => moveCommandUp(i)}
-                  title="Move up"
-                  aria-label="Move command up"
-                  disabled={i === 0}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M18 15l-6-6-6 6"></path>
-                  </svg>
-                </button>
+    {:else if testStructure}
+      <!-- New structured format rendering -->
+      <div class="test-structure">
+        {#if testStructure.description}
+          <div class="test-description">
+            <h3>Description</h3>
+            <p>{testStructure.description}</p>
+          </div>
+        {/if}
 
-                <!-- Move Down Button -->
-                <button
-                  class="action-button move-down"
-                  on:click={() => moveCommandDown(i)}
-                  title="Move down"
-                  aria-label="Move command down"
-                  disabled={i === commands.length - 1}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M6 9l6 6 6-6"></path>
-                  </svg>
-                </button>
+        <!-- Render the converted commands using the Step component -->
+        <div class="command-list">
+          {#each commands as command, i (command.stepIndex || i)}
+            {@const displayNumber = command.isNested ?
+              (commands.slice(0, i).filter(c => c.isNested && c.nestingLevel === command.nestingLevel && JSON.stringify(c.stepPath.slice(0, -1)) === JSON.stringify(command.stepPath.slice(0, -1))).length + 1) :
+              (commands.slice(0, i).filter(c => !c.isNested).length + 1)
+            }
+            <Step
+              {command}
+              index={i}
+              {displayNumber}
+              {wasmLoaded}
+              {patternMatcher}
+              on:updateCommand={(e) => handleUpdateCommand(e.detail.index, e.detail.newValue)}
+              on:updateExpectedOutput={(e) => handleUpdateExpectedOutput(e.detail.index, e.detail.newValue)}
+              on:toggleExpansion={(e) => handleToggleExpansion(e.detail)}
+              on:addCommand={(e) => addCommand(e.detail.index, e.detail.type)}
+              on:deleteCommand={(e) => deleteCommand(e.detail.index)}
+            />
+          {/each}
 
-                <div class="action-separator"></div>
-
-                <!-- Add Command Button -->
+          <!-- Add first command button if no commands -->
+          {#if commands.length === 0}
+            <div class="no-commands">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              <h3>No Commands Yet</h3>
+              <p>Add your first item to start building your test</p>
+              <div class="first-command-buttons">
                 <button
-                  class="action-button add-command"
-                  on:click={() => addCommand(i + 1, 'command')}
-                  title="Add command"
-                  aria-label="Add command"
+                  class="add-first-command-button"
+                  on:click={() => addCommand(0, 'command')}
+                  aria-label="Add first command"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <line x1="12" y1="5" x2="12" y2="19"></line>
                     <line x1="5" y1="12" x2="19" y2="12"></line>
                   </svg>
+                  Add Command
                 </button>
 
-                <!-- Add Block Button -->
                 <button
-                  class="action-button add-block"
-                  on:click={() => addCommand(i + 1, 'block')}
-                  title="Add block reference"
-                  aria-label="Add block reference"
+                  class="add-first-block-button"
+                  on:click={() => addCommand(0, 'block')}
+                  aria-label="Add first block reference"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                     <polyline points="14 2 14 8 20 8"></polyline>
                   </svg>
+                  Add Block
                 </button>
 
-                <!-- Add Comment Button -->
                 <button
-                  class="action-button add-comment"
-                  on:click={() => addCommand(i + 1, 'comment')}
-                  title="Add comment"
-                  aria-label="Add comment"
+                  class="add-first-comment-button"
+                  on:click={() => addCommand(0, 'comment')}
+                  aria-label="Add first comment"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                   </svg>
-                </button>
-
-                <!-- Duplicate Button -->
-                <button
-                  class="action-button duplicate"
-                  on:click={() => duplicateCommand(i)}
-                  title="Duplicate"
-                  aria-label="Duplicate command"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                  </svg>
-                </button>
-
-                <div class="action-separator"></div>
-
-                <!-- Delete Button -->
-                <button
-                  class="action-button delete"
-                  on:click={() => deleteCommand(i)}
-                  title="Delete"
-                  aria-label="Delete command"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M3 6h18" />
-                    <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                    <path d="M10 11v6" />
-                    <path d="M14 11v6" />
-                  </svg>
+                  Add Comment
                 </button>
               </div>
             </div>
-
-            <!-- Command input -->
-            <div class="command-body">
-              {#if command.type === 'block'}
-                <!-- Block reference input -->
-                <SimpleCodeMirror
-                  placeholder="Enter path to file (without .recb extension)"
-                  bind:value={command.command}
-                  on:input={(e) => {
-                    try {
-                      // Create a local copy of the value to avoid direct store manipulation
-                      const newValue = e.target.value;
-
-                      // Use a timeout to avoid reactive update cycles
-                      setTimeout(() => {
-                        filesStore.updateCommand(i, newValue);
-                      }, 0);
-                    } catch (err) {
-                      console.error('Error updating block reference:', err);
-                    }
-                  }}
-                />
-              {:else if command.type === 'comment'}
-                <!-- Comment input -->
-                <SimpleCodeMirror
-                  placeholder="Enter your comment here..."
-                  bind:value={command.command}
-                  on:input={(e) => {
-                    try {
-                      // Create a local copy of the value to avoid direct store manipulation
-                      const newValue = e.target.value;
-
-                      // Use a timeout to avoid reactive update cycles
-                      setTimeout(() => {
-                        filesStore.updateCommand(i, newValue);
-                      }, 0);
-                    } catch (err) {
-                      console.error('Error updating comment:', err);
-                    }
-                  }}
-                />
-              {:else}
-                <!-- Standard command input with syntax highlighting -->
-                <SimpleCodeMirror
-                  placeholder="Enter command..."
-                  bind:value={command.command}
-                  on:input={(e) => {
-                    try {
-                      // Create a local copy of the value to avoid direct store manipulation
-                      const newValue = e.target.value;
-
-                      // Use a timeout to avoid reactive update cycles
-                      setTimeout(() => {
-                        filesStore.updateCommand(i, newValue);
-                      }, 0);
-                    } catch (err) {
-                      console.error('Error updating command:', err);
-                    }
-                  }}
-                />
-
-                <!-- Output section (only for regular commands) -->
-                {#if !command.initializing}
-                <div class="output-grid {command.isOutputExpanded ? 'has-expanded-outputs' : ''}">
-                  <div class="output-column">
-                    <div class="output-header">
-                      <span class="output-indicator expected-indicator"></span>
-                      <label for={`expected-output-${i}`}>Expected Output</label>
-                    </div>
-                    <textarea
-                      id={`expected-output-${i}`}
-                      class="expected-output {command.isOutputExpanded ? 'expanded' : ''}"
-											bind:this={expectedEls[i]}
-											on:scroll={() => syncScroll(i, true)}
-                      placeholder="Expected output..."
-                      rows="1"
-                      bind:value={command.expectedOutput}
-                      on:input={(e) => {
-                        try {
-                          // Auto-resize textarea based on content
-                          e.target.style.height = 'auto';
-                          e.target.style.height = Math.max(24, e.target.scrollHeight) + 'px';
-
-                          // Use a local copy of the value to avoid direct store manipulation
-                          const newValue = e.target.value || '';
-
-                          // Use a timeout to avoid reactive update cycles
-                          setTimeout(() => {
-                            filesStore.updateExpectedOutput(i, newValue);
-
-                            // Force a re-render of the diff - a small hack to make
-                            // sure the diff updates in real-time as we type
-                            if (command.actualOutput) {
-                              const actualOutput = parseActualOutputContent(command.actualOutput);
-                              const actualOutputElement = document.getElementById(`actual-output-${i}`);
-                              if (actualOutputElement) {
-                                highlightDifferences(actualOutput, newValue).then(diffHtml => {
-                                  if (actualOutputElement.querySelector('.wasm-diff')) {
-                                    actualOutputElement.querySelector('.wasm-diff').innerHTML = diffHtml;
-                                  } else {
-                                    actualOutputElement.innerHTML = `<div class="wasm-diff">${diffHtml}</div>`;
-                                  }
-                                });
-                              }
-                            }
-                          }, 0);
-                        } catch (err) {
-                          console.error('Error updating expected output:', err);
-                        }
-                      }}
-                      on:focus={() => {
-                        // Expand both outputs when focusing on the expected output
-                        filesStore.toggleOutputExpansion(i, true);
-                      }}
-                      on:click={() => {
-                        // Also expand on click (helps with touch devices)
-                        filesStore.toggleOutputExpansion(i, true);
-                      }}
-                      use:initTextArea
-                    ></textarea>
-                  </div>
-                  <div class="output-column">
-                    <div class="output-header">
-                      <span class="output-indicator actual-indicator"></span>
-                      <label for={`actual-output-${i}`}>Actual Output</label>
-                    </div>
-                    <div
-                      id={`actual-output-${i}`}
-                      class="actual-output {command.status === 'failed' ? 'failed-output' : ''} {command.isOutputExpanded ? 'expanded' : ''}"
-											bind:this={actualEls[i]}
-											on:scroll={() => syncScroll(i, false)}
-                      role="region"
-                      aria-label="Actual Output"
-                      on:click={() => {
-                        // Expand both outputs when clicking on actual output
-                        filesStore.toggleOutputExpansion(i, true);
-                      }}
-                    >
-                      {#if command.actualOutput}
-                        {#await highlightDifferences(parseActualOutputContent(command.actualOutput), command.expectedOutput || '')}
-                          <pre class="plain-output">{parseActualOutputContent(command.actualOutput)}</pre>
-                        {:then diffHtml}
-                          <div class="wasm-diff">{@html diffHtml}</div>
-                        {/await}
-                      {:else}
-                        <span class="no-output-message">Empty output.</span>
-                      {/if}
-                    </div>
-                  </div>
-                </div>
-                {/if}
-              {/if}
-            </div>
-          </div>
-
-        {/each}
-
-        <!-- Add first command button if no commands -->
-        {#if commands.length === 0}
-          <div class="no-commands">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-            <h3>No Commands Yet</h3>
-            <p>Add your first item to start building your test</p>
-            <div class="first-command-buttons">
-              <button
-                class="add-first-command-button"
-                on:click={() => addCommand(0, 'command')}
-                aria-label="Add first command"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="12" y1="5" x2="12" y2="19"></line>
-                  <line x1="5" y1="12" x2="19" y2="12"></line>
-                </svg>
-                Add Command
-              </button>
-
-              <button
-                class="add-first-block-button"
-                on:click={() => addCommand(0, 'block')}
-                aria-label="Add first block reference"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                  <polyline points="14 2 14 8 20 8"></polyline>
-                </svg>
-                Add Block
-              </button>
-
-              <button
-                class="add-first-comment-button"
-                on:click={() => addCommand(0, 'comment')}
-                aria-label="Add first comment"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                </svg>
-                Add Comment
-              </button>
-            </div>
-          </div>
-        {/if}
+          {/if}
+        </div>
+      </div>
+    {:else}
+      <!-- Fallback for files without structured data -->
+      <div class="editor-empty">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+          <path d="M14 2v6h6" />
+          <path d="M16 13H8" />
+          <path d="M16 17H8" />
+          <path d="M10 9H8" />
+        </svg>
+        <p>This file is not in the new structured format. Please reload or re-parse the file.</p>
       </div>
     {/if}
   </div>
@@ -927,7 +717,7 @@
     gap: 8px;
   }
 
-  .save-button, .run-button, .share-button {
+  .save-button, .run-button {
     padding: 6px 12px;
     font-size: 14px;
     border-radius: 4px;
@@ -948,11 +738,6 @@
   .run-button {
     background-color: var(--color-bg-accent);
     color: white;
-  }
-
-  .share-button {
-    background-color: var(--color-bg-secondary);
-    color: var(--color-text-primary);
   }
 
   .save-button:disabled, .run-button:disabled {
@@ -1061,6 +846,11 @@
     color: var(--color-text-success, #16a34a);
   }
 
+  .success-status {
+    background-color: var(--color-bg-success, #dcfce7);
+    color: var(--color-text-success, #16a34a);
+  }
+
   .failed-status {
     background-color: var(--color-bg-error, #fee2e2);
     color: var(--color-text-error, #dc2626);
@@ -1074,15 +864,6 @@
   .block-status {
     background-color: var(--color-bg-info, #e0f2fe);
     color: var(--color-text-info, #0369a1);
-  }
-
-  /* Block command with its own status */
-  .block-command .command-status.matched-status {
-    border: 1px solid var(--color-text-success, #16a34a);
-  }
-
-  .block-command .command-status.failed-status {
-    border: 1px solid var(--color-text-error, #dc2626);
   }
 
   .command-duration {
@@ -1399,4 +1180,198 @@
 
   .add-first-command-button:hover, .add-first-block-button:hover, .add-first-comment-button:hover {
     background-color: var(--color-bg-accent-hover);
-  }</style>
+  }
+
+  /* Structured format styles */
+  .structured-format-note {
+    font-size: 12px;
+    color: var(--color-text-tertiary);
+    font-style: italic;
+  }
+
+  .command-display {
+    background-color: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 8px;
+    font-family: monospace;
+    white-space: pre-wrap;
+    line-height: 1.5;
+  }
+
+  .command-display.comment-display {
+    background-color: var(--color-bg-comment, #f8f9fa);
+    border-left: 4px solid var(--color-border-comment, #6c757d);
+  }
+
+  .expected-output-display {
+    background-color: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 8px;
+    font-family: monospace;
+    white-space: pre-wrap;
+    line-height: 1.5;
+    min-height: 24px;
+  }
+
+  .test-description {
+    margin-bottom: 20px;
+    padding: 16px;
+    background-color: var(--color-bg-secondary);
+    border-radius: 8px;
+    border-left: 4px solid var(--color-bg-accent);
+  }
+
+  .test-description h3 {
+    margin: 0 0 8px 0;
+    color: var(--color-text-primary);
+    font-size: 16px;
+  }
+
+  .test-description p {
+    margin: 0;
+    color: var(--color-text-secondary);
+    line-height: 1.5;
+  }
+
+  /* Nested command styling */
+  .nested-command {
+    border-left: 3px solid var(--color-bg-info, #0ea5e9);
+    background-color: rgba(224, 242, 254, 0.15);
+    position: relative;
+  }
+
+  .nested-command::before {
+    content: '';
+    position: absolute;
+    left: -3px;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: linear-gradient(to bottom, var(--color-bg-info, #0ea5e9), rgba(224, 242, 254, 0.3));
+  }
+
+  /* Expand button styling */
+  .expand-button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    margin-left: 8px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    color: var(--color-text-secondary);
+  }
+
+  .expand-button:hover {
+    background-color: var(--color-bg-secondary);
+    color: var(--color-text-primary);
+  }
+
+  .expand-icon {
+    transition: transform 0.2s ease;
+  }
+
+  .expand-icon.expanded {
+    transform: rotate(90deg);
+  }
+
+  /* Enhanced block command styling for better nesting visualization */
+  .command-card.block-command {
+    border-left: 5px solid var(--color-bg-info, #0ea5e9);
+    background-color: rgba(224, 242, 254, 0.25);
+    position: relative;
+  }
+
+  .command-card.block-command.expanded {
+    border-bottom: 2px solid var(--color-bg-info, #0ea5e9);
+  }
+
+  /* Nested command numbering adjustment */
+  .nested-command .command-number {
+    background-color: rgba(224, 242, 254, 0.8);
+    color: var(--color-text-info, #0369a1);
+    border: 1px solid var(--color-bg-info, #0ea5e9);
+  }
+
+  .editor {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  .editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--color-border);
+    background-color: var(--color-bg-primary);
+  }
+
+  .editor-content {
+    flex: 1;
+    padding: 16px;
+    overflow-y: auto;
+  }
+
+  .editor-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--color-text-tertiary);
+    text-align: center;
+  }
+
+  .editor-empty svg {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+  }
+
+  .file-path {
+    font-weight: 500;
+    color: var(--color-text-primary);
+  }
+
+  .command-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .no-commands {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    color: var(--color-text-tertiary);
+    text-align: center;
+  }
+
+  .no-commands svg {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+  }
+
+  .no-commands h3 {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    color: var(--color-text-secondary);
+  }
+
+  .no-commands p {
+    margin: 0 0 20px 0;
+    font-size: 14px;
+  }
+</style>

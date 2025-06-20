@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -e
-
-for folder in rec cmp; do
-  cd $folder
+declare -A bin_map
+bin_map=([rec]="rec" [cmp]="cmp" [mcp]="clt-mcp")
+for folder in rec cmp mcp; do
   # https://github.com/joseluisq/rust-linux-darwin-builder
-  parser_src="$(pwd)/../parser"
-  docker run --network host --rm -v "${parser_src}:/root/parser" -v "$(pwd):/root/src" -w /root/src -it joseluisq/rust-linux-darwin-builder:1.84.1 bash -c "\
+  docker run --network host --rm -v "$(pwd):/root/src" -w /root/src -it joseluisq/rust-linux-darwin-builder:1.84.1 bash -c "\
+		cd $folder; \
     cargo clean; \
     cargo build --target=x86_64-unknown-linux-musl --release; \
     cargo build --target=aarch64-unknown-linux-musl --release; \
   "
-  cd ..
+	binary=${bin_map[$folder]}
   # Copy binaries
-  cp "$folder/target/x86_64-unknown-linux-musl/release/$folder" bin/x86_64/
-  cp "$folder/target/aarch64-unknown-linux-musl/release/$folder" bin/aarch64/
+  cp "$folder/target/x86_64-unknown-linux-musl/release/$binary" bin/x86_64/
+  cp "$folder/target/aarch64-unknown-linux-musl/release/$binary" bin/aarch64/
 done
