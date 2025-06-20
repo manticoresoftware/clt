@@ -1965,9 +1965,17 @@ app.post('/api/interactive/start', isAuthenticated, async (req, res) => {
 		// Import child_process
 		const { spawn } = await import('child_process');
 
+		// Get user repository path for WORKDIR_PATH environment variable
+		const userRepoPath = getUserRepoPath(req);
+		console.log(`WORKDIR_PATH: ${userRepoPath}`);
+		
 		// Start the process with shell to handle complex commands
 		const childProcess = spawn('sh', ['-c', askAiCommand], {
-			stdio: ['pipe', 'pipe', 'pipe']
+			stdio: ['pipe', 'pipe', 'pipe'],
+			env: {
+				...process.env,
+				WORKDIR_PATH: userRepoPath
+			}
 		});
 
 		session.process = childProcess;
