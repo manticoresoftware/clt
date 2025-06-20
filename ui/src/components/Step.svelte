@@ -38,6 +38,11 @@
   // Output elements for scroll sync
   let expectedOutputEl: HTMLElement;
   let actualOutputEl: HTMLElement;
+  
+  // Track if user is currently editing to prevent cursor jumping
+  let isUserEditing = false;
+  let lastExternalValue = '';
+  let isFocused = false;
 
   // Initialize scroll sync manager
   const scrollSyncManager = new ScrollSyncManager();
@@ -49,6 +54,12 @@
 
   $: if (actualCodeMirror?.getEditorView) {
     actualEditorView = actualCodeMirror.getEditorView();
+  }
+
+  // Update contenteditable content only when value changes externally (not during user editing or focus)
+  $: if (expectedOutputEl && command.expectedOutput !== lastExternalValue && !isUserEditing && !isFocused) {
+    expectedOutputEl.textContent = command.expectedOutput || '';
+    lastExternalValue = command.expectedOutput || '';
   }
 
   // Wrapper function for scroll sync
@@ -83,23 +94,54 @@
   // Enhanced input handler that also syncs scroll position
   function handleExpectedOutputInput(e: any) {
     try {
+      isUserEditing = true;
       const newValue = e.target?.textContent || '';
+
+      // Store cursor position before update
+      const selection = window.getSelection();
+      const range = selection?.getRangeAt(0);
+      const cursorOffset = range?.startOffset || 0;
+      const cursorNode = range?.startContainer;
 
       // Dispatch the update without direct mutation
       dispatch('updateExpectedOutput', { index, newValue });
       
-      // Also sync scroll position after content change
+      // Restore cursor position after update
       setTimeout(() => {
+        if (expectedOutputEl && selection && cursorNode && expectedOutputEl.contains(cursorNode)) {
+          try {
+            const newRange = document.createRange();
+            // Ensure the cursor position is within bounds
+            const maxOffset = cursorNode.textContent?.length || 0;
+            const safeOffset = Math.min(cursorOffset, maxOffset);
+            newRange.setStart(cursorNode, safeOffset);
+            newRange.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(newRange);
+          } catch (rangeError) {
+            // If cursor restoration fails, just focus the element
+            expectedOutputEl.focus();
+          }
+        }
+        
+        // Also sync scroll position after content change
         if (!scrollSyncManager.isScrollSyncing) {
           syncScroll(true);
         }
+        
+        // Reset editing flag after a longer delay to prevent premature collapse
+        setTimeout(() => {
+          isUserEditing = false;
+        }, 300);
       }, 0);
     } catch (err) {
       console.error('Error updating expected output:', err);
+      isUserEditing = false;
     }
   }
 
   function handleToggleExpansion() {
+    console.log('TOGGLE EXPANSION CALLED from Step.svelte', { index, current: command.isOutputExpanded });
     dispatch('toggleExpansion', { index });
   }
 
@@ -129,6 +171,8 @@
 
   // Handle focus to expand
   function handleOutputFocus(event: FocusEvent) {
+    isUserEditing = true;
+    isFocused = true;
     if (!command.isOutputExpanded) {
       dispatch('toggleExpansion', { index, expanded: true });
     }
@@ -160,17 +204,23 @@
     }
   }
 
-  // Handle blur to collapse when moving out
+  // Handle blur to collapse when truly moving focus away
   function handleOutputBlur(event: FocusEvent) {
-    // Small delay to check if focus moved to related element
+    // Small delay to check if focus moved to a related element
     setTimeout(() => {
       if (command.isOutputExpanded) {
         const activeElement = document.activeElement;
         const outputGrid = activeElement?.closest('.output-grid');
-        if (!outputGrid) {
+        const isStillInContentEditable = activeElement === expectedOutputEl;
+        
+        // Only collapse if focus truly moved outside the output area
+        if (!outputGrid && !isStillInContentEditable) {
           dispatch('toggleExpansion', { index, expanded: false });
         }
       }
+      // Reset editing flags
+      isFocused = false;
+      isUserEditing = false;
     }, 100);
   }
 
@@ -179,10 +229,23 @@
 
   onMount(() => {
     const handleGlobalClick = (event: Event) => {
+      // COMPLETELY DISABLE collapse during editing
+      if (isUserEditing || isFocused) {
+        console.log('GLOBAL CLICK BLOCKED - user editing');
+        return;
+      }
+      
+      // Don't collapse if user is actively editing
       if (command.isOutputExpanded && outputGridEl) {
         const target = event.target as HTMLElement;
         const isInsideOutputGrid = outputGridEl.contains(target);
-        if (!isInsideOutputGrid) {
+        const isContentEditable = target === expectedOutputEl || expectedOutputEl.contains(target);
+        
+        console.log('GLOBAL CLICK CHECK', { isInsideOutputGrid, isContentEditable, target: target.tagName });
+        
+        // Don't collapse if clicking inside the output grid or contenteditable
+        if (!isInsideOutputGrid && !isContentEditable) {
+          console.log('GLOBAL CLICK COLLAPSING');
           dispatch('toggleExpansion', { index, expanded: false });
         }
       }
@@ -201,6 +264,12 @@
         { threshold: 0.1 }
       );
       observer.observe(outputGridEl);
+    }
+
+    // Initialize contenteditable content
+    if (expectedOutputEl) {
+      expectedOutputEl.textContent = command.expectedOutput || '';
+      lastExternalValue = command.expectedOutput || '';
     }
 
     return () => {
@@ -383,9 +452,11 @@
               on:blur={handleOutputBlur}
               on:focus={handleOutputFocus}
               on:click={handleContentClick}
+              on:keydown={() => { isUserEditing = true; }}
+              on:paste={() => { isUserEditing = true; }}
               use:initOutputScroll={true}
             >
-              {command.expectedOutput || ''}
+              <!-- Content will be managed by reactive statement to prevent cursor jumping -->
             </div>
           </div>
         </div>

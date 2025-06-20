@@ -30,9 +30,25 @@
   // Define testStructure for template usage
   $: testStructure = $filesStore.currentFile?.testStructure;
 
-  $: commands = $filesStore.currentFile?.testStructure
-    ? convertStructuredToCommands($filesStore.currentFile.testStructure)
-    : ($filesStore.currentFile?.commands || []);
+  // Preserve expanded states when commands are recreated
+  function preserveExpandedStates(newCommands: any[], oldCommands: any[]) {
+    return newCommands.map((newCmd, index) => {
+      const oldCmd = oldCommands[index];
+      if (oldCmd && oldCmd.isOutputExpanded !== undefined) {
+        return { ...newCmd, isOutputExpanded: oldCmd.isOutputExpanded };
+      }
+      return newCmd;
+    });
+  }
+
+  $: {
+    const newCommands = $filesStore.currentFile?.testStructure
+      ? convertStructuredToCommands($filesStore.currentFile.testStructure)
+      : ($filesStore.currentFile?.commands || []);
+    
+    // Preserve expanded states from previous commands array
+    commands = preserveExpandedStates(newCommands, commands || []);
+  }
 
   // Debug logging
   $: {
@@ -391,12 +407,15 @@
   function handleToggleExpansion(detail: { index: number; expanded?: boolean }) {
     const { index, expanded } = detail;
     
+    console.log('EDITOR handleToggleExpansion', { index, expanded, currentState: commands[index]?.isOutputExpanded });
+    
     if (expanded !== undefined) {
       // This is output expansion - update the command's isOutputExpanded property
       if (index >= 0 && index < commands.length) {
         commands[index] = { ...commands[index], isOutputExpanded: expanded };
         // Trigger reactivity
         commands = commands;
+        console.log('EDITOR updated command expanded state', { index, expanded, newState: commands[index].isOutputExpanded });
       }
     } else {
       // This is block expansion
