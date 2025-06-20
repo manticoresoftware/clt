@@ -5,8 +5,8 @@
   import Step from './Step.svelte';
   import { 
     initWasm, 
-    getWasmLoaded, 
-    getPatternMatcher, 
+    wasmLoadedStore,
+    patternMatcherStore,
     convertStructuredToCommands,
     updateStructuredCommand,
     updateStructuredExpectedOutput
@@ -23,9 +23,9 @@
   let commands: any[] = [];
   let autoSaveEnabled = true;
 
-  // Get WASM state from the extracted logic
-  $: wasmLoaded = getWasmLoaded();
-  $: patternMatcher = getPatternMatcher();
+  // Get WASM state from the reactive stores
+  $: wasmLoaded = $wasmLoadedStore;
+  $: patternMatcher = $patternMatcherStore;
 
   // Define testStructure for template usage
   $: testStructure = $filesStore.currentFile?.testStructure;
