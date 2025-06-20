@@ -1121,8 +1121,8 @@
   }
 
   .action-button.delete:hover {
-    background-color: var(--color-bg-error);
-    color: white;
+    background-color: var(--color-bg-error, #fee2e2);
+    color: var(--color-text-error, #dc2626);
   }
 
   .action-separator {
