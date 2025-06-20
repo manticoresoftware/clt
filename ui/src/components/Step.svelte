@@ -58,7 +58,12 @@
 
   // Output scroll action wrapper
   function initOutputScroll(node: HTMLElement, isExpected: boolean) {
-    return scrollSyncManager.initOutputScroll(node, isExpected, expectedOutputEl, actualOutputEl);
+    return scrollSyncManager.initOutputScroll(
+      node, 
+      isExpected, 
+      () => expectedOutputEl, 
+      () => actualOutputEl
+    );
   }
 
   function handleCommandInput(e: any) {
