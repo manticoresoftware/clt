@@ -609,7 +609,6 @@
             <div 
               class="output-content" 
               contenteditable="true" 
-              bind:textContent={command.expectedOutput} 
               bind:this={expectedOutputEl}
               on:input={handleExpectedOutputInput}
               on:blur={handleOutputBlur}

@@ -98,6 +98,7 @@ body {
   gap: var(--spacing-sm);
   font-size: 18px;
   font-weight: 600;
+	min-width: 250px;
   color: var(--color-text-primary);
 }
 
