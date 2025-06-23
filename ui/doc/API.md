@@ -90,9 +90,40 @@
 **Auth**: Required
 
 #### POST `/api/reset-to-branch`
-**Purpose**: Reset to specific branch
+**Purpose**: Reset current branch to specified branch (hard reset)
 **Auth**: Required
 **Body**: `{ "branch": "main" }`
+**Response**: Success status and branch information
+**Safety**: Checks for unstaged changes, stashes if needed
+
+#### POST `/api/checkout-and-pull`
+**Purpose**: Safely checkout and pull specified branch
+**Auth**: Required  
+**Body**: `{ "branch": "feature-branch" }`
+**Response**: Success status and current branch
+**Features**: 
+- Creates local tracking branch if doesn't exist
+- Pulls latest changes from remote
+- Handles both existing and new branches
+
+#### GET `/api/git-status`
+**Purpose**: Check for unstaged changes before git operations
+**Auth**: Required
+**Response**: Git status with unstaged changes detection
+```json
+{
+  "hasUnstagedChanges": true,
+  "currentBranch": "main", 
+  "isClean": false,
+  "files": {
+    "modified": ["file1.rec"],
+    "not_added": ["file2.rec"],
+    "deleted": [],
+    "conflicted": [],
+    "staged": ["file3.rec"]
+  }
+}
+```
 
 ## Authentication & Session Management
 

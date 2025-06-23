@@ -40,13 +40,74 @@ function openInteractiveSession() {
 }
 ```
 
-### FileExplorer.svelte
-**Purpose**: File tree navigation and management
-**Key Features**:
-- Recursive file tree building with symlink support
-- File operations (create, delete, rename, move)
-- Drag & drop functionality
-- File filtering (.rec and .recb files only)
+### FileExplorer.svelte - Enhanced File Tree Management
+**Purpose**: File tree navigation with Git safety and URL parameter support
+
+**Key Features (2024 Updates)**:
+- **URL Parameter Processing**: Auto-open files, branch switching, failed test highlighting
+- **Git Safety**: Unstaged changes detection before git operations
+- **State Preservation**: Smart file tree merging with user interaction preservation
+- **Failed Test Highlighting**: Complete directory path highlighting for failed tests
+- **Background Polling**: 10-second file tree updates without workflow disruption
+- **Drag & Drop**: Move files between directories with visual feedback
+- **VSCode-style Creation**: Inline file/folder creation
+
+**Critical Patterns**:
+
+#### URL Parameter Processing with Git Safety
+```typescript
+// Always check for unstaged changes first
+const urlParams = parseUrlParams();
+const hasGitAffectingParams = urlParams.branch || urlParams.filePath;
+if (hasGitAffectingParams) {
+  const canProceed = await checkUnstagedChanges();
+  if (!canProceed) {
+    // Clear URL parameters and stop processing
+    const url = new URL(window.location.href);
+    url.search = '';
+    window.history.replaceState({}, '', url.toString());
+    return;
+  }
+}
+```
+
+#### State Preservation Pattern
+```typescript
+// Before any file tree update
+preserveExpandedState();
+await filesStore.refreshFileTree();
+
+// Reactive state restoration
+$: {
+  if ($filesStore.fileTree) {
+    // If we have preserved state, restore it
+    if (preservedExpandedFolders.size > 0) {
+      expandedFolders = new Set(preservedExpandedFolders);
+      preservedExpandedFolders.clear();
+    }
+    fileTree = $filesStore.fileTree;
+  }
+}
+```
+
+#### Failed Test Integration (Reuses Git Status Pattern)
+```typescript
+function isDirWithFailedTests(dirPath: string): boolean {
+  for (const failedTest of failedTestPaths) {
+    if (failedTest.startsWith(dirPath + '/')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Integrates seamlessly into existing getFileGitStatus()
+function getFileGitStatus(filePath: string): string | null {
+  if (failedTestPaths.has(filePath)) return 'F';
+  if (isDirWithFailedTests(filePath)) return 'F';
+  // Continue with existing git status logic...
+}
+```
 
 **Critical Code**:
 ```javascript
