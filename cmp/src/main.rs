@@ -20,7 +20,6 @@ use std::env;
 use std::path::Path;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 use std::io::Write;
-use tempfile;
 
 // Import from lib
 pub use cmp::{PatternMatcher, MatchingPart};
@@ -118,7 +117,7 @@ fn main() {
 			},
 			parser::Statement::Output => {
 
-				let pos = file1_reader.seek(SeekFrom::Current(0)).unwrap();
+				let pos = file1_reader.stream_position().unwrap();
 
 				let mut line = String::new();
 				file1_reader.read_line(&mut line).unwrap();
@@ -210,17 +209,15 @@ fn main() {
 								_ => {},
 							}
 						}
-					} else {
-						if debug_mode {
-							// Show all lines when in debug mode
-							for line in &lines1 {
-								writeln!(stdout, "{}", line).unwrap();
-							}
-						} else {
-							// Just show OK when no differences and not in debug mode
-							writeln!(stdout, "OK").unwrap();
-						}
-					}				}
+					} else if debug_mode {
+     							// Show all lines when in debug mode
+     							for line in &lines1 {
+     								writeln!(stdout, "{}", line).unwrap();
+     							}
+     						} else {
+     							// Just show OK when no differences and not in debug mode
+     							writeln!(stdout, "OK").unwrap();
+     						}				}
 			}
 			_ => {
 				// For any other section we simply print the next line from either file.
@@ -241,7 +238,7 @@ fn move_cursor_to_line<R: BufRead + Seek>(reader: &mut R, command_prefix: &str) 
 	let mut line = String::new();
 
 	loop {
-		let pos = reader.seek(SeekFrom::Current(0))?;
+		let pos = reader.stream_position()?;
 		let len = reader.read_line(&mut line)?;
 
 		if len == 0 {
@@ -261,7 +258,7 @@ fn move_cursor_to_line<R: BufRead + Seek>(reader: &mut R, command_prefix: &str) 
 
 /// Peek the statement and return it from the given reader
 fn peek_statement<R: BufRead + Seek>(reader: &mut R) -> io::Result<Option<parser::Statement>> {
-	let pos = reader.seek(SeekFrom::Current(0))?;
+	let pos = reader.stream_position()?;
 	let mut line = String::new();
 	let len = reader.read_line(&mut line)?;
 	reader.seek(SeekFrom::Start(pos))?;
@@ -281,7 +278,7 @@ fn buffer_block<R: BufRead + Seek>(reader: &mut R) -> io::Result<Vec<String>> {
 	let mut parsed = false;
 
 	loop {
-		let pos = reader.seek(SeekFrom::Current(0))?;
+		let pos = reader.stream_position()?;
 		line.clear();
 		let len = reader.read_line(&mut line)?;
 		if len == 0 {
@@ -315,7 +312,7 @@ fn buffer_block<R: BufRead + Seek>(reader: &mut R) -> io::Result<Vec<String>> {
 ///
 fn reader_at_end<R: BufRead + Seek>(reader: &mut R) -> bool {
 	match reader.fill_buf() {
-		Ok(buf) if buf.is_empty() => true,
+		Ok([]) => true,
 		_ => false,
 	}
 }
@@ -428,7 +425,7 @@ fn block_has_differences(lines1: &[String], lines2: &[String], pattern_matcher: 
 // A helper to skip non-Input/Output blocks in the reader.
 fn skip_non_command_blocks<R: BufRead + Seek>(reader: &mut R) -> io::Result<()> {
     loop {
-        let pos = reader.seek(SeekFrom::Current(0))?;
+        let pos = reader.stream_position()?;
         if let Some(stmt) = peek_statement(reader)? {
             if stmt == parser::Statement::Input || stmt == parser::Statement::Output {
                 // Found a valid command block, so rewind and exit.
