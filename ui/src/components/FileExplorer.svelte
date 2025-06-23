@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { filesStore, type FileNode, addNodeToDirectory, updateChildPaths } from '../stores/filesStore';
   import { branchStore } from '../stores/branchStore';
-  import { gitStatusStore } from '../stores/gitStatusStore';
+  import { gitStatusStore, checkUnstagedChanges } from '../stores/gitStatusStore';
   import { API_URL } from '../config.js';
 
   // Default to tests directory

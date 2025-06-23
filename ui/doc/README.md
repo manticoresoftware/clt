@@ -27,27 +27,74 @@ ASK_AI_TIMEOUT=30000
 SKIP_AUTH=true  # Development mode
 ```
 
-### Critical Architecture Points
+# CLT UI Documentation Index
 
-#### State Management
-- **filesStore** - File content and test execution
-- **authStore** - User authentication and GitHub
-- **localStorage** - Session persistence for Ask AI
+## Development Documentation
 
-#### Session Persistence (Ask AI)
-- **Active**: `askAI_activeSession` - Running sessions
-- **History**: `askAI_sessionHistory` - Completed sessions
-- **Polling**: Continues in background when modal closed
+### 📚 Core Guides
+- **[DEVELOPMENT.md](./DEVELOPMENT.md)** - Enhanced architecture with Git safety, URL parameters, and state preservation
+- **[COMPONENTS.md](./COMPONENTS.md)** - Detailed component guide with new patterns
+- **[API.md](./API.md)** - Backend API reference including new Git safety endpoints
 
-#### Authentication Flow
-1. GitHub OAuth or skip auth mode
-2. User repo cloning to `workdir/{username}`
-3. Token-based git operations
+### 🎯 Feature Documentation
+- **[URL_PARAMETERS.md](./URL_PARAMETERS.md)** - Comprehensive URL parameter system with Git safety
+- **[ASK_AI.md](./ASK_AI.md)** - Ask AI interactive session feature with session persistence
+- **[THEMING.md](./THEMING.md)** - CodeMirror theming guide for command syntax highlighting
 
-#### File Operations
-- Restricted to user's `test/clt-tests` directory
-- Only `.rec` and `.recb` files supported
-- Real-time diff highlighting with WASM
+## Quick Reference
+
+### Development Setup
+```bash
+cd ui
+npm install
+npm run dev     # Frontend :5173
+node server.js  # Backend :9150
+```
+
+### New URL Parameter System
+```bash
+# Auto-open file with custom Docker image
+?test_path=core/file.rec&docker_image=custom:latest
+
+# Switch branch and highlight failed tests  
+?branch=feature-branch&failed_tests[]=test1.rec&failed_tests[]=test2.rec
+
+# Complete workflow URL
+?test_path=integration/auth.rec&branch=auth-fixes&docker_image=test:latest&failed_tests[]=integration/auth.rec
+```
+
+### Git Safety Features
+- **Unstaged Changes Detection**: Automatic check before git operations
+- **User Confirmation**: Clear dialog explaining consequences
+- **Complete Cancellation**: Option to ignore URL parameters if conflicts exist
+- **Applied Everywhere**: URL processing AND manual branch operations
+
+### Key Environment Variables
+```bash
+ASK_AI_COMMAND="docker run --rm -i ubuntu:latest bash -c 'echo Input; cat'"
+ASK_AI_TIMEOUT=30000
+SKIP_AUTH=true  # Development mode
+```
+
+### Enhanced Architecture Points
+
+#### State Preservation System
+- **Smart Merging**: `mergeFileTreePreservingState()` preserves user interactions
+- **Background Polling**: 10-second updates without workflow disruption
+- **Expanded Folders**: Maintained across all operations
+- **Selected Files**: Current selection preserved during updates
+
+#### Failed Test Highlighting
+- **File Level**: Direct red "F" indicator for failed test files
+- **Directory Level**: Parent directories marked with "F" indicator
+- **Complete Path**: Entire directory chain highlighted
+- **Git Integration**: Reuses existing git status infrastructure
+
+#### URL Parameter Processing
+- **Git Safety**: Unstaged changes check before processing
+- **Parameter Types**: `test_path`, `docker_image`, `branch`, `failed_tests[]`
+- **Error Handling**: Non-existent files show errors instead of auto-creation
+- **State Management**: Failed test highlighting preserved during operations
 
 ### Common Development Tasks
 

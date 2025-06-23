@@ -44,9 +44,31 @@ CLT UI is a Svelte-based web interface for managing and editing CLT test files w
 3. Session management with tokens stored globally
 4. Repository operations use user's GitHub token
 
-## Environment Configuration
+## Development Guidelines
 
-### Required Variables
+### Adding New URL Parameters
+1. Add to `parseUrlParams()` return type and function
+2. Handle in `onMount()` after unstaged changes check
+3. Add to `handleUrlChange()` for dynamic updates
+4. Test with unstaged changes scenarios
+
+### Adding New Git Operations
+1. Always call `checkUnstagedChanges()` first
+2. Use existing patterns from `resetToBranch` and `checkoutAndPull`
+3. Preserve expanded state with `preserveExpandedState()`
+4. Handle errors gracefully with user feedback
+
+### File Tree Modifications
+1. Use `mergeFileTreePreservingState()` for updates
+2. Call `preserveExpandedState()` before refreshes
+3. Test that user interactions are maintained
+4. Verify polling doesn't disrupt workflow
+
+### Performance Best Practices
+- Use parallel tool execution for discovery operations
+- Batch edits for multiple file changes
+- Smart merging reduces DOM updates
+- Preserve user state during background operations
 ```bash
 # Backend
 BACKEND_PORT=9150
@@ -118,6 +140,26 @@ npm run preview # Preview build
 - Set `SKIP_AUTH=true` for development
 - Check GitHub OAuth configuration
 - Verify session secrets and cookies
+
+### File Operations Failing
+- Check user repo exists in `workdir/{username}`
+- Verify file paths are within test directory
+- Ensure proper authentication for git operations
+
+## Performance Notes
+
+- **Batch edits**: Use `batch_edit` for multiple file changes
+- **Polling efficiency**: Ask AI polls every 1 second
+- **WASM loading**: Diff engine loads asynchronously
+- **Memory cleanup**: Sessions auto-cleanup after 5 minutes
+
+## Security Considerations
+
+- Commands execute in isolated Docker containers
+- User input passed via stdin only
+- File operations restricted to user's test directory
+- GitHub tokens stored securely and cleaned up
+- Session isolation per authenticated usersession secrets and cookies
 
 ### File Operations Failing
 - Check user repo exists in `workdir/{username}`

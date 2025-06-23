@@ -126,8 +126,41 @@ function createGitStatusStore() {
       unsubscribe();
       
       return currentState!.modifiedDirs.includes(dirPath);
+    },
+    
+    // Check for unstaged changes and prompt user if they exist
+    checkUnstagedChanges: async (): Promise<boolean> => {
+      // First ensure we have fresh git status
+      await gitStatusStore.fetchGitStatus();
+      
+      let currentState: GitStatusState;
+      const unsubscribe = subscribe(state => {
+        currentState = state;
+      });
+      unsubscribe();
+      
+      // If no changes, proceed
+      if (!currentState!.hasChanges) {
+        return true;
+      }
+      
+      // If there are changes, prompt user
+      const fileCount = currentState!.modifiedFiles.length;
+      const fileList = currentState!.modifiedFiles
+        .slice(0, 5) // Show first 5 files
+        .map(file => `  ${file.status} ${file.path}`)
+        .join('\n');
+      
+      const moreFiles = fileCount > 5 ? `\n  ... and ${fileCount - 5} more files` : '';
+      
+      const message = `You have ${fileCount} unstaged change${fileCount > 1 ? 's' : ''} in your working directory:\n\n${fileList}${moreFiles}\n\nProceeding will potentially affect these changes. Do you want to continue?`;
+      
+      return confirm(message);
     }
   };
 }
 
 export const gitStatusStore = createGitStatusStore();
+
+// Export the checkUnstagedChanges function for direct import
+export const checkUnstagedChanges = gitStatusStore.checkUnstagedChanges;
