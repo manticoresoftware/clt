@@ -439,8 +439,13 @@ pub fn write_test_file(test_file_path: &str, test_structure: &TestStructure) -> 
     }
 
     // Convert structure to REC format with error handling
-    let rec_content = convert_structure_to_rec(test_structure)
+    let mut rec_content = convert_structure_to_rec(test_structure)
         .map_err(|e| anyhow::anyhow!("Failed to convert test structure to .rec format: {}", e))?;
+
+    // Ensure the file always ends with a newline
+    if !rec_content.ends_with('\n') {
+        rec_content.push('\n');
+    }
 
     // Write file with proper error handling
     fs::write(test_file_path, rec_content)

@@ -143,41 +143,76 @@ impl TestRunner {
             }
         };
 
-        let exit_success = output.status.success();
+        let exit_code = output.status.code().unwrap_or(-1);
         let stderr = String::from_utf8_lossy(&output.stderr);
 
-        if exit_success {
-            Ok(RunTestOutput {
-                success: true,
-                errors: vec![],
-                summary: "Test passed successfully".to_string(),
-            })
-        } else {
-            // Parse failures from .rep file comparison with error handling
-            let errors = match self.parse_test_failures_from_rep_file(test_path) {
-                Ok(errors) => errors,
-                Err(e) => {
-                    // If we can't parse the rep file, create a generic error
-                    vec![TestError {
-                        command: "rep_file_parsing".to_string(),
-                        expected: "Should be able to parse test results".to_string(),
-                        actual: format!("Failed to parse test results: {}", e),
+        match exit_code {
+            0 => {
+                // Test passed successfully
+                Ok(RunTestOutput {
+                    success: true,
+                    errors: vec![],
+                    summary: "Test passed successfully".to_string(),
+                })
+            }
+            1 => {
+                // Test failed but ran (expected test failure)
+                let errors = match self.parse_test_failures_from_rep_file(test_path) {
+                    Ok(errors) => errors,
+                    Err(e) => {
+                        // If we can't parse the rep file, create a generic error
+                        vec![TestError {
+                            command: "rep_file_parsing".to_string(),
+                            expected: "Should be able to parse test results".to_string(),
+                            actual: format!("Failed to parse test results: {}", e),
+                            step: 0,
+                        }]
+                    }
+                };
+
+                let summary = if errors.is_empty() {
+                    "Test failed - no specific errors identified".to_string()
+                } else {
+                    format!("Test failed with {} error(s)", errors.len())
+                };
+
+                Ok(RunTestOutput {
+                    success: false,
+                    errors,
+                    summary,
+                })
+            }
+            code => {
+                // System error, validation error, or crash (exit code 2+)
+                let error_type = match code {
+                    2 => "compilation_error",
+                    3 => "setup_error", 
+                    4 => "recording_error",
+                    5 => "validation_error",
+                    _ if code >= 129 && code <= 143 => "signal_termination",
+                    _ => "system_error",
+                };
+
+                let error_description = match code {
+                    2 => "Compilation or build error occurred".to_string(),
+                    3 => "Test setup or environment error".to_string(),
+                    4 => "Recording or file system error".to_string(), 
+                    5 => "Test validation or format error".to_string(),
+                    _ if code >= 129 && code <= 143 => format!("Process terminated by signal {}", code - 128),
+                    _ => format!("System error (exit code {})", code),
+                };
+
+                Ok(RunTestOutput {
+                    success: false,
+                    errors: vec![TestError {
+                        command: error_type.to_string(),
+                        expected: "Successful test execution".to_string(),
+                        actual: format!("{}: {}", error_description, stderr.trim()),
                         step: 0,
-                    }]
-                }
-            };
-
-            let summary = if errors.is_empty() {
-                format!("Test failed: {}", stderr.trim())
-            } else {
-                format!("Test failed with {} error(s)", errors.len())
-            };
-
-            Ok(RunTestOutput {
-                success: false,
-                errors,
-                summary,
-            })
+                    }],
+                    summary: format!("System error: {} (exit code {})", error_description, code),
+                })
+            }
         }
     }
 

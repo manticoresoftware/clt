@@ -220,7 +220,7 @@ impl McpServer {
         let tools = vec![
             McpTool {
                 name: "run_test".to_string(),
-                description: format!("Execute a CLT test file in a Docker container and return the results. Compares actual output with expected output and reports success/failure. The docker_image parameter is optional and defaults to '{}' (configured when the MCP server was started).", self.docker_image),
+                description: format!("Execute a CLT test file in Docker container. Returns status: PASSED (exit 0), FAILED (exit 1 - test ran but outputs didn't match), or ERROR (exit 2+ - system/validation error). Docker image defaults to '{}' if not specified.", self.docker_image),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -575,23 +575,20 @@ impl McpServer {
                         // Return a structured error response instead of crashing
                         let error_output = json!({
                             "tool": "run_test",
-                            "description": "CLT test execution failed during path resolution",
+                            "status": "ERROR",
                             "test_file": input.test_file,
+                            "docker_image": input.docker_image.as_deref().unwrap_or(&self.docker_image),
                             "result": {
                                 "success": false,
                                 "errors": [{
                                     "command": "path_resolution",
                                     "expected": "Valid test file path",
-                                    "actual": format!("Path resolution failed: {}", e),
+                                    "actual": format!("Path error: {}", e),
                                     "step": 0
                                 }],
-                                "summary": format!("Path resolution error: {}", e)
+                                "summary": format!("Path error: {}", e)
                             },
-                            "help": {
-                                "error_type": "path_resolution",
-                                "suggestion": "Check that the test file path is correct and accessible",
-                                "working_directory": self.workdir_path
-                            }
+                            "working_directory": self.workdir_path
                         });
                         return Ok(serde_json::to_string_pretty(&error_output)?);
                     }
@@ -607,41 +604,44 @@ impl McpServer {
                         // Convert test runner errors to structured output
                         let error_output = json!({
                             "tool": "run_test",
-                            "description": "CLT test execution failed",
+                            "status": "ERROR", 
                             "test_file": input.test_file,
+                            "docker_image": input.docker_image.as_deref().unwrap_or(&self.docker_image),
                             "result": {
                                 "success": false,
                                 "errors": [{
                                     "command": "test_execution",
                                     "expected": "Successful test execution",
-                                    "actual": format!("Test execution failed: {}", e),
+                                    "actual": format!("Execution failed: {}", e),
                                     "step": 0
                                 }],
-                                "summary": format!("Test execution error: {}", e)
+                                "summary": format!("Execution failed: {}", e)
                             },
-                            "help": {
-                                "error_type": "test_execution",
-                                "suggestion": "Check CLT binary path, Docker availability, and test file format",
-                                "working_directory": self.workdir_path
-                            }
+                            "working_directory": self.workdir_path
                         });
                         return Ok(serde_json::to_string_pretty(&error_output)?);
                     }
                 };
 
-                // Add helpful context to the output
+                // Add helpful context to the output with better exit code information
                 let docker_image_used = input.docker_image.as_deref().unwrap_or(&self.docker_image);
+                
+                let test_status = if output.success {
+                    "PASSED"
+                } else {
+                    "FAILED"
+                };
+
                 let enhanced_output = json!({
                     "tool": "run_test",
-                    "description": "CLT test execution results",
+                    "status": test_status,
                     "test_file": input.test_file,
                     "docker_image": docker_image_used,
                     "result": output,
-                    "help": {
-                        "success_meaning": "true = test passed, all commands executed and outputs matched expectations",
-                        "errors_meaning": "Array of specific mismatches between expected and actual outputs. step refers to the position in the test steps array (0-based)",
-                        "next_steps": "If test failed, use 'refine_output' tool to suggest patterns for dynamic content",
-                        "docker_image_info": format!("Test executed in Docker image: {} (default: {})", docker_image_used, self.docker_image)
+                    "exit_codes": {
+                        "0": "Test passed - all commands executed successfully and outputs matched",
+                        "1": "Test failed - commands ran but outputs didn't match expectations", 
+                        "2+": "System error - compilation, setup, validation, or crash occurred"
                     }
                 });
 
@@ -655,23 +655,10 @@ impl McpServer {
                     .pattern_refiner
                     .refine_output(&input.expected, &input.actual)?;
 
-                // Add helpful context and examples
                 let enhanced_output = json!({
                     "tool": "refine_output",
-                    "description": "Pattern suggestions for handling dynamic content in test outputs",
                     "result": output,
-                    "help": {
-                        "pattern_types": {
-                            "named_patterns": "Use %{PATTERN_NAME} syntax. Available: SEMVER, IPADDR, DATE, TIME, NUMBER, PATH",
-                            "regex_patterns": "Use #!/regex/!# syntax. Example: #!/[0-9]+/!# for any number",
-                            "examples": {
-                                "version": "Replace '1.2.3' with '%{SEMVER}' or '#!/[0-9]+\\.[0-9]+\\.[0-9]+/!#'",
-                                "timestamp": "Replace '2023-12-25 14:30:22' with '%{DATE} %{TIME}' or '#!/[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/!#'",
-                                "process_id": "Replace 'PID: 1234' with 'PID: %{NUMBER}' or 'PID: #!/[0-9]+/!#'"
-                            }
-                        },
-                        "usage": "Copy the 'refined_output' and use it as the expected output in your .rec test file"
-                    }
+                    "usage": "Copy 'refined_output' and use as expected output in your .rec test file"
                 });
 
                 Ok(serde_json::to_string_pretty(&enhanced_output)?)
@@ -682,21 +669,9 @@ impl McpServer {
                 )?;
                 let output = self.execute_test_match(&input.expected, &input.actual)?;
 
-                // Add helpful context
                 let enhanced_output = json!({
                     "tool": "test_match",
-                    "description": "Pattern matching results using CLT's intelligent comparison engine",
-                    "comparison": {
-                        "expected": input.expected,
-                        "actual": input.actual
-                    },
-                    "result": output,
-                    "help": {
-                        "matches_meaning": "true = strings match (considering patterns), false = mismatch found",
-                        "diff_lines_details": "Git-style diff showing line-by-line differences between expected and actual output",
-                        "pattern_support": "Understands %{PATTERN} and #!/regex/!# syntax for dynamic content",
-                        "next_steps": "If match fails, check diff_lines array for specific differences, then use 'refine_output' to suggest patterns"
-                    }
+                    "result": output
                 });
 
                 Ok(serde_json::to_string_pretty(&enhanced_output)?)
@@ -719,12 +694,7 @@ impl McpServer {
 
                 let enhanced_output = json!({
                     "tool": "get_patterns",
-                    "description": "Available patterns for CLT tests",
-                    "patterns": patterns,
-                    "help": {
-                        "usage": "Use these patterns in test outputs like %{PATTERN_NAME}",
-                        "example": "Replace '1.2.3' with '%{SEMVER}' to match any semantic version"
-                    }
+                    "patterns": patterns
                 });
 
                 Ok(serde_json::to_string_pretty(&enhanced_output)?)
@@ -739,15 +709,8 @@ impl McpServer {
 
                 let enhanced_output = json!({
                     "tool": "read_test",
-                    "description": "Structured representation of CLT test file",
                     "test_file": input.test_file,
-                    "result": test_structure,
-                    "help": {
-                        "structure": "JSON format with 'steps' array containing test steps",
-                        "step_types": "input (commands), output (expected results), comment (documentation), block (reusable components)",
-                        "nested_blocks": "Block steps contain resolved content in 'steps' field",
-                        "usage": "Modify this structure and use 'write_test' to save changes"
-                    }
+                    "result": test_structure
                 });
 
                 Ok(serde_json::to_string_pretty(&enhanced_output)?)
@@ -769,17 +732,9 @@ impl McpServer {
                     Err(e) => {
                         let mut error_output = json!({
                             "tool": "write_test",
-                            "description": "CLT test file write failed during path resolution",
                             "test_file": input.test_file,
-                            "result": {
-                                "success": false,
-                                "error": format!("Path resolution failed: {}", e)
-                            },
-                            "help": {
-                                "error_type": "path_resolution",
-                                "suggestion": "Check that the test file path is valid and the directory is writable",
-                                "working_directory": self.workdir_path
-                            }
+                            "success": false,
+                            "error": format!("Path error: {}", e)
                         });
 
                         if !warnings.is_empty() {
@@ -796,14 +751,8 @@ impl McpServer {
                     Ok(()) => {
                         let mut enhanced_output = json!({
                             "tool": "write_test",
-                            "description": "CLT test file written successfully",
                             "test_file": input.test_file,
-                            "result": {
-                                "success": true
-                            },
-                            "help": {
-                                "next_steps": "Use 'run_test' to execute the written test file"
-                            }
+                            "success": true
                         });
 
                         if !warnings.is_empty() {
@@ -815,17 +764,9 @@ impl McpServer {
                     Err(e) => {
                         let mut error_output = json!({
                             "tool": "write_test",
-                            "description": "CLT test file write failed",
                             "test_file": input.test_file,
-                            "result": {
-                                "success": false,
-                                "error": format!("Write operation failed: {}", e)
-                            },
-                            "help": {
-                                "error_type": "write_failure",
-                                "suggestion": "Check file permissions and disk space",
-                                "working_directory": self.workdir_path
-                            }
+                            "success": false,
+                            "error": format!("Write failed: {}", e)
                         });
 
                         if !warnings.is_empty() {
@@ -995,23 +936,7 @@ impl McpServer {
                 }
             }
             _ => {
-                // Return a proper error response instead of panicking
-                let error_output = json!({
-                    "tool": tool_name,
-                    "description": "Unknown tool requested",
-                    "result": {
-                        "success": false,
-                        "error": format!("Unknown tool: {}", tool_name)
-                    },
-                    "help": {
-                        "available_tools": [
-                            "run_test", "refine_output", "test_match", "clt_help",
-                            "get_patterns", "read_test", "write_test", "update_test", "append_test"
-                        ],
-                        "suggestion": "Use one of the available tools listed above"
-                    }
-                });
-                return Ok(serde_json::to_string_pretty(&error_output)?);
+                return Err(anyhow::anyhow!("Unknown tool: {}", tool_name));
             }
         };
 
@@ -2322,11 +2247,11 @@ mod tests {
 
         assert!(!test_result["success"].as_bool().unwrap());
         assert_eq!(test_result["errors"].as_array().unwrap().len(), 1);
-        assert_eq!(test_result["errors"][0]["command"], "file_check");
+        assert_eq!(test_result["errors"][0]["command"], "path_resolution");
         assert!(test_result["errors"][0]["actual"]
             .as_str()
             .unwrap()
-            .contains("File not found"));
+            .contains("Path error"));
     }
 
     #[tokio::test]
@@ -2417,14 +2342,6 @@ mod tests {
 
         // Verify the custom docker image is used
         assert_eq!(parsed["docker_image"], "custom-image");
-        assert!(parsed["help"]["docker_image_info"]
-            .as_str()
-            .unwrap()
-            .contains("custom-image"));
-        assert!(parsed["help"]["docker_image_info"]
-            .as_str()
-            .unwrap()
-            .contains("default: default-image"));
     }
 
     #[tokio::test]
@@ -2445,10 +2362,6 @@ mod tests {
 
         // Verify the default docker image is used
         assert_eq!(parsed["docker_image"], "default-image");
-        assert!(parsed["help"]["docker_image_info"]
-            .as_str()
-            .unwrap()
-            .contains("default-image"));
     }
 }
 
