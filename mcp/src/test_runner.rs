@@ -1,6 +1,6 @@
 use crate::mcp_protocol::{RunTestOutput, TestError};
-use parser::{TestStructure, parse_rec_content};
 use anyhow::{Context, Result};
+use parser::{parse_rec_content, TestStructure};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -234,8 +234,7 @@ impl TestRunner {
             )
         })?;
 
-        let test_structure = match parse_rec_content(&rec_content, base_dir)
-        {
+        let test_structure = match parse_rec_content(&rec_content, base_dir) {
             Ok(structure) => structure,
             Err(e) => {
                 // If we can't parse the REC file, return a parsing error

@@ -3,9 +3,9 @@ mod pattern_refiner;
 mod test_runner;
 
 use crate::mcp_protocol::*;
+use parser::{TestStep, TestStructure};
 use pattern_refiner::PatternRefiner;
 use test_runner::TestRunner;
-use parser::{TestStructure, TestStep};
 
 use anyhow::Result;
 use clap::Parser;
@@ -753,15 +753,21 @@ impl McpServer {
                 Ok(serde_json::to_string_pretty(&enhanced_output)?)
             }
             "write_test" => {
-                let input: mcp_protocol::WriteTestInput = serde_json::from_value(
+                let input: mcp_protocol::WriteTestInputWithWarning = serde_json::from_value(
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
+
+                // Check if we need to add a warning about string parsing
+                let mut warnings = Vec::new();
+                if input.test_structure.was_string {
+                    warnings.push("test_structure was provided as a JSON string instead of an object. While this works, it's recommended to pass it as a direct JSON object for better performance and clarity.".to_string());
+                }
 
                 // Safely resolve test path with proper error handling
                 let resolved_test_path = match self.resolve_test_path(&input.test_file) {
                     Ok(path) => path,
                     Err(e) => {
-                        let error_output = json!({
+                        let mut error_output = json!({
                             "tool": "write_test",
                             "description": "CLT test file write failed during path resolution",
                             "test_file": input.test_file,
@@ -775,14 +781,20 @@ impl McpServer {
                                 "working_directory": self.workdir_path
                             }
                         });
+
+                        if !warnings.is_empty() {
+                            error_output["warnings"] = json!(warnings);
+                        }
+
                         return Ok(serde_json::to_string_pretty(&error_output)?);
                     }
                 };
 
                 // Safely write test file with proper error handling
-                match parser::write_test_file(&resolved_test_path, &input.test_structure) {
+                match parser::write_test_file(&resolved_test_path, &input.test_structure.structure)
+                {
                     Ok(()) => {
-                        let enhanced_output = json!({
+                        let mut enhanced_output = json!({
                             "tool": "write_test",
                             "description": "CLT test file written successfully",
                             "test_file": input.test_file,
@@ -793,10 +805,15 @@ impl McpServer {
                                 "next_steps": "Use 'run_test' to execute the written test file"
                             }
                         });
+
+                        if !warnings.is_empty() {
+                            enhanced_output["warnings"] = json!(warnings);
+                        }
+
                         Ok(serde_json::to_string_pretty(&enhanced_output)?)
                     }
                     Err(e) => {
-                        let error_output = json!({
+                        let mut error_output = json!({
                             "tool": "write_test",
                             "description": "CLT test file write failed",
                             "test_file": input.test_file,
@@ -810,20 +827,34 @@ impl McpServer {
                                 "working_directory": self.workdir_path
                             }
                         });
+
+                        if !warnings.is_empty() {
+                            error_output["warnings"] = json!(warnings);
+                        }
+
                         Ok(serde_json::to_string_pretty(&error_output)?)
                     }
                 }
             }
             "update_test" => {
-                let input: mcp_protocol::TestReplaceInput = serde_json::from_value(
+                let input: mcp_protocol::TestReplaceInputWithWarning = serde_json::from_value(
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
+
+                // Check if we need to add warnings about string parsing
+                let mut warnings = Vec::new();
+                if input.old_test_structure.was_string {
+                    warnings.push("old_test_structure was provided as a JSON string instead of an object. While this works, it's recommended to pass it as a direct JSON object for better performance and clarity.".to_string());
+                }
+                if input.new_test_structure.was_string {
+                    warnings.push("new_test_structure was provided as a JSON string instead of an object. While this works, it's recommended to pass it as a direct JSON object for better performance and clarity.".to_string());
+                }
 
                 // Safely resolve test path with proper error handling
                 let resolved_test_path = match self.resolve_test_path(&input.test_file) {
                     Ok(path) => path,
                     Err(e) => {
-                        let error_output = json!({
+                        let mut error_output = json!({
                             "tool": "update_test",
                             "description": "Test structure update failed during path resolution",
                             "test_file": input.test_file,
@@ -837,17 +868,22 @@ impl McpServer {
                                 "working_directory": self.workdir_path
                             }
                         });
+
+                        if !warnings.is_empty() {
+                            error_output["warnings"] = json!(warnings);
+                        }
+
                         return Ok(serde_json::to_string_pretty(&error_output)?);
                     }
                 };
 
                 match parser::replace_test_structure(
                     &resolved_test_path,
-                    &input.old_test_structure,
-                    &input.new_test_structure,
+                    &input.old_test_structure.structure,
+                    &input.new_test_structure.structure,
                 ) {
                     Ok(()) => {
-                        let enhanced_output = json!({
+                        let mut enhanced_output = json!({
                             "tool": "update_test",
                             "description": "Test structure replaced successfully",
                             "test_file": input.test_file,
@@ -860,10 +896,15 @@ impl McpServer {
                                 "replacement_info": "The old test structure was found and replaced exactly once"
                             }
                         });
+
+                        if !warnings.is_empty() {
+                            enhanced_output["warnings"] = json!(warnings);
+                        }
+
                         Ok(serde_json::to_string_pretty(&enhanced_output)?)
                     }
                     Err(e) => {
-                        let enhanced_output = json!({
+                        let mut enhanced_output = json!({
                             "tool": "update_test",
                             "description": "Test structure replacement failed",
                             "test_file": input.test_file,
@@ -880,21 +921,32 @@ impl McpServer {
                                 "matching_rules": "Steps must match exactly: type, args, content, and nested steps (if any)"
                             }
                         });
+
+                        if !warnings.is_empty() {
+                            enhanced_output["warnings"] = json!(warnings);
+                        }
+
                         Ok(serde_json::to_string_pretty(&enhanced_output)?)
                     }
                 }
             }
             "append_test" => {
-                let input: mcp_protocol::TestAppendInput = serde_json::from_value(
+                let input: mcp_protocol::TestAppendInputWithWarning = serde_json::from_value(
                     arguments.ok_or_else(|| anyhow::anyhow!("Missing arguments"))?,
                 )?;
 
+                // Check if we need to add a warning about string parsing
+                let mut warnings = Vec::new();
+                if input.test_structure.was_string {
+                    warnings.push("test_structure was provided as a JSON string instead of an object. While this works, it's recommended to pass it as a direct JSON object for better performance and clarity.".to_string());
+                }
+
                 match parser::append_test_structure(
                     &self.resolve_test_path(&input.test_file)?,
-                    &input.test_structure,
+                    &input.test_structure.structure,
                 ) {
                     Ok(steps_added) => {
-                        let enhanced_output = json!({
+                        let mut enhanced_output = json!({
                             "tool": "append_test",
                             "description": "Test steps appended successfully",
                             "test_file": input.test_file,
@@ -908,10 +960,15 @@ impl McpServer {
                                 "append_info": "New steps were added to the end of the existing test file"
                             }
                         });
+
+                        if !warnings.is_empty() {
+                            enhanced_output["warnings"] = json!(warnings);
+                        }
+
                         Ok(serde_json::to_string_pretty(&enhanced_output)?)
                     }
                     Err(e) => {
-                        let enhanced_output = json!({
+                        let mut enhanced_output = json!({
                             "tool": "append_test",
                             "description": "Test append operation failed",
                             "test_file": input.test_file,
@@ -928,6 +985,11 @@ impl McpServer {
                                 }
                             }
                         });
+
+                        if !warnings.is_empty() {
+                            enhanced_output["warnings"] = json!(warnings);
+                        }
+
                         Ok(serde_json::to_string_pretty(&enhanced_output)?)
                     }
                 }
@@ -2387,5 +2449,123 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("default-image"));
+    }
+}
+
+#[cfg(test)]
+mod test_string_format {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_test_structure_object_format() {
+        let json_input = json!({
+            "test_file": "test.rec",
+            "test_structure": {
+                "description": "Test description",
+                "steps": [
+                    {
+                        "type": "input",
+                        "args": [],
+                        "content": "echo hello"
+                    }
+                ]
+            }
+        });
+
+        let result: mcp_protocol::WriteTestInputWithWarning =
+            serde_json::from_value(json_input).unwrap();
+        assert_eq!(result.test_file, "test.rec");
+        assert!(!result.test_structure.was_string);
+        assert_eq!(
+            result.test_structure.structure.description,
+            Some("Test description".to_string())
+        );
+    }
+
+    #[test]
+    fn test_test_structure_string_format() {
+        let test_structure_json = json!({
+            "description": "Test description",
+            "steps": [
+                {
+                    "type": "input",
+                    "args": [],
+                    "content": "echo hello"
+                }
+            ]
+        });
+
+        let json_input = json!({
+            "test_file": "test.rec",
+            "test_structure": serde_json::to_string(&test_structure_json).unwrap()
+        });
+
+        let result: mcp_protocol::WriteTestInputWithWarning =
+            serde_json::from_value(json_input).unwrap();
+        assert_eq!(result.test_file, "test.rec");
+        assert!(result.test_structure.was_string); // Should be true for string format
+        assert_eq!(
+            result.test_structure.structure.description,
+            Some("Test description".to_string())
+        );
+    }
+
+    #[test]
+    fn test_test_replace_input_string_format() {
+        let test_structure_json = json!({
+            "description": "Test description",
+            "steps": [
+                {
+                    "type": "input",
+                    "args": [],
+                    "content": "echo hello"
+                }
+            ]
+        });
+
+        let json_input = json!({
+            "test_file": "test.rec",
+            "old_test_structure": serde_json::to_string(&test_structure_json).unwrap(),
+            "new_test_structure": test_structure_json
+        });
+
+        let result: mcp_protocol::TestReplaceInputWithWarning =
+            serde_json::from_value(json_input).unwrap();
+        assert_eq!(result.test_file, "test.rec");
+        assert!(result.old_test_structure.was_string); // String format
+        assert!(!result.new_test_structure.was_string); // Object format
+    }
+
+    #[test]
+    fn test_invalid_json_string() {
+        let json_input = json!({
+            "test_file": "test.rec",
+            "test_structure": "invalid json string"
+        });
+
+        let result: Result<mcp_protocol::WriteTestInputWithWarning, _> =
+            serde_json::from_value(json_input);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid JSON string"));
+    }
+
+    #[test]
+    fn test_invalid_type() {
+        let json_input = json!({
+            "test_file": "test.rec",
+            "test_structure": 123  // Invalid type
+        });
+
+        let result: Result<mcp_protocol::WriteTestInputWithWarning, _> =
+            serde_json::from_value(json_input);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must be an object or a JSON string"));
     }
 }
