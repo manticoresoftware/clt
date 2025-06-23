@@ -22,6 +22,67 @@ use tokio::time::Instant;
 use tokio::process::{Child, Command};
 use std::process::Stdio;
 use std::sync::Arc;
+
+// Exit code constants
+const EXIT_SUCCESS: i32 = 0;              // Success (recording completed OR replay completed)
+const EXIT_TEST_EXECUTION_FAILED: i32 = 1; // Test execution failed (replay mode crashes)
+const EXIT_COMPILATION_ERROR: i32 = 2;     // Input file compilation/parsing errors  
+const EXIT_SETUP_ERROR: i32 = 3;          // Environment setup errors (shell, paths)
+const EXIT_RECORDING_ERROR: i32 = 4;      // Recording infrastructure errors
+const EXIT_VALIDATION_ERROR: i32 = 5;     // Validation errors (file not found, invalid paths)
+// Signal exit codes already defined: 129, 130, 143
+
+// Custom error types for better error handling and exit code management
+#[derive(Debug)]
+pub enum RecError {
+    // Test execution errors (replay mode)
+    TestExecutionFailed(String),
+    
+    // Compilation and parsing errors
+    CompilationError(String),
+    
+    // Setup and environment errors  
+    SetupError(String),
+    
+    // Recording infrastructure errors (recording mode)
+    RecordingError(String),
+    
+    // Validation errors (file not found, invalid paths)
+    ValidationError(String),
+}
+
+impl RecError {
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            RecError::TestExecutionFailed(_) => EXIT_TEST_EXECUTION_FAILED,
+            RecError::CompilationError(_) => EXIT_COMPILATION_ERROR,
+            RecError::SetupError(_) => EXIT_SETUP_ERROR,
+            RecError::RecordingError(_) => EXIT_RECORDING_ERROR,
+            RecError::ValidationError(_) => EXIT_VALIDATION_ERROR,
+        }
+    }
+}
+
+impl std::fmt::Display for RecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RecError::TestExecutionFailed(msg) => write!(f, "Test execution failed: {}", msg),
+            RecError::CompilationError(msg) => write!(f, "Compilation error: {}", msg),
+            RecError::SetupError(msg) => write!(f, "Setup error: {}", msg),
+            RecError::RecordingError(msg) => write!(f, "Recording error: {}", msg),
+            RecError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for RecError {}
+
+// Helper function for safe string conversion
+fn safe_string_conversion(os_string: std::ffi::OsString, context: &str) -> Result<String, RecError> {
+    os_string.into_string()
+        .map_err(|_| RecError::SetupError(format!("Failed to convert path to string: {}", context)))
+}
+
 #[derive(Debug, structopt::StructOpt)]
 #[structopt(
 	name = "rec",
@@ -78,6 +139,9 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	let start_time = Instant::now();
 	let Opt { input_file, output_file, delay } = opt;
 
+	// Determine mode early for proper error handling
+	let _is_replay_mode = input_file.is_some();
+
 	let mut binding = Command::new("bash");
 	let process = binding
 		.arg("--noprofile")
@@ -90,7 +154,10 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	let mut child_stdin = child.stdin.take().expect("Failed to get stdin");
 	let child_stdout = child.stdout.take().expect("Failed to get stdout");
 
-	child_stdin.write_all(INIT_CMD).await.unwrap();
+	child_stdin.write_all(INIT_CMD).await
+		.map_err(|e| RecError::SetupError(
+			format!("Failed to initialize shell environment: {}", e)
+		))?;
 
 	let child_arc = Arc::new(Mutex::new(child));
 
@@ -104,10 +171,24 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	// If we have input file passed, we replay, otherwise – record
 	// Replay the input_file and save results in output_file
 	if let Some(input_file) = input_file {
-		let input_file = input_file.into_string().unwrap();
+		let input_file = safe_string_conversion(input_file, "input file path")?;
 		let input_content = match parser::compile(&input_file) {
 			Ok(content) => content,
-			Err(e) => panic!("Failed to compile input file: {}", e),
+			Err(e) => {
+				// Check if this is a file not found error (validation) vs parsing error (compilation)
+				let error_msg = e.to_string();
+				if error_msg.contains("No such file or directory") || 
+				   error_msg.contains("not found") ||
+				   error_msg.contains("does not exist") {
+					return Err(RecError::ValidationError(
+						format!("The record file does not exist: {}", input_file)
+					).into());
+				} else {
+					return Err(RecError::CompilationError(
+						format!("Failed to compile test file '{}': {}", input_file, e)
+					).into());
+				}
+			}
 		};
 
 		// Split compiled file into lines to process it next
@@ -148,8 +229,14 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 		let mut stdout_reader = BufReader::new(child_stdout);
 		for command in commands {
 			let command_with_marker = format!("{}\necho '{}'\n", command, END_MARKER);
-			child_stdin.write_all(command_with_marker.as_bytes()).await.unwrap();
-			child_stdin.flush().await.unwrap();
+			child_stdin.write_all(command_with_marker.as_bytes()).await
+				.map_err(|e| RecError::TestExecutionFailed(
+					format!("Failed to execute test command: {}", e)
+				))?;
+			child_stdin.flush().await
+				.map_err(|e| RecError::TestExecutionFailed(
+					format!("Failed to flush command to shell: {}", e)
+				))?;
 
 			let input_line = parser::get_statement_line(parser::Statement::Input, None);
 			let output_line = parser::get_statement_line(parser::Statement::Output, None);
@@ -167,9 +254,10 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 						// Check for end marker
 						let read_str = String::from_utf8_lossy(read_data);
 						if read_str.contains(END_MARKER) {
-							let end_pos = read_str.find(END_MARKER).unwrap();
-							output.push_str(&read_str[..end_pos]);
-							break;
+							if let Some(end_pos) = read_str.find(END_MARKER) {
+								output.push_str(&read_str[..end_pos]);
+								break;
+							}
 						}
 
 						// Append the raw bytes to output
@@ -246,8 +334,14 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 
 		// In the stdout handler
 		let mut stdout = tokio::io::stdout();
-		stdout.write_all(SHELL_PROMPT.as_bytes()).await.unwrap();
-		stdout.flush().await.unwrap();
+		stdout.write_all(SHELL_PROMPT.as_bytes()).await
+			.map_err(|e| RecError::RecordingError(
+				format!("Failed to write shell prompt during recording: {}", e)
+			))?;
+		stdout.flush().await
+			.map_err(|e| RecError::RecordingError(
+				format!("Failed to flush stdout during recording: {}", e)
+			))?;
 
 		stdout_handle = Some(tokio::spawn(async move {
 			let mut reader = BufReader::new(child_stdout);
@@ -299,8 +393,14 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 							// Update command start time for next command
 							command_start = Instant::now();
 
-							stdout.write_all(SHELL_PROMPT.as_bytes()).await.unwrap();
-							stdout.flush().await.unwrap();
+							if let Err(e) = stdout.write_all(SHELL_PROMPT.as_bytes()).await {
+								eprintln!("Failed to write shell prompt: {}", e);
+								break;
+							}
+							if let Err(e) = stdout.flush().await {
+								eprintln!("Failed to flush stdout: {}", e);
+								break;
+							}
 
 						} else {
 							// Write to stdout and store in buffer
@@ -330,14 +430,14 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 	child_guard.wait().await?;
 
 	// Cancel the I/O handlers
-	if stdin_handle.is_some() {
-		stdin_handle.unwrap().abort();
+	if let Some(handle) = stdin_handle {
+		handle.abort();
 	}
-	if stdout_handle.is_some() {
-		stdout_handle.unwrap().abort();
+	if let Some(handle) = stdout_handle {
+		handle.abort();
 	}
-	if signal_handle.is_some() {
-		signal_handle.unwrap().abort();
+	if let Some(handle) = signal_handle {
+		handle.abort();
 	}
 
 	flush_output_file(output_file, start_time).await;
@@ -348,13 +448,22 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 
 #[paw::main]
 fn main(opt: Opt) {
-	match async_main(opt) {
-		Ok(_) => (),
-		Err(e) => {
-			eprintln!("rec: {}", e);
-			std::process::exit(1);
-		}
-	};
+    let exit_code = match async_main(opt) {
+        Ok(_) => EXIT_SUCCESS,
+        Err(e) => {
+            eprintln!("rec: {}", e);
+            
+            // Try to downcast to RecError to get specific exit code
+            if let Some(rec_error) = e.downcast_ref::<RecError>() {
+                rec_error.exit_code()
+            } else {
+                // For any other anyhow::Error, use general error code
+                EXIT_TEST_EXECUTION_FAILED
+            }
+        }
+    };
+    
+    std::process::exit(exit_code);
 }
 
 /// This function cleans up all empty lines and removes the last line containing "exit" to make the consistent output
@@ -419,9 +528,31 @@ fn get_duration_line(duration: parser::Duration) -> String {
 
 /// Handle signals
 async fn handle_signals(child: &Arc<Mutex<Child>>) {
-	let mut sigterm = signal(SignalKind::terminate()).unwrap();
-	let mut sigint = signal(SignalKind::interrupt()).unwrap();
-	let mut sighup = signal(SignalKind::hangup()).unwrap();
+	let sigterm = match signal(SignalKind::terminate()) {
+		Ok(sig) => sig,
+		Err(e) => {
+			eprintln!("Warning: Failed to setup SIGTERM handler: {}", e);
+			return;
+		}
+	};
+	let sigint = match signal(SignalKind::interrupt()) {
+		Ok(sig) => sig,
+		Err(e) => {
+			eprintln!("Warning: Failed to setup SIGINT handler: {}", e);
+			return;
+		}
+	};
+	let sighup = match signal(SignalKind::hangup()) {
+		Ok(sig) => sig,
+		Err(e) => {
+			eprintln!("Warning: Failed to setup SIGHUP handler: {}", e);
+			return;
+		}
+	};
+
+	let mut sigterm = sigterm;
+	let mut sigint = sigint;
+	let mut sighup = sighup;
 
 	tokio::select! {
 	_ = sigterm.recv() => {
@@ -446,7 +577,15 @@ async fn handle_signals(child: &Arc<Mutex<Child>>) {
 }
 
 async fn flush_output_file(output_file: std::ffi::OsString, start_time: Instant) {
-	let file_path = output_file.into_string().unwrap();
+	let file_path = match output_file.into_string() {
+		Ok(path) => path,
+		Err(_) => {
+			eprintln!("Warning: Failed to convert output file path to string");
+			return;
+		}
+	};
 	let total_duration = Instant::now() - start_time;
-	cleanup_file(file_path, total_duration.as_millis()).await.unwrap();
+	if let Err(e) = cleanup_file(file_path, total_duration.as_millis()).await {
+		eprintln!("Warning: Failed to cleanup output file: {}", e);
+	}
 }
