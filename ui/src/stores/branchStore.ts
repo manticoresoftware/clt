@@ -98,6 +98,46 @@ function createBranchStore() {
         throw error;
       }
     },
+    checkoutAndPull: async (branch: string) => {
+      update(state => ({ ...state, isResetting: true, error: null, success: false, message: null }));
+      
+      try {
+        const response = await fetch(`${API_URL}/api/checkout-and-pull`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include',
+          body: JSON.stringify({ branch })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to checkout and pull branch');
+        }
+        
+        update(state => ({
+          ...state,
+          isResetting: false,
+          success: true,
+          currentBranch: branch,
+          message: data.message
+        }));
+        
+        // Refresh the file tree after successful checkout
+        await filesStore.refreshFileTree();
+        
+        return data;
+      } catch (error) {
+        update(state => ({
+          ...state,
+          isResetting: false,
+          error: error.message || 'An error occurred while checking out branch'
+        }));
+        throw error;
+      }
+    },
     setCurrentBranch: (branch: string) => update(state => ({ ...state, currentBranch: branch })),
     reset: () => set(initialState)
   };

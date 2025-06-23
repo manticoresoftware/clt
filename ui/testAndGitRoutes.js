@@ -837,6 +837,141 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
     }
   });
 
+  // Checkout and pull branch endpoint
+  app.post('/api/checkout-and-pull', isAuthenticated, async (req, res) => {
+    try {
+      const { branch } = req.body;
+
+      if (!branch) {
+        return res.status(400).json({ error: 'Branch name is required' });
+      }
+
+      // Check if user is authenticated with GitHub
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      // Get the user's repo path
+      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+
+      if (!repoExists) {
+        return res.status(404).json({ error: 'Repository not found' });
+      }
+
+      try {
+        // Initialize simple-git with the user's repo path
+        const git = simpleGit(userRepoPath);
+        ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
+
+        // Fetch latest from remote
+        await git.fetch(['--all']);
+        console.log('Fetched latest updates from remote');
+
+        // Get the list of branches to check if the requested branch exists
+        const branches = await git.branch();
+        const localBranchExists = branches.all.includes(branch);
+        const remoteBranchExists = branches.all.includes(`remotes/origin/${branch}`);
+
+        if (localBranchExists) {
+          // Local branch exists, checkout and pull
+          await git.checkout(branch);
+          console.log(`Switched to existing branch: ${branch}`);
+          
+          try {
+            await git.pull('origin', branch);
+            console.log(`Pulled latest changes for branch: ${branch}`);
+          } catch (pullError) {
+            console.warn(`Warning: Could not pull latest changes for ${branch}:`, pullError.message);
+            // Continue anyway - the checkout was successful
+          }
+        } else if (remoteBranchExists) {
+          // Remote branch exists, create local tracking branch
+          await git.checkout(['-b', branch, `origin/${branch}`]);
+          console.log(`Created and checked out branch ${branch} tracking origin/${branch}`);
+        } else {
+          return res.status(400).json({ 
+            error: `Branch '${branch}' not found locally or on remote` 
+          });
+        }
+
+        // Get current status to confirm
+        const status = await git.status();
+        const currentBranch = status.current;
+
+        return res.json({
+          success: true,
+          currentBranch: currentBranch,
+          message: `Successfully checked out and pulled branch: ${currentBranch}`
+        });
+      } catch (gitError) {
+        console.error('Git operation error:', gitError);
+        return res.status(500).json({
+          error: 'Git operation failed',
+          details: gitError.message || 'Unknown error during git operation'
+        });
+      }
+    } catch (error) {
+      console.error('Error in checkout-and-pull:', error);
+      res.status(500).json({ error: `Failed to checkout and pull branch: ${error.message}` });
+    }
+  });
+
+  // Check git status for unstaged changes
+  app.get('/api/git-status', isAuthenticated, async (req, res) => {
+    try {
+      // Check if user is authenticated with GitHub
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      // Get the user's repo path
+      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+
+      if (!repoExists) {
+        return res.status(404).json({ error: 'Repository not found' });
+      }
+
+      try {
+        // Initialize simple-git with the user's repo path
+        const git = simpleGit(userRepoPath);
+        
+        // Get current status
+        const status = await git.status();
+        
+        // Check for unstaged changes (modified, deleted, or untracked files)
+        const hasUnstagedChanges = !status.isClean() || 
+                                   status.not_added.length > 0 || 
+                                   status.conflicted.length > 0 ||
+                                   status.modified.length > 0 ||
+                                   status.deleted.length > 0;
+
+        return res.json({
+          hasUnstagedChanges,
+          currentBranch: status.current,
+          isClean: status.isClean(),
+          files: {
+            modified: status.modified,
+            not_added: status.not_added,
+            deleted: status.deleted,
+            conflicted: status.conflicted,
+            staged: status.staged
+          }
+        });
+      } catch (gitError) {
+        console.error('Git status error:', gitError);
+        return res.status(500).json({
+          error: 'Git status check failed',
+          details: gitError.message || 'Unknown error during git status check'
+        });
+      }
+    } catch (error) {
+      console.error('Error checking git status:', error);
+      res.status(500).json({ error: `Failed to check git status: ${error.message}` });
+    }
+  });
+
   app.post('/api/create-pr', isAuthenticated, async (req, res) => {
     const { title, description } = req.body;
     if (!title) return res.status(400).json({ error: 'PR title is required' });

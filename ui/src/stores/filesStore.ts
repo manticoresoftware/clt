@@ -184,6 +184,49 @@ const parseRecFileContent = (content: string): RecordingCommand[] => {
   return commands;
 };
 
+// Helper function to merge file trees while preserving user interaction state
+const mergeFileTreePreservingState = (oldTree: FileNode[], newTree: FileNode[]): FileNode[] => {
+  if (!oldTree || oldTree.length === 0) {
+    // No existing state to preserve, return new tree as-is
+    return newTree;
+  }
+
+  // Create a map of old tree nodes for quick lookup
+  const oldNodeMap = new Map<string, FileNode>();
+  const buildNodeMap = (nodes: FileNode[]) => {
+    nodes.forEach(node => {
+      oldNodeMap.set(node.path, node);
+      if (node.children) {
+        buildNodeMap(node.children);
+      }
+    });
+  };
+  buildNodeMap(oldTree);
+
+  // Recursively merge new tree with old state
+  const mergeNodes = (newNodes: FileNode[]): FileNode[] => {
+    return newNodes.map(newNode => {
+      const oldNode = oldNodeMap.get(newNode.path);
+      
+      if (oldNode && newNode.isDirectory && oldNode.isDirectory) {
+        // Directory exists in both - preserve structure and merge children
+        return {
+          ...newNode,
+          children: newNode.children ? mergeNodes(newNode.children) : undefined
+        };
+      } else {
+        // New node or different type - use new node as-is
+        return {
+          ...newNode,
+          children: newNode.children ? mergeNodes(newNode.children) : undefined
+        };
+      }
+    });
+  };
+
+  return mergeNodes(newTree);
+};
+
 // Helper function to determine if a file is loaded correctly
 const checkFileLoaded = async (path: string) => {
   try {
@@ -950,15 +993,6 @@ function createFilesStore() {
                 status: 'pending'
               }
             }));
-
-            // Automatically run the test after loading
-            setTimeout(async () => {
-              try {
-                await runCurrentTest();
-              } catch (error) {
-                console.error('Failed to auto-run test after loading:', error);
-              }
-            }, 100);
 
             return true;
           }

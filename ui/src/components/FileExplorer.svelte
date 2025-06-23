@@ -20,14 +20,56 @@
     resetBranch = $branchStore.defaultBranch;
   }
 
-  // Handler for reset to branch
+  // Parse URL parameters
+  function parseUrlParams(): {
+    filePath?: string;
+    testPath?: string;
+    dockerImage?: string;
+    branch?: string;
+    failedTests?: string[];
+  } {
+    const params = new URLSearchParams(window.location.search);
+    const hash = window.location.hash;
+    
+    let filePath: string | undefined;
+    
+    // Check for hash-based file path (legacy support)
+    if (hash && hash.startsWith('#file-')) {
+      filePath = decodeURIComponent(hash.substring(6));
+    }
+    
+    // Check for query parameter file path (preferred)
+    if (params.has('file')) {
+      filePath = params.get('file') || undefined;
+    }
+    
+    return {
+      filePath,
+      testPath: params.get('test_path') || undefined,
+      dockerImage: params.get('docker_image') || undefined,
+      branch: params.get('branch') || undefined,
+      failedTests: params.getAll('failed_tests[]')
+    };
+  }
+
+  // Store failed tests for highlighting
+  let failedTestPaths: Set<string> = new Set();
+
+  // Handler for reset to branch with unstaged changes check
   async function handleResetToBranch() {
     if (!resetBranch) return;
+
+    // Check for unstaged changes before proceeding
+    const canProceed = await checkUnstagedChanges();
+    if (!canProceed) {
+      return; // User cancelled
+    }
 
     try {
       await branchStore.resetToBranch(resetBranch);
 
       // Refresh the file tree after reset
+      preserveExpandedState();
       await filesStore.refreshFileTree();
 
       // Re-expand default folders after reset
@@ -56,10 +98,24 @@
   let newItemParentPath = '';
   let newItemInputElement: HTMLInputElement;
 
+  // Store expanded folders state and preserve it during updates
+  let preservedExpandedFolders: Set<string> = new Set();
+
+  // Preserve expanded state when file tree updates
   $: {
     if ($filesStore.fileTree) {
+      // If we have preserved state, restore it
+      if (preservedExpandedFolders.size > 0) {
+        expandedFolders = new Set(preservedExpandedFolders);
+        preservedExpandedFolders.clear();
+      }
       fileTree = $filesStore.fileTree;
     }
+  }
+
+  // Save expanded state before potential tree updates
+  function preserveExpandedState() {
+    preservedExpandedFolders = new Set(expandedFolders);
   }
 
 
@@ -87,17 +143,11 @@
     }
   }
 
-  // Update URL with file path without page reload
+  // Update URL with file path using query parameters
   function updateUrlWithFilePath(path: string) {
-    // Create URL with hash fragment for file path
     const url = new URL(window.location.href);
-    // Remove existing query parameters
-    url.search = '';
-    // Set hash to file-{path}
-    url.hash = `file-${encodeURIComponent(path)}`;
-
-    // Update the URL without reloading the page
-    window.history.pushState({}, '', url);
+    url.searchParams.set('test_path', path);
+    window.history.pushState({}, '', url.toString());
   }
 
   async function fetchFileContent(path: string) {
@@ -106,17 +156,18 @@
       const success = await filesStore.loadFile(path);
 
       if (!success) {
-        // If file doesn't exist or couldn't be loaded, create it as a new file
-        if (path.endsWith('.rec') || path.endsWith('.recb')) {
-          filesStore.createNewFile(path);
-        }
+        // Show error instead of creating file
+        console.error(`File not found: ${path}`);
+        alert(`Error: File "${path}" does not exist.`);
+        // Clear the URL hash to remove the invalid file reference
+        window.history.replaceState({}, '', window.location.pathname + window.location.search);
+        return;
       }
     } catch (error) {
       console.error('Error loading file:', error);
-      // If file doesn't exist, create it with empty content
-      if (path.endsWith('.rec') || path.endsWith('.recb')) {
-        filesStore.createNewFile(path);
-      }
+      alert(`Error loading file "${path}": ${error.message || error}`);
+      // Clear the URL hash to remove the invalid file reference
+      window.history.replaceState({}, '', window.location.pathname + window.location.search);
     }
   }
 
@@ -411,25 +462,75 @@
 
   // Initialize file explorer
   onMount(async () => {
-    // Check URL hash for file path
-    const hash = window.location.hash;
-    let filePath = null;
+    // Parse URL parameters
+    const urlParams = parseUrlParams();
+    
+    // If we have parameters that might affect git state, check for unstaged changes first
+    const hasGitAffectingParams = urlParams.branch || urlParams.filePath;
+    if (hasGitAffectingParams) {
+      const canProceed = await checkUnstagedChanges();
+      if (!canProceed) {
+        // User cancelled, re-parse params (they should be cleared now)
+        const clearedParams = parseUrlParams();
+        // Set failed tests for highlighting (this is safe to do)
+        if (clearedParams.failedTests) {
+          failedTestPaths = new Set(clearedParams.failedTests);
+        }
+        
+        // Continue with normal initialization but skip git operations
+        await filesStore.refreshFileTree();
+        gitStatusStore.startPolling(5000);
+        
+        // Start file tree polling
+        const fileTreePollingInterval = setInterval(async () => {
+          await filesStore.refreshFileTree();
+        }, 10000);
+        
+        window.addEventListener('popstate', handleUrlChange);
+        document.addEventListener('click', handleDocumentClick);
+        
+        return () => {
+          clearInterval(fileTreePollingInterval);
+        };
+      }
+    }
+    
+    // Set failed tests for highlighting
+    if (urlParams.failedTests) {
+      failedTestPaths = new Set(urlParams.failedTests);
+    }
 
-    if (hash && hash.startsWith('#file-')) {
-      // Extract the file path from the hash
-      filePath = decodeURIComponent(hash.substring(6)); // Remove '#file-' prefix
+    // Set docker image if provided
+    if (urlParams.dockerImage) {
+      filesStore.setDockerImage(urlParams.dockerImage);
+    }
+
+    // Handle branch switching if needed
+    if (urlParams.branch && urlParams.branch !== $branchStore.currentBranch) {
+      try {
+        await branchStore.checkoutAndPull(urlParams.branch);
+      } catch (error) {
+        console.error('Failed to switch branch:', error);
+        alert(`Failed to switch to branch "${urlParams.branch}": ${error.message}`);
+      }
     }
 
     // Fetch the file tree from the backend
+    preserveExpandedState();
     await filesStore.refreshFileTree();
 
     // Start git status polling
     gitStatusStore.startPolling(5000); // Poll every 5 seconds
+    
+    // Start file tree polling for new files
+    const fileTreePollingInterval = setInterval(async () => {
+      await filesStore.refreshFileTree();
+    }, 10000); // Poll every 10 seconds
 
-    // If file path is specified in URL hash, open it
-    if (filePath) {
+    // If file path is specified in URL, open it
+    if (urlParams.filePath) {
       // Expand all parent folders to the file
-      const pathParts = filePath.split('/');
+      const pathParts = urlParams.filePath.split('/');
       let currentPath = '';
       for (let i = 0; i < pathParts.length - 1; i++) {
         if (i > 0) currentPath += '/';
@@ -439,20 +540,25 @@
       expandedFolders = expandedFolders; // Trigger reactivity
 
       // Load the file
-      fetchFileContent(filePath);
+      fetchFileContent(urlParams.filePath);
     }
 
-    // Listen for hash changes to load files when URL changes
-    window.addEventListener('hashchange', handleHashChange);
+    // Listen for URL parameter changes
+    window.addEventListener('popstate', handleUrlChange);
     
     // Listen for clicks to cancel new item creation
     document.addEventListener('click', handleDocumentClick);
+
+    // Cleanup function
+    return () => {
+      clearInterval(fileTreePollingInterval);
+    };
   });
 
   // Cleanup on destroy
   onDestroy(() => {
     gitStatusStore.stopPolling();
-    window.removeEventListener('hashchange', handleHashChange);
+    window.removeEventListener('popstate', handleUrlChange);
     document.removeEventListener('click', handleDocumentClick);
   });
 
@@ -575,21 +681,50 @@
     showRecycleBin = false;
   }
 
-  // Handle URL hash changes
-  function handleHashChange() {
-    const hash = window.location.hash;
-    if (hash && hash.startsWith('#file-')) {
-      // Extract the file path from the hash
-      const filePath = decodeURIComponent(hash.substring(6)); // Remove '#file-' prefix
-
+  // Handle URL parameter changes
+  async function handleUrlChange() {
+    const urlParams = parseUrlParams();
+    
+    // If we have parameters that might affect git state, check for unstaged changes first
+    const hasGitAffectingParams = urlParams.branch || urlParams.filePath;
+    if (hasGitAffectingParams) {
+      const canProceed = await checkUnstagedChanges();
+      if (!canProceed) {
+        // User cancelled, stop processing
+        return;
+      }
+    }
+    
+    if (urlParams.filePath) {
       // Load the file if it's different from the current file
-      if (!$filesStore.currentFile || $filesStore.currentFile.path !== filePath) {
-        fetchFileContent(filePath);
+      if (!$filesStore.currentFile || $filesStore.currentFile.path !== urlParams.filePath) {
+        fetchFileContent(urlParams.filePath);
       }
     } else {
-      // No hash or invalid hash - clear the current file
-      // We need to clear the current file from the store when hash is removed
-      // This will be handled by the clearSelection function directly
+      // Clear current file if no test_path parameter
+      filesStore.clearCurrentFile();
+    }
+    
+    // Update failed tests highlighting
+    if (urlParams.failedTests) {
+      failedTestPaths = new Set(urlParams.failedTests);
+    } else {
+      failedTestPaths = new Set();
+    }
+    
+    // Update docker image if provided
+    if (urlParams.dockerImage) {
+      filesStore.setDockerImage(urlParams.dockerImage);
+    }
+    
+    // Handle branch switching if needed
+    if (urlParams.branch && urlParams.branch !== $branchStore.currentBranch) {
+      try {
+        await branchStore.checkoutAndPull(urlParams.branch);
+      } catch (error) {
+        console.error('Failed to switch branch:', error);
+        alert(`Failed to switch to branch "${urlParams.branch}": ${error.message}`);
+      }
     }
   }
 
@@ -645,8 +780,29 @@
     }
   }
 
-  // Get git status for a file (reactive)
+  // Check if directory contains failed tests (same pattern as isDirModified)
+  function isDirWithFailedTests(dirPath: string): boolean {
+    // Check if any failed test is within this directory
+    for (const failedTest of failedTestPaths) {
+      if (failedTest.startsWith(dirPath + '/')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Get git status for a file (reactive) with failed test highlighting
   function getFileGitStatus(filePath: string): string | null {
+    // Check if file is in failed tests first
+    if (failedTestPaths.has(filePath)) {
+      return 'F'; // Special status for failed tests
+    }
+    
+    // Check if this is a directory containing failed tests (same as isDirModified pattern)
+    if (isDirWithFailedTests(filePath)) {
+      return 'F'; // Mark directories with failed tests
+    }
+    
     // Try exact match first
     const exactMatch = $gitStatusStore.modifiedFiles.find(file => file.path === filePath);
     if (exactMatch) {
@@ -712,6 +868,7 @@
       case 'C': return 'C';
       case 'U': return 'U';
       case '??': return 'U'; // Untracked
+      case 'F': return 'F'; // Failed test
       default: return status;
     }
   }
@@ -727,6 +884,7 @@
       case 'C': return 'git-copied';
       case 'U': return 'git-unmerged';
       case '??': return 'git-untracked';
+      case 'F': return 'git-failed'; // Failed test
       default: return 'git-unknown';
     }
   }
@@ -1190,7 +1348,7 @@
             </span>
             Resetting...
           {:else}
-            Reset
+            OK
           {/if}
         </button>
       </div>
@@ -1593,6 +1751,11 @@
     color: #9ca3af;
   }
 
+  .git-failed {
+    color: #dc2626;
+    font-weight: bold;
+  }
+
   /* Tree item layout adjustments for git status */
   .tree-item {
     display: flex;
@@ -1670,6 +1833,11 @@
 
   .tree-item.has-git-status.git-untracked .tree-item-name {
     color: #6b7280;
+  }
+
+  .tree-item.has-git-status.git-failed .tree-item-name {
+    color: #dc2626;
+    font-weight: bold;
   }
 
   /* Selected items override git status colors */
