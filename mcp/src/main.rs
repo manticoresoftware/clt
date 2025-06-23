@@ -3,7 +3,7 @@ mod pattern_refiner;
 mod test_runner;
 
 use crate::mcp_protocol::*;
-use parser::{TestStep, TestStructure};
+
 use pattern_refiner::PatternRefiner;
 use test_runner::TestRunner;
 

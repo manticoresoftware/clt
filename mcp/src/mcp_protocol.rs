@@ -2,32 +2,6 @@ pub use parser::{TestStep, TestStructure};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
-/// Custom deserializer for TestStructure that handles both object and string formats
-fn deserialize_test_structure<'de, D>(deserializer: D) -> Result<TestStructure, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::Error;
-    use serde_json::Value;
-
-    let value = Value::deserialize(deserializer)?;
-
-    match value {
-        // Try to deserialize as TestStructure object first
-        Value::Object(_) => TestStructure::deserialize(value).map_err(D::Error::custom),
-        // If it's a string, try to parse it as JSON
-        Value::String(s) => {
-            let parsed_value: Value = serde_json::from_str(&s).map_err(|e| {
-                D::Error::custom(format!("Invalid JSON string in test_structure: {}", e))
-            })?;
-            TestStructure::deserialize(parsed_value).map_err(D::Error::custom)
-        }
-        _ => Err(D::Error::custom(
-            "test_structure must be an object or a JSON string",
-        )),
-    }
-}
-
 /// Wrapper for TestStructure that tracks if it was parsed from a string
 #[derive(Debug)]
 pub struct TestStructureWithWarning {
@@ -249,13 +223,6 @@ pub struct ReadTestOutput {
     pub steps: Vec<TestStep>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct WriteTestInput {
-    pub test_file: String,
-    #[serde(deserialize_with = "deserialize_test_structure")]
-    pub test_structure: TestStructure,
-}
-
 /// Version of WriteTestInput that tracks if test_structure was parsed from string
 #[derive(Debug, Deserialize)]
 pub struct WriteTestInputWithWarning {
@@ -267,15 +234,6 @@ pub struct WriteTestInputWithWarning {
 pub struct WriteTestOutput {
     pub success: bool,
 }
-#[derive(Debug, Deserialize)]
-pub struct TestReplaceInput {
-    pub test_file: String,
-    #[serde(deserialize_with = "deserialize_test_structure")]
-    pub old_test_structure: TestStructure,
-    #[serde(deserialize_with = "deserialize_test_structure")]
-    pub new_test_structure: TestStructure,
-}
-
 /// Version of TestReplaceInput that tracks if test_structure was parsed from string
 #[derive(Debug, Deserialize)]
 pub struct TestReplaceInputWithWarning {
@@ -288,13 +246,6 @@ pub struct TestReplaceInputWithWarning {
 pub struct TestReplaceOutput {
     pub success: bool,
     pub message: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct TestAppendInput {
-    pub test_file: String,
-    #[serde(deserialize_with = "deserialize_test_structure")]
-    pub test_structure: TestStructure,
 }
 
 /// Version of TestAppendInput that tracks if test_structure was parsed from string
