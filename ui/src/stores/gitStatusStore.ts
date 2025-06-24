@@ -126,8 +126,75 @@ function createGitStatusStore() {
       unsubscribe();
       
       return currentState!.modifiedDirs.includes(dirPath);
+    },
+    
+    // Check for unstaged changes and prompt user if they exist
+    checkUnstagedChanges: async (): Promise<boolean> => {
+      // First ensure we have fresh git status
+      await gitStatusStore.fetchGitStatus();
+      
+      let currentState: GitStatusState;
+      const unsubscribe = subscribe(state => {
+        currentState = state;
+      });
+      unsubscribe();
+      
+      // If no changes, proceed
+      if (!currentState!.hasChanges) {
+        return true;
+      }
+      
+      // If there are changes, prompt user
+      const fileCount = currentState!.modifiedFiles.length;
+      const fileList = currentState!.modifiedFiles
+        .slice(0, 5) // Show first 5 files
+        .map(file => `  ${file.status} ${file.path}`)
+        .join('\n');
+      
+      const moreFiles = fileCount > 5 ? `\n  ... and ${fileCount - 5} more files` : '';
+      
+      const message = `You have ${fileCount} unstaged change${fileCount > 1 ? 's' : ''} in your working directory:\n\n${fileList}${moreFiles}\n\nProceeding will potentially affect these changes. Do you want to continue?`;
+      
+      return confirm(message);
+    },
+    
+    // Checkout a single file to discard changes
+    checkoutFile: async (filePath: string): Promise<boolean> => {
+      try {
+        const response = await fetch(`${API_URL}/api/checkout-file`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({ filePath })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+          console.error('Checkout file failed:', data.error);
+          alert(`Failed to checkout file: ${data.error}`);
+          return false;
+        }
+        
+        console.log('File checked out successfully:', data.message);
+        
+        // Refresh git status after checkout
+        await gitStatusStore.fetchGitStatus();
+        
+        return true;
+      } catch (error) {
+        console.error('Error checking out file:', error);
+        alert(`Error checking out file: ${error.message}`);
+        return false;
+      }
     }
   };
 }
 
 export const gitStatusStore = createGitStatusStore();
+
+// Export functions for direct import
+export const checkUnstagedChanges = gitStatusStore.checkUnstagedChanges;
+export const checkoutFile = gitStatusStore.checkoutFile;

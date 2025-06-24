@@ -26,7 +26,7 @@ function saveSessionToPersistentStorage(session, username) {
 
   try {
     const userLogDir = path.join(logDir, username);
-    
+
     // Create user directory if it doesn't exist
     if (!existsSync(userLogDir)) {
       fs.mkdir(userLogDir, { recursive: true }).catch(console.error);
@@ -927,7 +927,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
           // Local branch exists, checkout and pull
           await git.checkout(branch);
           console.log(`Switched to existing branch: ${branch}`);
-          
+
           try {
             await git.pull('origin', branch);
             console.log(`Pulled latest changes for branch: ${branch}`);
@@ -940,8 +940,8 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
           await git.checkout(['-b', branch, `origin/${branch}`]);
           console.log(`Created and checked out branch ${branch} tracking origin/${branch}`);
         } else {
-          return res.status(400).json({ 
-            error: `Branch '${branch}' not found locally or on remote` 
+          return res.status(400).json({
+            error: `Branch '${branch}' not found locally or on remote`
           });
         }
 
@@ -986,13 +986,13 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
       try {
         // Initialize simple-git with the user's repo path
         const git = simpleGit(userRepoPath);
-        
+
         // Get current status
         const status = await git.status();
-        
+
         // Check for unstaged changes (modified, deleted, or untracked files)
-        const hasUnstagedChanges = !status.isClean() || 
-                                   status.not_added.length > 0 || 
+        const hasUnstagedChanges = !status.isClean() ||
+                                   status.not_added.length > 0 ||
                                    status.conflicted.length > 0 ||
                                    status.modified.length > 0 ||
                                    status.deleted.length > 0;
@@ -1157,9 +1157,9 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
   // Utility function to extract cost from logs (check last 100 lines or find first match)
   function extractCostFromLogs(logs) {
     if (!logs || logs.length === 0) return null;
-    
+
     const costRegex = /cost:\s*\$(\d+\.?\d*)/gi;
-    
+
     // Check last 100 lines first for most recent cost
     const linesToCheck = logs.slice(-100);
     for (let i = linesToCheck.length - 1; i >= 0; i--) {
@@ -1168,7 +1168,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
         return parseFloat(matches[matches.length - 1][1]);
       }
     }
-    
+
     // If no cost found in last 100 lines, check all logs for first occurrence
     for (let i = 0; i < logs.length; i++) {
       const matches = [...logs[i].matchAll(costRegex)];
@@ -1176,14 +1176,14 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
         return parseFloat(matches[0][1]);
       }
     }
-    
+
     return null;
   }
 
   // Utility function to sanitize session names for file system compatibility
   function sanitizeSessionName(name) {
     if (!name || !name.trim()) return '';
-    
+
     return name.trim()
       .toLowerCase()
       .replace(/[^a-z0-9\s-]/g, '') // Remove special characters except spaces and hyphens
@@ -1216,7 +1216,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
 
       // Generate session ID with optional name
       const sanitizedSessionName = sessionName ? sanitizeSessionName(sessionName) : '';
-      const sessionId = sanitizedSessionName 
+      const sessionId = sanitizedSessionName
         ? `${username}-${sanitizedSessionName}-${Date.now()}`
         : `${username}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
@@ -1237,7 +1237,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
         const fileName = `${sessionName || sessionId}_${timestamp}.log`;
         const userLogDir = path.join(logDir, username);
         logFile = path.join(userLogDir, fileName);
-        
+
         // Ensure directory exists
         if (!existsSync(userLogDir)) {
           fs.mkdir(userLogDir, { recursive: true }).catch(console.error);
@@ -1304,7 +1304,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
       childProcess.stdout.on('data', (data) => {
         const output = data.toString();
         session.logs.push(output);
-        
+
         // Write to log file if configured
         if (logFile) {
           try {
@@ -1313,10 +1313,10 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
             console.error('Failed to write to log file:', error);
           }
         }
-        
+
         // Update cost in real-time
         session.cost = extractCostFromLogs(session.logs);
-        
+
         console.log(`Session ${sessionId} stdout:`, output);
       });
 
@@ -1325,7 +1325,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
         const output = data.toString();
         const logEntry = `STDERR: ${output}`;
         session.logs.push(logEntry);
-        
+
         // Write to log file if configured
         if (logFile) {
           try {
@@ -1334,10 +1334,10 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
             console.error('Failed to write to log file:', error);
           }
         }
-        
+
         // Update cost in real-time
         session.cost = extractCostFromLogs(session.logs);
-        
+
         console.log(`Session ${sessionId} stderr:`, output);
       });
 
@@ -1492,28 +1492,28 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
     try {
       const username = req.user.username;
       const logDir = process.env.ASK_AI_LOG;
-      
+
       if (!logDir) {
         return res.json({ sessions: [], persistent: false });
       }
-      
+
       const userLogDir = path.join(logDir, username);
-      
+
       if (!existsSync(userLogDir)) {
         return res.json({ sessions: [], persistent: true });
       }
-      
+
       const logFiles = readdirSync(userLogDir)
         .filter(file => file.endsWith('.log'))
         .map(file => {
           const filePath = path.join(userLogDir, file);
           const stats = statSync(filePath);
-          
+
           try {
             // Read the JSON session data
             const sessionData = JSON.parse(readFileSync(filePath, 'utf8'));
             const metadata = sessionData.metadata || {};
-            
+
             return {
               sessionId: metadata.sessionId || file.replace('.log', ''),
               sessionName: metadata.sessionName || 'Unknown Session',
@@ -1531,7 +1531,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
             // Fallback for old format or corrupted files
             console.warn(`Failed to parse session file ${filePath}:`, error);
             const [sessionName, timestamp] = file.replace('.log', '').split('_');
-            
+
             return {
               sessionId: sessionName,
               sessionName: sessionName.includes('-') ? sessionName.split('-').slice(1, -1).join('-') : sessionName,
@@ -1548,7 +1548,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
           }
         })
         .sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
-      
+
       // Check if there's a currently active session
       const currentSession = global.interactiveSessions[username];
       if (currentSession && currentSession.running) {
@@ -1573,7 +1573,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
           logFiles[activeSessionIndex].active = true;
         }
       }
-      
+
       res.json({ sessions: logFiles, persistent: true });
     } catch (error) {
       console.error('Error listing sessions:', error);
@@ -1587,34 +1587,34 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
       const { sessionId } = req.params;
       const username = req.user.username;
       const logDir = process.env.ASK_AI_LOG;
-      
+
       if (!logDir) {
         return res.status(404).json({ error: 'Persistent logging not configured' });
       }
-      
+
       const userLogDir = path.join(logDir, username);
-      
+
       if (!existsSync(userLogDir)) {
         return res.status(404).json({ error: 'Session logs not found' });
       }
-      
+
       const logFiles = readdirSync(userLogDir)
         .filter(file => file.includes(sessionId) && file.endsWith('.log'));
-      
+
       if (logFiles.length === 0) {
         return res.status(404).json({ error: 'Session logs not found' });
       }
-      
+
       const logFile = path.join(userLogDir, logFiles[0]);
-      
+
       try {
         // Try to read as JSON (new format)
         const sessionData = JSON.parse(readFileSync(logFile, 'utf8'));
         const metadata = sessionData.metadata || {};
         const logs = sessionData.logs || [];
-        
-        res.json({ 
-          sessionId: metadata.sessionId || sessionId, 
+
+        res.json({
+          sessionId: metadata.sessionId || sessionId,
           sessionName: metadata.sessionName || 'Unknown Session',
           logs: logs,
           output: sessionData.output || logs.join(''),
@@ -1633,9 +1633,9 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
         const logs = readFileSync(logFile, 'utf8');
         const logLines = logs.split('\n').filter(line => line.trim());
         const cost = extractCostFromLogs(logLines);
-        
-        res.json({ 
-          sessionId, 
+
+        res.json({
+          sessionId,
           sessionName: sessionId,
           logs: logLines,
           output: logs,
@@ -1652,6 +1652,66 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
     } catch (error) {
       console.error('Error getting session logs:', error);
       res.status(500).json({ error: 'Failed to get session logs' });
+			}
+
+	});
+  // Checkout a single file to discard changes
+  app.post('/api/checkout-file', isAuthenticated, async (req, res) => {
+    try {
+      // Check if user is authenticated with GitHub
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      const { filePath } = req.body;
+      if (!filePath) {
+        return res.status(400).json({ error: 'File path is required' });
+      }
+
+      // Get the user's repo path
+      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+
+      if (!repoExists) {
+        return res.status(404).json({ error: 'Repository not found' });
+      }
+
+      try {
+        // Initialize simple-git with the user's repo path
+        const git = simpleGit(userRepoPath);
+
+        // Check if file exists and has changes
+        const status = await git.status();
+        const fileHasChanges = status.modified.includes(filePath) ||
+                              status.not_added.includes(filePath) ||
+                              status.deleted.includes(filePath);
+
+        if (!fileHasChanges) {
+          return res.status(400).json({ error: 'File has no changes to discard' });
+        }
+
+        // Checkout the file to discard changes
+        await git.checkout(['HEAD', '--', filePath]);
+
+        console.log(`Successfully checked out file: ${filePath}`);
+
+        return res.json({
+          success: true,
+          message: `Successfully discarded changes to ${filePath}`,
+          filePath: filePath
+        });
+
+      } catch (gitError) {
+        console.error('Git checkout error:', gitError);
+        return res.status(500).json({
+          error: 'Failed to checkout file',
+          details: gitError.message
+        });
+      }
+
+    } catch (error) {
+      console.error('Error in checkout-file endpoint:', error);
+      res.status(500).json({ error: 'Failed to checkout file' });
     }
   });
 }
