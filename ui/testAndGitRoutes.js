@@ -1192,6 +1192,69 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
       .replace(/^-|-$/g, '');       // Remove leading/trailing hyphens
   }
 
+  // Utility function to write logs synchronously to both console and file
+  function writeLogEntry(session, logEntry, logType = 'INFO') {
+    const timestamp = new Date().toISOString();
+    const formattedEntry = `[${timestamp}] [${logType}] ${logEntry}`;
+    
+    // Add to session logs array
+    session.logs.push(logEntry);
+    
+    // Write to console (same as before)
+    console.log(`Session ${session.id} ${logType.toLowerCase()}:`, logEntry);
+    
+    // Write to log file immediately if configured
+    if (session.logFile) {
+      try {
+        appendFileSync(session.logFile, logEntry);
+      } catch (error) {
+        console.error(`Failed to write to log file ${session.logFile}:`, error);
+      }
+    }
+    
+    // Update cost in real-time
+    session.cost = extractCostFromLogs(session.logs);
+    
+    // Update session metadata in persistent storage incrementally
+    if (session.logFile) {
+      updateSessionMetadata(session);
+    }
+  }
+
+  // Utility function to update session metadata incrementally
+  function updateSessionMetadata(session) {
+    if (!session.logFile) return;
+    
+    try {
+      const metadata = {
+        sessionId: session.id,
+        sessionName: session.name,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        completed: session.completed,
+        cancelled: session.cancelled,
+        failed: session.failed,
+        exitCode: session.exitCode,
+        error: session.error,
+        cost: session.cost,
+        active: session.active || false,
+        lastUpdated: new Date().toISOString()
+      };
+
+      const sessionData = {
+        metadata,
+        logs: session.logs,
+        output: session.output || session.logs.join('')
+      };
+
+      // Write metadata to a separate .meta file for incremental updates
+      const metaFile = session.logFile.replace('.log', '.meta');
+      writeFileSync(metaFile, JSON.stringify(sessionData, null, 2));
+    } catch (error) {
+      console.error('Failed to update session metadata:', error);
+    }
+  }
+
   // Interactive session endpoints
   // Start a new interactive command session
   app.post('/api/interactive/start', isAuthenticated, async (req, res) => {
@@ -1238,9 +1301,15 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
         const userLogDir = path.join(logDir, username);
         logFile = path.join(userLogDir, fileName);
 
-        // Ensure directory exists
-        if (!existsSync(userLogDir)) {
-          fs.mkdir(userLogDir, { recursive: true }).catch(console.error);
+        // Ensure directory exists synchronously before creating log file
+        try {
+          if (!existsSync(userLogDir)) {
+            await fs.mkdir(userLogDir, { recursive: true });
+            console.log(`Created log directory: ${userLogDir}`);
+          }
+        } catch (error) {
+          console.error('Failed to create log directory:', error);
+          logFile = null; // Disable logging if directory creation fails
         }
       }
 
@@ -1267,6 +1336,24 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
 
       global.interactiveSessions[username] = session;
 
+      // Log session start information
+      const sessionStartLog = `=== SESSION START ===
+Session ID: ${sessionId}
+Session Name: ${session.name}
+Username: ${username}
+Start Time: ${session.startTime.toISOString()}
+Command: ${askAiCommand}
+Timeout: ${askAiTimeout}ms
+Input Length: ${input.length} characters
+Log File: ${logFile || 'Not configured'}
+=== INPUT ===
+${input}
+=== OUTPUT ===
+`;
+
+      // Write initial session information
+      writeLogEntry(session, sessionStartLog, 'START');
+
       // Import child_process
       const { spawn } = await import('child_process');
 
@@ -1291,8 +1378,17 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
         if (session.running && childProcess) {
           console.log(`Session ${sessionId} timed out after ${askAiTimeout}ms`);
           childProcess.kill('SIGTERM');
-          session.logs.push(`\nTIMEOUT: Command timed out after ${askAiTimeout}ms`);
-          session.cost = extractCostFromLogs(session.logs);
+          
+          const timeoutLog = `
+=== SESSION TIMEOUT ===
+Session ID: ${sessionId}
+Timeout: ${askAiTimeout}ms
+Time: ${new Date().toISOString()}
+Process terminated due to timeout
+=== TIMEOUT END ===
+`;
+          
+          writeLogEntry(session, timeoutLog, 'TIMEOUT');
         }
       }, askAiTimeout);
 
@@ -1303,42 +1399,14 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
       // Handle stdout
       childProcess.stdout.on('data', (data) => {
         const output = data.toString();
-        session.logs.push(output);
-
-        // Write to log file if configured
-        if (logFile) {
-          try {
-            appendFileSync(logFile, output);
-          } catch (error) {
-            console.error('Failed to write to log file:', error);
-          }
-        }
-
-        // Update cost in real-time
-        session.cost = extractCostFromLogs(session.logs);
-
-        console.log(`Session ${sessionId} stdout:`, output);
+        writeLogEntry(session, output, 'STDOUT');
       });
 
       // Handle stderr
       childProcess.stderr.on('data', (data) => {
         const output = data.toString();
         const logEntry = `STDERR: ${output}`;
-        session.logs.push(logEntry);
-
-        // Write to log file if configured
-        if (logFile) {
-          try {
-            appendFileSync(logFile, logEntry);
-          } catch (error) {
-            console.error('Failed to write to log file:', error);
-          }
-        }
-
-        // Update cost in real-time
-        session.cost = extractCostFromLogs(session.logs);
-
-        console.log(`Session ${sessionId} stderr:`, output);
+        writeLogEntry(session, logEntry, 'STDERR');
       });
 
       // Handle process completion
@@ -1352,7 +1420,22 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
         session.cost = extractCostFromLogs(session.logs);
         session.active = false; // Mark as inactive
 
-        // Save session data persistently
+        // Log session completion
+        const completionLog = `
+=== SESSION END ===
+Session ID: ${sessionId}
+End Time: ${session.endTime.toISOString()}
+Exit Code: ${code}
+Duration: ${session.endTime.getTime() - session.startTime.getTime()}ms
+Cost: ${session.cost ? '$' + session.cost.toFixed(5) : 'N/A'}
+Status: ${code === 0 ? 'SUCCESS' : 'FAILED'}
+Total Log Entries: ${session.logs.length}
+=== SESSION COMPLETE ===
+`;
+        
+        writeLogEntry(session, completionLog, 'END');
+
+        // Save session data persistently (final save)
         saveSessionToPersistentStorage(session, username);
 
         // Clear timeout
@@ -1379,11 +1462,25 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
         session.completed = true;
         session.failed = true;
         session.error = error.message;
-        session.logs.push(`ERROR: ${error.message}`);
-        session.output = session.logs.join('');
-        session.cost = extractCostFromLogs(session.logs);
         session.endTime = new Date();
         session.active = false; // Mark as inactive
+
+        // Log error with details
+        const errorLog = `
+=== SESSION ERROR ===
+Session ID: ${sessionId}
+Error Time: ${session.endTime.toISOString()}
+Error Message: ${error.message}
+Duration: ${session.endTime.getTime() - session.startTime.getTime()}ms
+=== ERROR DETAILS ===
+${error.stack || error.message}
+=== SESSION TERMINATED ===
+`;
+        
+        writeLogEntry(session, errorLog, 'ERROR');
+        
+        session.output = session.logs.join('');
+        session.cost = extractCostFromLogs(session.logs);
 
         // Save session data persistently
         saveSessionToPersistentStorage(session, username);
@@ -1503,8 +1600,20 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
         return res.json({ sessions: [], persistent: true });
       }
 
-      const logFiles = readdirSync(userLogDir)
-        .filter(file => file.endsWith('.log'))
+      const allFiles = readdirSync(userLogDir)
+        .filter(file => file.endsWith('.log') || file.endsWith('.meta'));
+
+      // Group files by session ID to prefer .meta over .log
+      const sessionMap = new Map();
+      
+      allFiles.forEach(file => {
+        const sessionId = file.replace(/\.(log|meta)$/, '');
+        if (!sessionMap.has(sessionId) || file.endsWith('.meta')) {
+          sessionMap.set(sessionId, file);
+        }
+      });
+
+      const logFiles = Array.from(sessionMap.values())
         .map(file => {
           const filePath = path.join(userLogDir, file);
           const stats = statSync(filePath);
@@ -1515,7 +1624,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
             const metadata = sessionData.metadata || {};
 
             return {
-              sessionId: metadata.sessionId || file.replace('.log', ''),
+              sessionId: metadata.sessionId || file.replace(/\.(log|meta)$/, ''),
               sessionName: metadata.sessionName || 'Unknown Session',
               startTime: metadata.startTime ? new Date(metadata.startTime) : stats.birthtime,
               endTime: metadata.endTime ? new Date(metadata.endTime) : null,
@@ -1530,7 +1639,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
           } catch (error) {
             // Fallback for old format or corrupted files
             console.warn(`Failed to parse session file ${filePath}:`, error);
-            const [sessionName, timestamp] = file.replace('.log', '').split('_');
+            const [sessionName, timestamp] = file.replace(/\.(log|meta)$/, '').split('_');
 
             return {
               sessionId: sessionName,
@@ -1599,17 +1708,21 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
       }
 
       const logFiles = readdirSync(userLogDir)
-        .filter(file => file.includes(sessionId) && file.endsWith('.log'));
+        .filter(file => file.includes(sessionId) && (file.endsWith('.log') || file.endsWith('.meta')));
 
       if (logFiles.length === 0) {
         return res.status(404).json({ error: 'Session logs not found' });
       }
 
-      const logFile = path.join(userLogDir, logFiles[0]);
+      // Prefer .meta files for most up-to-date information
+      const metaFile = logFiles.find(file => file.endsWith('.meta'));
+      const logFile = logFiles.find(file => file.endsWith('.log'));
+      
+      const primaryFile = metaFile ? path.join(userLogDir, metaFile) : path.join(userLogDir, logFile);
 
       try {
-        // Try to read as JSON (new format)
-        const sessionData = JSON.parse(readFileSync(logFile, 'utf8'));
+        // Try to read as JSON (new format from .meta or .log)
+        const sessionData = JSON.parse(readFileSync(primaryFile, 'utf8'));
         const metadata = sessionData.metadata || {};
         const logs = sessionData.logs || [];
 
@@ -1625,7 +1738,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
           cancelled: metadata.cancelled || false,
           failed: metadata.failed || false,
           active: metadata.active || false,
-          logFile: logFiles[0]
+          logFile: metaFile || logFile
         });
       } catch (parseError) {
         // Fallback for old format (plain text logs)
