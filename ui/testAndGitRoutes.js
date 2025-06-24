@@ -1277,11 +1277,64 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
         return res.status(409).json({ error: 'Another command is already running for this user' });
       }
 
-      // Generate session ID with optional name
-      const sanitizedSessionName = sessionName ? sanitizeSessionName(sessionName) : '';
-      const sessionId = sanitizedSessionName
-        ? `${username}-${sanitizedSessionName}-${Date.now()}`
-        : `${username}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      // Check if continuing an existing session or creating a new one
+      let sessionId;
+      let sanitizedSessionName = sessionName ? sanitizeSessionName(sessionName) : '';
+      let isSessionContinuation = false;
+      
+      // If sessionName is provided, check if we're continuing an existing session
+      if (sanitizedSessionName) {
+        // First check if there was a recently completed session with the same name
+        const recentSession = global.interactiveSessions[username];
+        
+        if (recentSession && !recentSession.running && recentSession.name === sanitizedSessionName) {
+          // Continue the recent session
+          sessionId = recentSession.id;
+          isSessionContinuation = true;
+          console.log(`Continuing recent session: ${sessionId}`);
+        } else {
+          // Look for existing session files with this name
+          const logDir = process.env.ASK_AI_LOG;
+          if (logDir) {
+            const userLogDir = path.join(logDir, username);
+            if (existsSync(userLogDir)) {
+              const existingFiles = readdirSync(userLogDir)
+                .filter(file => file.endsWith('.log') || file.endsWith('.meta'))
+                .filter(file => file.startsWith(sanitizedSessionName + '_'));
+              
+              if (existingFiles.length > 0) {
+                // Continue existing session - use existing session ID from metadata
+                const latestFile = existingFiles
+                  .map(file => {
+                    const filePath = path.join(userLogDir, file);
+                    const stats = statSync(filePath);
+                    return { file, stats, filePath };
+                  })
+                  .sort((a, b) => b.stats.mtime - a.stats.mtime)[0];
+                
+                try {
+                  const sessionData = JSON.parse(readFileSync(latestFile.filePath, 'utf8'));
+                  if (sessionData.metadata && sessionData.metadata.sessionId) {
+                    sessionId = sessionData.metadata.sessionId;
+                    isSessionContinuation = true;
+                    console.log(`Continuing existing session from file: ${sessionId}`);
+                  }
+                } catch (error) {
+                  console.warn('Failed to read existing session metadata, creating new session:', error);
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      // Generate new session ID if not continuing existing session
+      if (!sessionId) {
+        sessionId = sanitizedSessionName
+          ? `${username}-${sanitizedSessionName}-${Date.now()}`
+          : `${username}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        console.log(`Generated new session ID: ${sessionId}`);
+      }
 
       // Get the interactive command from environment
       const askAiCommand = process.env.ASK_AI_COMMAND || 'docker run --rm -i ubuntu:latest bash -c "echo \\"Input received:\\"; cat; echo \\"\\nSleeping for 2 seconds...\\"; sleep 2; echo \\"Done!\\""';
@@ -1642,8 +1695,8 @@ ${error.stack || error.message}
             const [sessionName, timestamp] = file.replace(/\.(log|meta)$/, '').split('_');
 
             return {
-              sessionId: sessionName,
-              sessionName: sessionName.includes('-') ? sessionName.split('-').slice(1, -1).join('-') : sessionName,
+              sessionId: file.replace(/\.(log|meta)$/, ''), // Use filename as fallback
+              sessionName: sessionName || 'Unknown Session',
               startTime: stats.birthtime,
               endTime: null,
               completed: false,
@@ -1658,14 +1711,42 @@ ${error.stack || error.message}
         })
         .sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
 
+      // Remove any duplicate sessions before processing
+      // Group sessions by sessionName and keep only the most recent one
+      const sessionGroups = new Map();
+      logFiles.forEach(session => {
+        const key = session.sessionName;
+        if (!sessionGroups.has(key) || 
+            new Date(session.startTime) > new Date(sessionGroups.get(key).startTime)) {
+          sessionGroups.set(key, session);
+        }
+      });
+      
+      // Convert back to array
+      const deduplicatedLogFiles = Array.from(sessionGroups.values())
+        .sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+
       // Check if there's a currently active session
       const currentSession = global.interactiveSessions[username];
       if (currentSession && currentSession.running) {
         // Mark the current session as active in the list
-        const activeSessionIndex = logFiles.findIndex(s => s.sessionId === currentSession.id);
+        const activeSessionIndex = deduplicatedLogFiles.findIndex(s => {
+          // First try exact match with session ID
+          if (s.sessionId === currentSession.id) {
+            return true;
+          }
+          
+          // Then try matching by session name
+          if (s.sessionName === currentSession.name) {
+            return true;
+          }
+          
+          return false;
+        });
+        
         if (activeSessionIndex === -1) {
           // Add current session if not in persistent storage yet
-          logFiles.unshift({
+          deduplicatedLogFiles.unshift({
             sessionId: currentSession.id,
             sessionName: currentSession.name,
             startTime: currentSession.startTime,
@@ -1679,11 +1760,14 @@ ${error.stack || error.message}
             logFile: null
           });
         } else {
-          logFiles[activeSessionIndex].active = true;
+          // Mark existing session as active and update with current session data
+          deduplicatedLogFiles[activeSessionIndex].active = true;
+          deduplicatedLogFiles[activeSessionIndex].sessionId = currentSession.id; // Ensure correct session ID
+          deduplicatedLogFiles[activeSessionIndex].cost = currentSession.cost || deduplicatedLogFiles[activeSessionIndex].cost;
         }
       }
 
-      res.json({ sessions: logFiles, persistent: true });
+      res.json({ sessions: deduplicatedLogFiles, persistent: true });
     } catch (error) {
       console.error('Error listing sessions:', error);
       res.status(500).json({ error: 'Failed to list sessions' });

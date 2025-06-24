@@ -21,6 +21,7 @@
   let availableSessions: any[] = [];
   let showSessionSidebar = false;
   let loadingSessions = false;
+  let lastSessionCancelled = false;
 
   // Cost extraction and formatting functions
   function extractCostFromLogs(logs: string[]): number | null {
@@ -49,7 +50,7 @@
   }
 
   function formatCost(cost: number | null): string {
-    if (!cost) return '';
+    if (cost === null || cost === undefined) return 'N/A';
     return `$${cost.toFixed(5)}`;
   }
 
@@ -83,6 +84,7 @@
       if (activeSession) {
         const session = JSON.parse(activeSession);
         sessionId = session.sessionId;
+        currentSessionName = session.sessionName || ''; // Restore session name
         input = session.command || '';
         isRunning = true;
         console.log('Resuming active session:', sessionId);
@@ -96,11 +98,12 @@
   }
 
   // Save active session to localStorage
-  function saveActiveSession(sessionId: string, command: string) {
+  function saveActiveSession(sessionId: string, command: string, sessionName: string = '') {
     try {
       const session = {
         sessionId,
         command,
+        sessionName, // Save session name
         timestamp: new Date().toISOString()
       };
       localStorage.setItem('askAI_activeSession', JSON.stringify(session));
@@ -247,16 +250,26 @@
   function isSessionActive(session) {
     if (!sessionId || !isRunning) return false;
     
-    // Extract the session name part from the current sessionId
+    // First try exact session ID match
+    if (session.sessionId === sessionId) {
+      return true;
+    }
+    
+    // Then try matching by session name for backward compatibility
+    if (currentSessionName && session.sessionName === currentSessionName) {
+      return true;
+    }
+    
+    // Legacy fallback: Extract the session name part from the current sessionId
     // Format: username-sessionname-timestamp
     const currentSessionParts = sessionId.split('-');
     const sessionParts = session.sessionId.split('-');
     
     // Compare the session name part (excluding username and timestamp)
     if (currentSessionParts.length >= 3 && sessionParts.length >= 3) {
-      const currentSessionName = currentSessionParts.slice(1, -1).join('-');
-      const sessionName = sessionParts.slice(1, -1).join('-');
-      return currentSessionName === sessionName;
+      const currentSessionNameFromId = currentSessionParts.slice(1, -1).join('-');
+      const sessionNameFromId = sessionParts.slice(1, -1).join('-');
+      return currentSessionNameFromId === sessionNameFromId;
     }
     
     return false;
@@ -300,6 +313,7 @@
     lastRunOutput = '';
     error = '';
     currentCost = null;
+    lastSessionCancelled = false; // Reset cancelled flag when starting new command
     const commandToRun = input.trim();
 
     try {
@@ -327,7 +341,7 @@
       sessionId = data.sessionId;
 
       // Save active session to localStorage
-      saveActiveSession(sessionId, commandToRun);
+      saveActiveSession(sessionId, commandToRun, currentSessionName);
 
       // Refresh session list if sidebar is open to show new active session
       if (showSessionSidebar && persistentLoggingAvailable) {
@@ -388,8 +402,11 @@
             clearInterval(pollingInterval);
             pollingInterval = null;
           }
-          sessionId = null;
+          
+          // DON'T clear sessionId and currentSessionName - keep them for session continuation
+          // sessionId = null;  // REMOVED - keep for continuation
           currentCost = null;
+          lastSessionCancelled = false; // Reset cancelled flag for normal completion
 
           // Clear current logs since we now have the final output
           logs = [];
@@ -404,23 +421,55 @@
     if (!sessionId) return;
 
     try {
-      await fetch(`${API_URL}/api/interactive/cancel/${sessionId}`, {
+      const response = await fetch(`${API_URL}/api/interactive/cancel/${sessionId}`, {
         method: 'POST',
         credentials: 'include',
       });
+
+      if (response.ok) {
+        // Get the final session state with preserved logs
+        const statusResponse = await fetch(`${API_URL}/api/interactive/status/${sessionId}`, {
+          credentials: 'include',
+        });
+
+        if (statusResponse.ok) {
+          const data = await statusResponse.json();
+          
+          // Preserve the logs that were collected before cancellation
+          if (data.logs && data.logs.length > 0) {
+            logs = data.logs;
+          }
+          
+          // Set the final output with all collected logs
+          lastRunOutput = data.output || logs.join('\\n');
+          lastSessionCost = data.cost;
+          lastSessionCancelled = true; // Mark as cancelled
+          
+          // Save to localStorage as a completed (cancelled) session
+          saveSessionHistory(`Cancelled: ${input}`, lastRunOutput, lastSessionCost);
+          lastCommand = `Cancelled: ${input}`;
+          lastSessionTime = new Date().toISOString();
+        }
+      }
     } catch (error) {
       console.error('Cancel error:', error);
     }
 
+    // Update state to show cancelled session
     isRunning = false;
     if (pollingInterval) {
       clearInterval(pollingInterval);
       pollingInterval = null;
     }
 
-    // Clear active session
+    // Clear active session but keep the session context for continuation
     clearActiveSession();
-    sessionId = null;
+    
+    // DON'T clear sessionId immediately - keep for potential continuation
+    // sessionId = null;  // REMOVED - keep for continuation like normal completion
+    
+    // Clear current input
+    input = '';
   }
 
   function handleKeyPress(event: KeyboardEvent) {
@@ -431,12 +480,35 @@
   }
 
   function formatTimestamp(isoString: string): string {
-    if (!isoString) return '';
+    if (!isoString) return 'N/A';
     try {
       const date = new Date(isoString);
+      if (isNaN(date.getTime())) return 'N/A';
       return date.toLocaleString();
     } catch {
-      return '';
+      return 'N/A';
+    }
+  }
+
+  function formatDate(isoString: string): string {
+    if (!isoString) return 'N/A';
+    try {
+      const date = new Date(isoString);
+      if (isNaN(date.getTime())) return 'N/A';
+      return date.toLocaleDateString();
+    } catch {
+      return 'N/A';
+    }
+  }
+
+  function formatTime(isoString: string): string {
+    if (!isoString) return 'N/A';
+    try {
+      const date = new Date(isoString);
+      if (isNaN(date.getTime())) return 'N/A';
+      return date.toLocaleTimeString();
+    } catch {
+      return 'N/A';
     }
   }
 
@@ -506,11 +578,25 @@
                           {/if}
                         </div>
                         <div class="session-meta">
-                          <span class="session-date">{new Date(session.timestamp).toLocaleDateString()}</span>
-                          <span class="session-time">{new Date(session.timestamp).toLocaleTimeString()}</span>
-                          {#if session.size}
-                            <span class="session-size">{(session.size / 1024).toFixed(1)}KB</span>
-                          {/if}
+                          <div class="session-meta-row">
+                            <span class="session-date">{formatDate(session.timestamp)}</span>
+                            <span class="session-time">{formatTime(session.timestamp)}</span>
+                          </div>
+                          <div class="session-meta-row">
+                            {#if session.cost !== null && session.cost !== undefined}
+                              <span class="session-cost">{formatCost(session.cost)}</span>
+                            {/if}
+                            {#if session.size}
+                              <span class="session-size">{(session.size / 1024).toFixed(1)}KB</span>
+                            {/if}
+                            {#if session.completed}
+                              <span class="session-status completed">✓</span>
+                            {:else if session.failed}
+                              <span class="session-status failed">✗</span>
+                            {:else if session.cancelled}
+                              <span class="session-status cancelled">⊘</span>
+                            {/if}
+                          </div>
                         </div>
                       </div>
                       <div class="session-actions">
@@ -576,7 +662,7 @@
             {:else if lastRunOutput}
               <div class="last-output">
                 <div class="session-header">
-                  <strong>✅ Last Completed Session:</strong>
+                  <strong>{lastSessionCancelled ? '🚫 Last Cancelled Session:' : '✅ Last Completed Session:'}</strong>
                   <div class="session-meta">
                     {#if lastCommand}
                       <div class="last-command">Task: <code>{lastCommand}</code></div>
@@ -807,8 +893,8 @@
   }
 
   .active-session-header {
-    background-color: var(--color-bg-info, #e0f2fe);
-    color: var(--color-text-info, #0369a1);
+    background-color: var(--color-bg-info, rgba(59, 130, 246, 0.1));
+    color: var(--color-text-info, #3b82f6);
     padding: 8px 12px;
     border-radius: 4px;
     margin-bottom: 12px;
@@ -918,8 +1004,63 @@
 
   @media (prefers-color-scheme: dark) {
     .active-session-header {
-      background-color: rgba(14, 165, 233, 0.1);
-      color: #7dd3fc;
+      background-color: rgba(14, 165, 233, 0.1) !important;
+      color: #7dd3fc !important;
+      border-left-color: #0ea5e9 !important;
+    }
+    
+    .session-item.active {
+      background: rgba(14, 165, 233, 0.15) !important;
+      border-color: #0ea5e9 !important;
+    }
+    
+    .session-item.active:hover {
+      background: rgba(14, 165, 233, 0.2) !important;
+    }
+    
+    .logs-container {
+      background-color: #1f2937 !important;
+      border-color: #374151 !important;
+    }
+    
+    .log-line {
+      color: #e5e7eb !important;
+    }
+    
+    .last-output {
+      color: #e5e7eb !important;
+    }
+    
+    .last-output pre {
+      background-color: #1f2937 !important;
+      border-color: #374151 !important;
+      color: #e5e7eb !important;
+    }
+    
+    .session-header strong {
+      color: #60a5fa !important;
+    }
+    
+    .waiting-message {
+      color: #9ca3af !important;
+    }
+    
+    .no-logs {
+      color: #6b7280 !important;
+    }
+    
+    .error-message {
+      color: #f87171 !important;
+    }
+    
+    .error-message strong {
+      color: #f87171 !important;
+    }
+    
+    .error-message pre {
+      background-color: rgba(239, 68, 68, 0.1) !important;
+      border-color: rgba(239, 68, 68, 0.3) !important;
+      color: #f87171 !important;
     }
   }
 
@@ -1216,10 +1357,61 @@
 
   .session-meta {
     display: flex;
-    gap: 8px;
+    flex-direction: column;
+    gap: 2px;
     font-size: 12px;
     color: var(--color-text-secondary);
+  }
+
+  .session-meta-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
     flex-wrap: wrap;
+  }
+
+  .session-cost {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+    padding: 2px 6px;
+    border-radius: 8px;
+    font-weight: 500;
+    font-size: 10px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .session-status {
+    font-weight: bold;
+    font-size: 14px;
+    padding: 1px 4px;
+    border-radius: 4px;
+  }
+
+  .session-status.completed {
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.1);
+  }
+
+  .session-status.failed {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
+  }
+
+  .session-status.cancelled {
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.1);
+  }
+
+  .session-date, .session-time {
+    color: var(--color-text-tertiary, #6b7280);
+  }
+
+  .session-size {
+    background: var(--color-bg-secondary, #f3f4f6);
+    color: var(--color-text-secondary);
+    padding: 1px 4px;
+    border-radius: 4px;
+    font-size: 10px;
   }
 
   .session-actions {
