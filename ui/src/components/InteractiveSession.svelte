@@ -233,9 +233,14 @@
         showSessionSidebar = false;
         
         console.log(`Switched to session: ${session.sessionName}`);
+      } else {
+        const errorText = await response.text();
+        console.error('Failed to load session:', response.status, errorText);
+        error = `Failed to load session "${session.sessionName}": ${response.status === 404 ? 'Session not found' : errorText}`;
       }
-    } catch (error) {
-      console.error('Failed to switch to session:', error);
+    } catch (err) {
+      console.error('Failed to switch to session:', err);
+      error = `Failed to load session "${session.sessionName}": ${err.message}`;
     }
   }
 
@@ -490,10 +495,10 @@
     }
   }
 
-  function formatDate(isoString: string): string {
-    if (!isoString) return 'N/A';
+  function formatDate(dateInput: string | Date): string {
+    if (!dateInput) return 'N/A';
     try {
-      const date = new Date(isoString);
+      const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
       if (isNaN(date.getTime())) return 'N/A';
       return date.toLocaleDateString();
     } catch {
@@ -501,10 +506,10 @@
     }
   }
 
-  function formatTime(isoString: string): string {
-    if (!isoString) return 'N/A';
+  function formatTime(dateInput: string | Date): string {
+    if (!dateInput) return 'N/A';
     try {
-      const date = new Date(isoString);
+      const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
       if (isNaN(date.getTime())) return 'N/A';
       return date.toLocaleTimeString();
     } catch {
@@ -569,7 +574,7 @@
               {:else}
                 <div class="sessions-list">
                   {#each availableSessions as session}
-                    <div class="session-item" class:active={isSessionActive(session)} class:clickable={!isSessionActive(session)} on:click={() => switchToSession(session)}>
+                    <div class="session-item" class:active={isSessionActive(session)} class:clickable={!isSessionActive(session)} on:click={() => !isSessionActive(session) && switchToSession(session)}>
                       <div class="session-info">
                         <div class="session-title">
                           {session.sessionName || session.sessionId}
@@ -579,8 +584,8 @@
                         </div>
                         <div class="session-meta">
                           <div class="session-meta-row">
-                            <span class="session-date">{formatDate(session.timestamp)}</span>
-                            <span class="session-time">{formatTime(session.timestamp)}</span>
+                            <span class="session-date">{formatDate(session.startTime)}</span>
+                            <span class="session-time">{formatTime(session.startTime)}</span>
                           </div>
                           <div class="session-meta-row">
                             {#if session.cost !== null && session.cost !== undefined}
@@ -598,13 +603,6 @@
                             {/if}
                           </div>
                         </div>
-                      </div>
-                      <div class="session-actions">
-                        {#if isSessionActive(session)}
-                          <button class="active-session-btn">Running</button>
-                        {:else}
-                          <button class="load-session-btn">Load</button>
-                        {/if}
                       </div>
                     </div>
                   {/each}
@@ -1318,20 +1316,24 @@
   .session-item.clickable:hover {
     border-color: var(--color-bg-accent);
     background: var(--color-bg-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   }
 
   .session-item.active {
     border-color: var(--color-bg-accent);
     background: var(--color-bg-info, #e0f2fe);
     box-shadow: 0 0 0 1px var(--color-bg-accent);
+    cursor: default;
   }
 
   .session-item.active:hover {
     background: var(--color-bg-info, #e0f2fe);
+    transform: none;
   }
 
   .session-info {
-    margin-bottom: 8px;
+    width: 100%;
   }
 
   .session-title {
@@ -1412,37 +1414,6 @@
     padding: 1px 4px;
     border-radius: 4px;
     font-size: 10px;
-  }
-
-  .session-actions {
-    display: flex;
-    justify-content: flex-end;
-  }
-
-  .load-session-btn {
-    background: var(--color-bg-accent);
-    color: white;
-    border: none;
-    padding: 4px 8px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 12px;
-    transition: background-color 0.2s;
-  }
-
-  .load-session-btn:hover {
-    background: var(--color-bg-accent-hover);
-  }
-
-  .active-session-btn {
-    background: var(--color-bg-success, #10b981);
-    color: white;
-    border: none;
-    padding: 4px 8px;
-    border-radius: 4px;
-    cursor: default;
-    font-size: 12px;
-    font-weight: 500;
   }
 
   .main-content {
