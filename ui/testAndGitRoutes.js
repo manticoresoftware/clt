@@ -1319,4 +1319,64 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
       res.status(500).json({ error: 'Failed to cancel session' });
     }
   });
+
+  // Checkout a single file to discard changes
+  app.post('/api/checkout-file', isAuthenticated, async (req, res) => {
+    try {
+      // Check if user is authenticated with GitHub
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      const { filePath } = req.body;
+      if (!filePath) {
+        return res.status(400).json({ error: 'File path is required' });
+      }
+
+      // Get the user's repo path
+      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+
+      if (!repoExists) {
+        return res.status(404).json({ error: 'Repository not found' });
+      }
+
+      try {
+        // Initialize simple-git with the user's repo path
+        const git = simpleGit(userRepoPath);
+        
+        // Check if file exists and has changes
+        const status = await git.status();
+        const fileHasChanges = status.modified.includes(filePath) || 
+                              status.not_added.includes(filePath) ||
+                              status.deleted.includes(filePath);
+        
+        if (!fileHasChanges) {
+          return res.status(400).json({ error: 'File has no changes to discard' });
+        }
+
+        // Checkout the file to discard changes
+        await git.checkout(['HEAD', '--', filePath]);
+        
+        console.log(`Successfully checked out file: ${filePath}`);
+        
+        return res.json({
+          success: true,
+          message: `Successfully discarded changes to ${filePath}`,
+          filePath: filePath
+        });
+
+      } catch (gitError) {
+        console.error('Git checkout error:', gitError);
+        return res.status(500).json({ 
+          error: 'Failed to checkout file', 
+          details: gitError.message 
+        });
+      }
+
+    } catch (error) {
+      console.error('Error in checkout-file endpoint:', error);
+      res.status(500).json({ error: 'Failed to checkout file' });
+    }
+  });
 }

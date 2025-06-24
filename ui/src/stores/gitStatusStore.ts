@@ -156,11 +156,45 @@ function createGitStatusStore() {
       const message = `You have ${fileCount} unstaged change${fileCount > 1 ? 's' : ''} in your working directory:\n\n${fileList}${moreFiles}\n\nProceeding will potentially affect these changes. Do you want to continue?`;
       
       return confirm(message);
+    },
+    
+    // Checkout a single file to discard changes
+    checkoutFile: async (filePath: string): Promise<boolean> => {
+      try {
+        const response = await fetch(`${API_URL}/api/checkout-file`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({ filePath })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+          console.error('Checkout file failed:', data.error);
+          alert(`Failed to checkout file: ${data.error}`);
+          return false;
+        }
+        
+        console.log('File checked out successfully:', data.message);
+        
+        // Refresh git status after checkout
+        await gitStatusStore.fetchGitStatus();
+        
+        return true;
+      } catch (error) {
+        console.error('Error checking out file:', error);
+        alert(`Error checking out file: ${error.message}`);
+        return false;
+      }
     }
   };
 }
 
 export const gitStatusStore = createGitStatusStore();
 
-// Export the checkUnstagedChanges function for direct import
+// Export functions for direct import
 export const checkUnstagedChanges = gitStatusStore.checkUnstagedChanges;
+export const checkoutFile = gitStatusStore.checkoutFile;

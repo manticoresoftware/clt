@@ -1,6 +1,7 @@
 <script lang="ts">
   import { filesStore, type TestStep as TestStepType, type TestStructure } from '../stores/filesStore';
-  import { onMount } from 'svelte';
+  import { gitStatusStore, checkoutFile } from '../stores/gitStatusStore';
+  import { onMount, onDestroy } from 'svelte';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
   import Step from './Step.svelte';
   import { 
@@ -211,6 +212,14 @@
     if (typeof window !== 'undefined') {
       window.lastPatternRefresh = 0;
     }
+    
+    // Start git status polling to get file status updates
+    gitStatusStore.startPolling(5000); // Poll every 5 seconds
+  });
+
+  onDestroy(() => {
+    // Stop git status polling when component is destroyed
+    gitStatusStore.stopPolling();
   });
 
   // Update localStorage when checkbox changes
@@ -437,6 +446,43 @@
     }
   }
 
+  async function handleCheckoutFile() {
+    if (!$filesStore.currentFile) return;
+    
+    const currentFilePath = $filesStore.currentFile.path;
+    const testPath = $gitStatusStore.testPath || 'test/clt-tests';
+    const fullFilePath = `${testPath}/${currentFilePath}`;
+    const fileName = currentFilePath.split('/').pop() || currentFilePath;
+    
+    // Show confirmation dialog
+    const confirmed = confirm(`This will discard all changes to "${fileName}". Are you sure?`);
+    if (!confirmed) return;
+    
+    // Use the full path for checkout (the path that git knows about)
+    const success = await checkoutFile(fullFilePath);
+    if (success) {
+      // Reload the current file content after checkout
+      await filesStore.loadFile(currentFilePath); // Use the filesStore path for loading
+      console.log('File checked out and reloaded successfully');
+    }
+  }
+
+  // Get git status for current file - make it reactive by accessing the store directly
+  $: currentFileGitStatus = $filesStore.currentFile && $gitStatusStore.modifiedFiles 
+    ? (() => {
+        const currentFilePath = $filesStore.currentFile.path;
+        const testPath = $gitStatusStore.testPath || 'test/clt-tests';
+        const fullFilePath = `${testPath}/${currentFilePath}`;
+        
+        // Try both the original path and the prefixed path
+        const fileStatus = $gitStatusStore.modifiedFiles.find(file => 
+          file.path === currentFilePath || file.path === fullFilePath
+        );
+        return fileStatus?.status || null;
+      })()
+    : null;
+  $: isCurrentFileModified = currentFileGitStatus === 'M';
+
   function formatTime(date: Date): string {
     return date.toLocaleTimeString(undefined, {
       hour: '2-digit',
@@ -564,6 +610,16 @@
         >
           Save
         </button>
+        {#if isCurrentFileModified}
+          <button
+            class="checkout-button"
+            on:click={handleCheckoutFile}
+            disabled={!$filesStore.currentFile}
+            title="Discard changes to this file"
+          >
+            Checkout
+          </button>
+        {/if}
         <button
           class="run-button"
           on:click={runTest}
@@ -717,7 +773,7 @@
     gap: 8px;
   }
 
-  .save-button, .run-button {
+  .save-button, .run-button, .checkout-button {
     padding: 6px 12px;
     font-size: 14px;
     border-radius: 4px;
@@ -730,7 +786,7 @@
     gap: 6px;
   }
 
-  .save-button {
+  .save-button, .checkout-button {
     background-color: var(--color-bg-secondary);
     color: var(--color-text-primary);
   }
@@ -740,12 +796,12 @@
     color: white;
   }
 
-  .save-button:disabled, .run-button:disabled {
+  .save-button:disabled, .run-button:disabled, .checkout-button:disabled {
     opacity: 0.6;
     cursor: not-allowed;
   }
 
-  .save-button:not(:disabled):hover, .share-button:hover {
+  .save-button:not(:disabled):hover, .checkout-button:not(:disabled):hover, .share-button:hover {
     background-color: var(--color-bg-secondary-hover);
   }
 
