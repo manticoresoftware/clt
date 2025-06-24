@@ -10,15 +10,14 @@
   import { onMount } from 'svelte';
 
   let isLoading = true;
-  let authError = false;
 
   // Fetch authentication state when the app loads
   onMount(async () => {
     try {
       await fetchAuthState();
       isLoading = false;
-      authError = false;
-
+      // Don't set authError here - let the store handle error states
+      
       // Fetch current branch info after authentication
       if ($authStore.isAuthenticated) {
         await branchStore.fetchCurrentBranch();
@@ -52,9 +51,9 @@
         clearInterval(authCheckInterval);
       };
     } catch (err) {
-      console.error('Failed to fetch auth state:', err);
+      // Only log the error, don't set authError - let the store handle it
+      console.error('Failed to initialize auth state:', err);
       isLoading = false;
-      authError = true;
     }
   });
 </script>
@@ -83,9 +82,9 @@
       </svg>
       <h2>Authentication Required</h2>
       <p>You need to log in with GitHub to access CLT UI.</p>
-      {#if authError || $authStore.error}
+      {#if $authStore.error}
         <div class="auth-error">
-          <p>Authentication error: {$authStore.error || 'Failed to connect to server'}. Please try again.</p>
+          <p>Authentication error: {$authStore.error}. Please try again.</p>
         </div>
       {/if}
       <a href={AUTH_GITHUB_URL} class="login-button github-button">

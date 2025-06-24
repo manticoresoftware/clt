@@ -48,7 +48,16 @@ export async function fetchAuthState() {
       sessionStorage.removeItem('auth_state');
       localStorage.removeItem('auth_state');
       
-      throw new Error('Failed to fetch authentication state');
+      // For 401/403, this is expected when not authenticated - don't show error
+      // Only show error for repeated authentication failures or other issues
+      authStore.update(state => ({
+        ...state,
+        isAuthenticated: false,
+        user: null,
+        isLoading: false,
+        error: null // Don't show error for normal 401/403 responses
+      }));
+      return;
     }
 
     const data = await response.json();
@@ -78,15 +87,18 @@ export async function fetchAuthState() {
     return data;
   } catch (error) {
     console.error('Auth error:', error);
+    
+    // Never show authentication errors during normal auth state checking
+    // Errors should only be shown when user actively tries to authenticate
     authStore.update(state => ({
       ...state,
       isAuthenticated: false,
       user: null,
       isLoading: false,
-      error: error instanceof Error ? error.message : 'An unknown error occurred'
+      error: null // Never show error during normal auth checking
     }));
 
-    // Clear sessionStorage on authentication error
+    // Clear sessionStorage on any error
     sessionStorage.removeItem('auth_state');
   }
 }
