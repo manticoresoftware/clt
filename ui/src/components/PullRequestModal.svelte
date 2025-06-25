@@ -11,12 +11,11 @@
   let description = '';
   let showAdvanced = false;
   
-  // Workflow detection with better logging
+  // Workflow detection - only commit mode if we have an actual existing PR
   $: prStatus = github.prStatus;
   $: existingPr = prStatus?.existingPr;
-  // If we're on a PR branch, we should be in commit mode even if we can't find the PR object
-  // This handles cases where GitHub CLI fails but we know it's a PR branch
-  $: isCommitMode = !!(prStatus?.isPrBranch || existingPr);
+  // Show commit mode ONLY if we have an existing PR (regardless of branch name)
+  $: isCommitMode = !!(existingPr);
   $: recentCommits = prStatus?.recentCommits || [];
   
   // Debug logging

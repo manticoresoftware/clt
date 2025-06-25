@@ -555,8 +555,30 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       const status = await git.status();
       const currentBranch = status.current;
 
-      // Check if this is a PR branch
-      let isPrBranch = currentBranch?.startsWith('clt-ui-');
+      // Get default branch (same logic as git-status endpoint)
+      let defaultBranch;
+      try {
+        // Try to get the default branch from the HEAD reference
+        defaultBranch = await git.revparse(['--abbrev-ref', 'origin/HEAD']);
+        defaultBranch = defaultBranch.replace('origin/', '');
+      } catch (headError) {
+        // Fallback: use master or main
+        console.warn('Could not determine default branch from HEAD:', headError);
+
+        // Check if main or master exists
+        const branches = await git.branch(['-r']);
+        if (branches.all.includes('origin/main')) {
+          defaultBranch = 'main';
+        } else {
+          defaultBranch = 'master';
+        }
+      }
+      console.log(`Default branch: ${defaultBranch}`);
+
+      // Check if this is a PR branch (not default branch and starts with clt-ui-)
+      let isPrBranch = currentBranch && 
+                      currentBranch !== defaultBranch && 
+                      currentBranch.startsWith('clt-ui-');
 
       const { exec } = await import('child_process');
       const execPromise = (cmd) => new Promise((resolve, reject) => {
@@ -575,65 +597,39 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       let recentCommits = [];
 
       // Check for existing PR for current branch using GitHub CLI
-      // Method 1: Use gh pr status (most reliable for current branch)
-      try {
-        console.log('🔍 Checking PR status for current branch:', currentBranch);
-        const prStatusOutput = await execPromise('gh pr status --json currentBranch');
-        console.log('gh pr status result:', prStatusOutput);
-        
-        if (prStatusOutput && prStatusOutput.trim()) {
-          const statusData = JSON.parse(prStatusOutput);
-          
-          // Check if current branch has a PR
-          if (statusData.currentBranch && statusData.currentBranch.length > 0) {
-            const currentBranchPr = statusData.currentBranch[0];
-            existingPr = {
-              url: currentBranchPr.url,
-              title: currentBranchPr.title,
-              number: currentBranchPr.number
-            };
-            isPrBranch = true;
-            console.log('✅ Found existing PR via gh pr status:', existingPr);
-          }
-        }
-      } catch (statusError) {
-        console.log('gh pr status failed, trying fallback method:', statusError.message);
-        
-        // Method 2: Fallback to gh pr list with --head (original method)
+      // Only check for PR if we're on a potential PR branch
+      if (isPrBranch) {
         try {
-          const prArgs = ['gh', 'pr', 'list', '--state', 'open', '--head', currentBranch, '--json', 'url,title,number,headRefName'];
-          console.log('Fallback: Checking for existing PR with command:', prArgs.join(' '));
+          console.log('🔍 Checking for existing PR on branch:', currentBranch);
           
-          const prList = await execPromise(prArgs.join(' '));
-          console.log('PR list result for branch:', currentBranch, 'Raw result:', prList);
-
-          if (prList && prList.trim() && prList.trim() !== '[]' && prList.trim() !== '') {
-            try {
-              const prs = JSON.parse(prList);
-              console.log('Parsed PRs:', prs);
-              
-              if (Array.isArray(prs) && prs.length > 0) {
-                existingPr = {
-                  url: prs[0].url,
-                  title: prs[0].title,
-                  number: prs[0].number
-                };
-                isPrBranch = true;
-                console.log('✅ Found existing PR via fallback method:', existingPr);
-              } else {
-                console.log('❌ No PRs found in parsed result for branch:', currentBranch);
-              }
-            } catch (parseError) {
-              console.log('❌ Error parsing PR JSON:', parseError.message, 'Raw:', prList);
+          // Method 1: Use gh pr list to find PRs for this specific branch
+          const prListCmd = `gh pr list --state open --head ${currentBranch} --json url,title,number`;
+          console.log('Running command:', prListCmd);
+          
+          const prListOutput = await execPromise(prListCmd);
+          console.log('gh pr list result:', prListOutput);
+          
+          if (prListOutput && prListOutput.trim() && prListOutput.trim() !== '[]') {
+            const prs = JSON.parse(prListOutput);
+            console.log('Parsed PRs:', prs);
+            
+            if (Array.isArray(prs) && prs.length > 0) {
+              existingPr = {
+                url: prs[0].url,
+                title: prs[0].title,
+                number: prs[0].number
+              };
+              console.log('✅ Found existing PR:', existingPr);
             }
           } else {
-            console.log('❌ Empty or no PR list result for branch:', currentBranch);
+            console.log('❌ No PR found for branch:', currentBranch);
           }
-        } catch (listError) {
-          console.log('❌ Both PR detection methods failed:', listError.message);
+        } catch (error) {
+          console.log('❌ Error checking for PR:', error.message);
           
-          // Method 3: Try gh pr view (checks current branch's PR)
+          // Fallback: try gh pr view (if we're currently on the PR branch)
           try {
+            console.log('Trying fallback: gh pr view');
             const prViewOutput = await execPromise('gh pr view --json url,title,number');
             console.log('gh pr view result:', prViewOutput);
             
@@ -644,29 +640,14 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
                 title: prData.title,
                 number: prData.number
               };
-              isPrBranch = true;
               console.log('✅ Found existing PR via gh pr view:', existingPr);
             }
           } catch (viewError) {
-            console.log('gh pr view also failed:', viewError.message);
-            
-            // Final fallback: if we're on a clt-ui- branch, assume it's a PR branch
-            if (currentBranch?.startsWith('clt-ui-')) {
-              console.log('🔶 On clt-ui- branch but cannot find PR - assuming PR branch for commit mode');
-              isPrBranch = true;
-              // Note: existingPr will remain null, but isPrBranch=true will trigger commit mode
-            }
-            
-            // Check if gh is working at all
-            try {
-              const ghVersion = await execPromise('gh --version');
-              console.log('GitHub CLI is available:', ghVersion.split('\n')[0]);
-              console.log('❌ PR detection failed but gh is working - might be auth or repo issue');
-            } catch (ghError) {
-              console.log('❌ GitHub CLI not available:', ghError.message);
-            }
+            console.log('❌ gh pr view also failed:', viewError.message);
           }
         }
+      } else {
+        console.log('ℹ️ Not on a PR branch, skipping PR detection');
       }
 
       // Get recent commits for current branch (last 5)
