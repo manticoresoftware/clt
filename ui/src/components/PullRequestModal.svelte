@@ -520,13 +520,14 @@
   }
 
   .modal-content {
-    background: white;
+    background: var(--color-bg-primary);
     border-radius: 8px;
     width: 90%;
     max-width: 600px;
     max-height: 90vh;
     overflow-y: auto;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--color-border-light);
   }
 
   .modal-header {
@@ -534,7 +535,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 20px 24px 16px;
-    border-bottom: 1px solid #e5e5e5;
+    border-bottom: 1px solid var(--color-border-light);
   }
 
   .header-content {
@@ -545,7 +546,7 @@
 
   .modal-header h3 {
     margin: 0;
-    color: #2c3e50;
+    color: var(--color-text-primary);
     font-size: 1.4em;
   }
 
@@ -553,8 +554,8 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: #007bff;
-    color: white;
+    background: var(--color-bg-accent);
+    color: var(--color-text-inverted);
     text-decoration: none;
     padding: 6px 10px;
     border-radius: 4px;
@@ -565,7 +566,7 @@
 
   .header-pr-link:hover {
     background: #0056b3;
-    color: white;
+    color: var(--color-text-inverted);
     text-decoration: none;
   }
 
@@ -574,13 +575,17 @@
     border: none;
     font-size: 24px;
     cursor: pointer;
-    color: #666;
+    color: var(--color-text-secondary);
     padding: 0;
     width: 30px;
     height: 30px;
     display: flex;
     align-items: center;
     justify-content: center;
+  }
+
+  .close-button:hover {
+    color: var(--color-text-primary);
   }
 
   .modal-body {
@@ -593,49 +598,50 @@
 
   .git-status-section h4 {
     margin: 0 0 12px 0;
-    color: #2c3e50;
+    color: var(--color-text-primary);
     font-size: 1.1em;
   }
 
   .loading {
     text-align: center;
     padding: 20px;
-    color: #666;
+    color: var(--color-text-secondary);
   }
 
   .error {
-    background: #fee;
-    border: 1px solid #fcc;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
     padding: 12px;
     border-radius: 4px;
-    color: #c33;
+    color: #ef4444;
   }
 
   .no-changes {
-    background: #f8f9fa;
-    border: 1px solid #dee2e6;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-light);
     padding: 16px;
     border-radius: 4px;
     text-align: center;
-    color: #6c757d;
+    color: var(--color-text-secondary);
   }
 
   .file-list {
-    border: 1px solid #e5e5e5;
+    border: 1px solid var(--color-border-light);
     border-radius: 4px;
     overflow: hidden;
   }
 
   .branch-info {
-    background: #f8f9fa;
+    background: var(--color-bg-secondary);
     padding: 8px 12px;
-    border-bottom: 1px solid #e5e5e5;
+    border-bottom: 1px solid var(--color-border-light);
     font-size: 0.9em;
+    color: var(--color-text-primary);
   }
 
   .pr-branch-badge {
-    background: #007bff;
-    color: white;
+    background: var(--color-bg-accent);
+    color: var(--color-text-inverted);
     padding: 2px 6px;
     border-radius: 3px;
     font-size: 0.8em;
@@ -643,10 +649,11 @@
   }
 
   .files-summary {
-    background: #fff;
+    background: var(--color-bg-primary);
     padding: 8px 12px;
-    border-bottom: 1px solid #e5e5e5;
+    border-bottom: 1px solid var(--color-border-light);
     font-weight: 500;
+    color: var(--color-text-primary);
   }
 
   .file-details {
@@ -658,9 +665,10 @@
     display: flex;
     align-items: center;
     padding: 6px 12px;
-    border-bottom: 1px solid #f5f5f5;
-    font-family: 'Monaco', 'Menlo', monospace;
+    border-bottom: 1px solid var(--color-border-light);
+    font-family: var(--font-mono);
     font-size: 0.85em;
+    background: var(--color-bg-primary);
   }
 
   .file-item:last-child {
@@ -681,15 +689,15 @@
   .status-untracked { color: #17a2b8; } /* Untracked - Cyan */
 
   .file-path {
-    color: #495057;
+    color: var(--color-text-primary);
   }
 
   .more-files {
     padding: 8px 12px;
     font-style: italic;
-    color: #6c757d;
+    color: var(--color-text-secondary);
     text-align: center;
-    background: #f8f9fa;
+    background: var(--color-bg-secondary);
   }
 
   .pr-form-section {
@@ -704,31 +712,29 @@
     display: block;
     margin-bottom: 4px;
     font-weight: 500;
-    color: #2c3e50;
+    color: var(--color-text-primary);
   }
 
   .form-group input,
   .form-group textarea {
     width: 100%;
     padding: 8px 12px;
-    border: 1px solid #ddd;
+    border: 1px solid var(--color-border-medium);
     border-radius: 4px;
     font-size: 14px;
     box-sizing: border-box;
+    background-color: var(--color-bg-primary);
+    color: var(--color-text-primary);
   }
 
   .form-group input:focus,
   .form-group textarea:focus {
     outline: none;
-    border-color: #007bff;
-    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+    border-color: var(--color-bg-accent);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
   }
 
   .form-group input.invalid {
-    border-color: #dc3545;
-  }
-
-  .form-group textarea.invalid {
     border-color: #dc3545;
   }
 
@@ -743,7 +749,7 @@
   }
 
   .form-help {
-    color: #6c757d;
+    color: var(--color-text-secondary);
     font-size: 0.8em;
     margin-top: 4px;
     font-style: italic;
@@ -756,15 +762,19 @@
   .toggle-button {
     background: none;
     border: none;
-    color: #007bff;
+    color: var(--color-text-accent);
     cursor: pointer;
     font-size: 0.9em;
     padding: 4px 0;
   }
 
+  .toggle-button:hover {
+    color: var(--color-text-primary);
+  }
+
   .advanced-options {
-    background: #f8f9fa;
-    border: 1px solid #e9ecef;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-light);
     border-radius: 4px;
     padding: 16px;
     margin-top: 8px;
@@ -772,23 +782,24 @@
 
   .info-box h5 {
     margin: 0 0 8px 0;
-    color: #495057;
+    color: var(--color-text-primary);
     font-size: 0.9em;
   }
 
   .info-box p {
     margin: 0 0 12px 0;
-    color: #6c757d;
+    color: var(--color-text-secondary);
     font-size: 0.85em;
     line-height: 1.4;
   }
 
   .info-box code {
-    background: #e9ecef;
+    background: var(--color-bg-tertiary);
     padding: 2px 4px;
     border-radius: 3px;
-    font-family: 'Monaco', 'Menlo', monospace;
+    font-family: var(--font-mono);
     font-size: 0.8em;
+    color: var(--color-text-primary);
   }
 
   .success-section,
@@ -797,9 +808,9 @@
   }
 
   .success-message {
-    background: #d4edda;
-    border: 1px solid #c3e6cb;
-    color: #155724;
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    color: #22c55e;
     padding: 16px;
     border-radius: 4px;
     text-align: center;
@@ -807,13 +818,14 @@
 
   .success-message h4 {
     margin: 0 0 8px 0;
+    color: #22c55e;
   }
 
   .pr-link {
     display: inline-block;
     margin-top: 12px;
-    background: #28a745;
-    color: white;
+    background: #22c55e;
+    color: var(--color-text-inverted);
     padding: 8px 16px;
     text-decoration: none;
     border-radius: 4px;
@@ -821,12 +833,13 @@
   }
 
   .pr-link:hover {
-    background: #218838;
+    background: #16a34a;
+    color: var(--color-text-inverted);
   }
 
   .pr-link-missing {
-    background: #fff3cd;
-    border: 1px solid #ffeaa7;
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
     padding: 8px 12px;
     border-radius: 4px;
     margin-top: 12px;
@@ -834,14 +847,14 @@
 
   .pr-link-missing p {
     margin: 0;
-    color: #856404;
+    color: #f59e0b;
     font-size: 0.9em;
   }
 
   .error-message {
-    background: #f8d7da;
-    border: 1px solid #f5c6cb;
-    color: #721c24;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #ef4444;
     padding: 16px;
     border-radius: 4px;
     text-align: center;
@@ -849,6 +862,21 @@
 
   .error-message h4 {
     margin: 0 0 8px 0;
+    color: #ef4444;
+  }
+
+  .error-message button {
+    background: #ef4444;
+    color: var(--color-text-inverted);
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+
+  .error-message button:hover {
+    background: #dc2626;
   }
 
   .modal-footer {
@@ -856,26 +884,33 @@
     justify-content: flex-end;
     gap: 12px;
     padding: 16px 24px 20px;
-    border-top: 1px solid #e5e5e5;
+    border-top: 1px solid var(--color-border-light);
   }
 
   .cancel-button {
-    background: #6c757d;
-    color: white;
-    border: none;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-border-medium);
     padding: 8px 16px;
     border-radius: 4px;
     cursor: pointer;
     font-size: 14px;
+    transition: all 0.2s ease;
   }
 
   .cancel-button:hover:not(:disabled) {
-    background: #5a6268;
+    background: var(--color-bg-tertiary);
+    border-color: var(--color-border-dark);
+  }
+
+  .cancel-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .submit-button {
-    background: #007bff;
-    color: white;
+    background: var(--color-bg-accent);
+    color: var(--color-text-inverted);
     border: none;
     padding: 8px 20px;
     border-radius: 4px;
@@ -887,17 +922,18 @@
   }
 
   .submit-button:hover:not(:disabled) {
-    background: #0056b3;
+    background: #2563eb;
   }
 
   .submit-button:disabled {
-    background: #6c757d;
+    background: var(--color-text-secondary);
     cursor: not-allowed;
+    opacity: 0.6;
   }
 
   .close-button-success {
-    background: #28a745;
-    color: white;
+    background: #22c55e;
+    color: var(--color-text-inverted);
     border: none;
     padding: 8px 20px;
     border-radius: 4px;
@@ -922,56 +958,57 @@
 
   .existing-pr-section {
     margin-bottom: 20px;
-    background: #e8f4fd;
-    border: 1px solid #b8daff;
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
     border-radius: 6px;
     padding: 16px;
   }
 
   .existing-pr-section h4 {
     margin: 0 0 12px 0;
-    color: #004085;
+    color: var(--color-bg-accent);
     font-size: 1.1em;
   }
 
   .pr-info {
-    background: white;
+    background: var(--color-bg-primary);
     border-radius: 4px;
     padding: 12px;
+    border: 1px solid var(--color-border-light);
   }
 
   .pr-title-link {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    color: #007bff;
+    color: var(--color-text-accent);
     text-decoration: none;
     font-size: 1em;
   }
 
   .pr-title-link:hover {
-    color: #0056b3;
+    color: var(--color-bg-accent);
     text-decoration: underline;
   }
 
   .pr-description {
     margin: 8px 0 0 0;
-    color: #6c757d;
+    color: var(--color-text-secondary);
     font-size: 0.9em;
   }
 
   .pr-actions {
     margin-top: 12px;
     padding-top: 12px;
-    border-top: 1px solid #e9ecef;
+    border-top: 1px solid var(--color-border-light);
   }
 
   .view-pr-button {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: #007bff;
-    color: white;
+    background: var(--color-bg-accent);
+    color: var(--color-text-inverted);
     text-decoration: none;
     padding: 8px 12px;
     border-radius: 4px;
@@ -981,30 +1018,30 @@
   }
 
   .view-pr-button:hover {
-    background: #0056b3;
-    color: white;
+    background: #2563eb;
+    color: var(--color-text-inverted);
     text-decoration: none;
   }
 
   .recent-commits-section {
     margin-bottom: 20px;
-    background: #f8f9fa;
-    border: 1px solid #dee2e6;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-light);
     border-radius: 6px;
     padding: 16px;
   }
 
   .recent-commits-section h4 {
     margin: 0 0 12px 0;
-    color: #495057;
+    color: var(--color-text-primary);
     font-size: 1.1em;
   }
 
   .commits-list {
-    background: white;
+    background: var(--color-bg-primary);
     border-radius: 4px;
     overflow: hidden;
-    border: 1px solid #e9ecef;
+    border: 1px solid var(--color-border-light);
   }
 
   .commit-item {
@@ -1013,7 +1050,7 @@
     gap: 12px;
     align-items: center;
     padding: 8px 12px;
-    border-bottom: 1px solid #f1f3f4;
+    border-bottom: 1px solid var(--color-border-light);
     font-size: 0.85em;
   }
 
@@ -1022,21 +1059,21 @@
   }
 
   .commit-hash {
-    font-family: 'Monaco', 'Menlo', monospace;
-    background: #f8f9fa;
+    font-family: var(--font-mono);
+    background: var(--color-bg-secondary);
     padding: 2px 6px;
     border-radius: 3px;
-    color: #495057;
+    color: var(--color-text-secondary);
     font-size: 0.8em;
   }
 
   .commit-message {
-    color: #212529;
+    color: var(--color-text-primary);
     font-weight: 500;
   }
 
   .commit-author {
-    color: #6c757d;
+    color: var(--color-text-secondary);
     font-size: 0.8em;
     text-align: right;
   }
@@ -1044,25 +1081,25 @@
   .more-commits {
     padding: 8px 12px;
     text-align: center;
-    color: #6c757d;
+    color: var(--color-text-secondary);
     font-style: italic;
-    background: #f8f9fa;
+    background: var(--color-bg-secondary);
     font-size: 0.85em;
   }
 
   .submit-button.commit-mode {
-    background: #28a745;
+    background: #22c55e;
   }
 
   .submit-button.commit-mode:hover:not(:disabled) {
-    background: #218838;
+    background: #16a34a;
   }
 
   .submit-button.pr-mode {
-    background: #007bff;
+    background: var(--color-bg-accent);
   }
 
   .submit-button.pr-mode:hover:not(:disabled) {
-    background: #0056b3;
+    background: #2563eb;
   }
 </style>
