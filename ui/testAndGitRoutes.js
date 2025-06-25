@@ -489,151 +489,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
     }
   });
 
-  // API endpoint to commit changes (with or without creating PR)
-  app.post('/api/commit-changes', isAuthenticated, async (req, res) => {
-    try {
-      const { title, description, createPr = true } = req.body;
 
-      if (!title) {
-        return res.status(400).json({ error: 'Commit message is required' });
-      }
-
-      // Check if user is authenticated with GitHub
-      if (!req.user || !req.user.username) {
-        return res.status(401).json({ error: 'GitHub authentication required' });
-      }
-
-      // Get the user's repo path
-      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
-      const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
-
-      if (!repoExists) {
-        return res.status(404).json({ error: 'Repository not found' });
-      }
-
-      try {
-        // Initialize simple-git with the user's repo path
-        const git = simpleGit({ baseDir: userRepoPath });
-        ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
-
-        // Get current branch and status
-        const branchSummary = await git.branch();
-        const currentBranch = branchSummary.current;
-        console.log(`Current branch: ${currentBranch}`);
-
-        // Check if we're on a PR branch
-        const isPrBranch = currentBranch.startsWith('clt-ui-');
-        console.log(`Is PR branch: ${isPrBranch}`);
-
-        let branchName = currentBranch;
-        let needToCreatePr = createPr && !isPrBranch;
-
-        // Determine test directory for staging
-        const testDir = getUserTestPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
-        const relativeTestPath = path.relative(userRepoPath, testDir);
-        console.log(`Tests relative path: ${relativeTestPath}`);
-
-        // Stage changes in the tests directory
-        await git.add(relativeTestPath);
-        console.log(`Staged changes in tests directory: ${relativeTestPath}`);
-
-        // Check if there are changes to commit
-        const status = await git.status();
-        if (status.isClean()) {
-          return res.status(400).json({ error: 'No changes to commit' });
-        }
-
-        // If we need to create a PR, create a new branch
-        if (needToCreatePr) {
-          // Create a new branch name based on timestamp and username
-          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-          branchName = `clt-ui-${req.user.username}-${timestamp}`;
-
-          // Create and checkout new branch
-          await git.checkoutLocalBranch(branchName);
-          console.log(`Created and switched to new branch: ${branchName}`);
-        }
-
-        // Create a commit
-        await git.commit(title);
-        console.log(`Created commit with message: ${title}`);
-
-        // Push to the remote repository
-        await git.push('origin', branchName, ['--set-upstream']);
-        console.log(`Pushed to remote branch: ${branchName}`);
-
-        // Create a PR if needed
-        let prUrl = null;
-        if (needToCreatePr) {
-          try {
-            // Use GitHub CLI to create PR if available
-            const { exec } = await import('child_process');
-            const execPromise = (cmd, options) => new Promise((resolve, reject) => {
-              exec(cmd, options, (error, stdout, stderr) => {
-                if (error) {
-                  console.error(`Command execution error: ${stderr}`);
-                  return reject(error);
-                }
-                resolve(stdout.trim());
-              });
-            });
-
-            // Set environment for gh command
-            const env = { ...process.env, GH_TOKEN: req.user.token };
-            const ghOptions = { cwd: userRepoPath, env };
-
-            // Get default branch for PR base
-            const defaultBranch = branchSummary.branches[branchSummary.current]?.tracking?.split('/')[1] || 'master';
-
-            // Create PR command
-            let prCommand = `gh pr create --title "${title}" --head ${branchName}`;
-            if (description) {
-              prCommand += ` --body "${description}"`;
-            }
-            prCommand += ` --base ${defaultBranch}`;
-
-            // Create the PR
-            const prOutput = await execPromise(prCommand, ghOptions);
-            console.log('PR created successfully');
-
-            // Extract PR URL from the output
-            const prUrlMatch = prOutput.match(/(https:\/\/github\.com\/[^\s]+)/);
-            prUrl = prUrlMatch ? prUrlMatch[0] : null;
-          } catch (prError) {
-            console.error('Error creating PR:', prError);
-            // Continue with the flow since we've already pushed changes
-          }
-        }
-
-        // Get repo URL for response
-        const remote = await git.remote(['get-url', 'origin']).catch(() => '');
-        // Remove token from URL if present
-        const cleanRemote = remote.replace(/https:\/\/[^@]+@/, 'https://');
-
-        return res.json({
-          success: true,
-          branch: branchName,
-          commit: title,
-          pr: prUrl,
-          repository: cleanRemote,
-          message: needToCreatePr && prUrl
-            ? 'Pull request created successfully'
-            : (needToCreatePr
-              ? 'Changes committed and pushed to new branch. PR creation failed.'
-              : 'Changes committed successfully')
-        });
-      } catch (gitError) {
-        console.error('Git operation error:', gitError);
-        return res.status(500).json({
-          error: 'Git operation failed',
-          details: gitError.message
-        });
-      }
-    } catch (error) {
-      console.error('Error creating commit:', error);
-      res.status(500).json({ error: `Failed to create commit: ${error.message}` });
-    }
-  });
 
   // API endpoint to get git status information
   app.get('/api/git-status', isAuthenticated, async (req, res) => {
@@ -831,7 +687,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
       try {
         // Initialize simple-git with the user's repo path
         const git = simpleGit(userRepoPath);
-        ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
+        await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
 
         // Get current status to check for changes
         const status = await git.status();
@@ -912,7 +768,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
       try {
         // Initialize simple-git with the user's repo path
         const git = simpleGit(userRepoPath);
-        ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
+        await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
 
         // Fetch latest from remote
         await git.fetch(['--all']);
@@ -1033,7 +889,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
     const branchName = `clt-ui-${slugify(title)}`;
 
     const git = simpleGit({ baseDir: userRepo });
-    ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
+    await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
 
     try {
       // fetch all
@@ -1062,61 +918,312 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
       });
 
 
+      const { spawn } = await import('child_process');
+
+      // Helper to run gh commands safely with spawn (no shell injection)
+      const execGhCommand = (args) => new Promise((resolve, reject) => {
+        console.log('Running gh command with args:', args);
+        const gh = spawn('gh', args, {
+          cwd: userRepo,
+          env: { ...process.env, GH_TOKEN: req.user.token },
+          stdio: ['pipe', 'pipe', 'pipe']
+        });
+
+        let stdout = '';
+        let stderr = '';
+
+        gh.stdout.on('data', (data) => {
+          stdout += data.toString();
+        });
+
+        gh.stderr.on('data', (data) => {
+          stderr += data.toString();
+        });
+
+        gh.on('close', (code) => {
+          if (code === 0) {
+            resolve(stdout.trim());
+          } else {
+            console.error(`gh command failed with code ${code}: ${stderr}`);
+            reject(new Error(stderr || `gh command failed with code ${code}`));
+          }
+        });
+
+        gh.on('error', (error) => {
+          console.error('gh command error:', error);
+          reject(error);
+        });
+      });
+
       if (branchExists) {
-        // check if there's an OPEN PR for that head
-        const prList = await execPromise(
-          `gh pr list --state open --head ${branchName} --json url`
-        ).catch(() => '');
-        if (!prList) {
-          return res
-            .status(400)
-            .json({ error: `Branch '${branchName}' exists with no open PR.` });
+        // check if there's an OPEN PR for that head using safe spawn
+        const prArgs = ['pr', 'list', '--state', 'open', '--head', branchName, '--json', 'url'];
+        const prList = await execGhCommand(prArgs).catch(() => '');
+
+        if (prList && prList.trim() && prList.trim() !== '[]') {
+          // PROPERLY check if we have actual PRs
+          let actualPrs = [];
+          try {
+            actualPrs = JSON.parse(prList);
+          } catch (e) {
+            console.log('Failed to parse PR list:', e);
+            actualPrs = [];
+          }
+
+          if (Array.isArray(actualPrs) && actualPrs.length > 0) {
+            // Branch AND PR both exist → just commit & push to existing PR
+            console.log('Found existing PR, committing to existing branch');
+            await git.checkout(branchName);
+            await git.add('.');
+            const commit = await git.commit(title);
+            await git.push('origin', branchName);
+
+            return res.json({
+              success: true,
+              branch: branchName,
+              commit: commit.commit,
+              pr: actualPrs[0]?.url,
+              message: 'Committed and pushed to existing PR branch.'
+            });
+          }
         }
 
-        // branch and PR both exist → just commit & push
+        // If we get here, branch exists but NO PR → checkout existing branch and create PR
+        console.log('Branch exists but no PR found, checking out existing branch to create PR');
         await git.checkout(branchName);
         await git.add('.');
         const commit = await git.commit(title);
         await git.push('origin', branchName);
-
-        return res.json({
-          success: true,
-          branch: branchName,
-          commit: commit.latest,
-          pr: JSON.parse(prList)[0]?.url,
-          message: 'Committed and pushed to existing PR branch.'
-        });
+        
+        // Now create PR from existing branch - continue to PR creation logic below
+        console.log('Committed to existing branch, now creating PR');
+      } else {
+        // branch does not exist → create it, commit & push, open PR
+        console.log('Branch does not exist, creating new branch');
+        await git.checkoutLocalBranch(branchName);
+        await git.add('.');
+        const commit = await git.commit(title);
+        await git.push('origin', branchName, ['--set-upstream']);
       }
 
-      // branch does not exist → create it, commit & push, open PR
-      await git.checkoutLocalBranch(branchName);
-      await git.add('.');
-      const commit = await git.commit(title);
-      await git.push('origin', branchName, ['--set-upstream']);
+      // At this point, we have a branch with committed changes, now create the PR
+      // Get the commit info for response
+      const commitInfo = await git.log({ maxCount: 1 });
+      const latestCommit = commitInfo.latest;
 
-      // build gh pr create command
-      let ghCmd = `gh pr create --title "${title.replace(/"/g,'\\\"')}" --head ${branchName}`;
-      if (description) {
-        ghCmd += ` --body "${description.replace(/"/g,'\\\"')}"`;
+      // Get the current status to determine base branch
+      const status = await git.status();
+      const currentBranch = status.current;
+
+      // Determine base branch (usually main or master)
+      let baseBranch = 'main';
+      try {
+        const branches = await git.branch(['-r']);
+        if (branches.all.includes('origin/master')) {
+          baseBranch = 'master';
+        } else if (branches.all.includes('origin/main')) {
+          baseBranch = 'main';
+        }
+      } catch (e) {
+        console.log('Could not determine base branch, defaulting to main');
       }
 
-      const prOutput = await execPromise(ghCmd).catch(e => { throw e });
+      // Build gh pr create arguments safely (no shell injection possible)
+      const prArgs = [
+        'pr', 'create',
+        '--title', title,
+        '--head', branchName,
+        '--base', baseBranch
+      ];
+
+      if (description && description.trim()) {
+        prArgs.push('--body', description);
+      } else {
+        return res.status(400).json({ error: 'Description is required for PR creation' });
+      }
+
+      console.log('Creating PR with args:', prArgs);
+      const prOutput = await execGhCommand(prArgs).catch(e => { throw e });
+      console.log('PR creation output:', prOutput);
+
       const prUrlMatch = prOutput.match(/https:\/\/github\.com\/[^\s]+/);
       const prUrl = prUrlMatch?.[0] || null;
+
+      if (!prUrl) {
+        // PR creation failed - don't return success
+        console.error('PR creation failed - no URL found in output:', prOutput);
+        return res.status(500).json({
+          error: 'Pull request creation failed. No PR URL returned by GitHub CLI. Check your permissions and try again.'
+        });
+      }
 
       return res.json({
         success: true,
         branch: branchName,
-        commit: commit.latest,
+        commit: latestCommit?.hash || 'unknown',
         pr: prUrl,
-        message: prUrl
-          ? 'Pull request created successfully.'
-          : 'Branch pushed; PR creation failed—please open manually.'
+        message: 'Pull request created successfully.'
       });
     }
     catch (err) {
       console.error('create-pr error:', err);
       return res.status(500).json({ error: err.toString() });
+    }
+  });
+
+  // API endpoint to check PR status for current branch
+  app.get('/api/pr-status', isAuthenticated, async (req, res) => {
+    const username = req.user.username;
+    const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+
+    const git = simpleGit({ baseDir: userRepo });
+    await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
+
+    try {
+      // Get current branch
+      const status = await git.status();
+      const currentBranch = status.current;
+
+      // Check if this is a PR branch
+      const isPrBranch = currentBranch?.startsWith('clt-ui-');
+
+      const { exec } = await import('child_process');
+      const execPromise = (cmd) => new Promise((resolve, reject) => {
+        exec(cmd, { cwd: userRepo, env: { ...process.env, GH_TOKEN: req.user.token } },
+          (err, stdout, stderr) => {
+            if (err) {
+              reject(stderr || err);
+            } else {
+              resolve(stdout.trim());
+            }
+          }
+        );
+      });
+
+      let existingPr = null;
+      let recentCommits = [];
+
+      // Check for existing PR for current branch (regardless of branch name)
+      try {
+        const prArgs = ['pr', 'list', '--state', 'open', '--head', currentBranch, '--json', 'url,title,number'];
+        const prList = await execPromise(prArgs);
+        console.log('PR status check for branch:', currentBranch, 'Result:', prList);
+
+        if (prList && prList.trim() && prList !== '[]') {
+          const prs = JSON.parse(prList);
+          if (prs.length > 0) {
+            existingPr = prs[0];
+            // If we found a PR, this branch should be treated as a PR branch
+            isPrBranch = true;
+            console.log('Found existing PR:', existingPr);
+          }
+        }
+      } catch (error) {
+        console.log('No existing PR found or error checking:', error.message);
+      }
+
+      // Get recent commits for current branch (last 5)
+      try {
+        const logOutput = await git.log({ maxCount: 5 });
+        recentCommits = logOutput.all.map(commit => ({
+          hash: commit.hash.substring(0, 8),
+          message: commit.message,
+          author: commit.author_name,
+          date: commit.date,
+          authorEmail: commit.author_email
+        }));
+      } catch (error) {
+        console.log('Error getting commit history:', error.message);
+      }
+
+      res.json({
+        currentBranch,
+        isPrBranch,
+        existingPr,
+        recentCommits,
+        hasChanges: !status.isClean(),
+        timestamp: Date.now()
+      });
+
+    } catch (error) {
+      console.error('Error checking PR status:', error);
+      res.status(500).json({ error: `Failed to check PR status: ${error.message}` });
+    }
+  });
+
+  // API endpoint to commit changes to existing PR branch
+  app.post('/api/commit-changes', isAuthenticated, async (req, res) => {
+    const { message } = req.body;
+    if (!message) return res.status(400).json({ error: 'Commit message is required' });
+
+    const username = req.user.username;
+    const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+
+    const git = simpleGit({ baseDir: userRepo });
+    await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
+
+    try {
+      // Get current branch and verify it's a PR branch
+      const status = await git.status();
+      const currentBranch = status.current;
+
+      if (!currentBranch?.startsWith('clt-ui-')) {
+        return res.status(400).json({
+          error: 'Can only commit to PR branches (branches starting with clt-ui-)'
+        });
+      }
+
+      // Check if there are changes to commit
+      if (status.isClean()) {
+        return res.status(400).json({ error: 'No changes to commit' });
+      }
+
+      // Commit and push changes
+      await git.add('.');
+      const commit = await git.commit(message);
+      await git.push('origin', currentBranch);
+
+      // Get PR URL if exists
+      const { exec } = await import('child_process');
+      const execPromise = (cmd) => new Promise((resolve, reject) => {
+        exec(cmd, { cwd: userRepo, env: { ...process.env, GH_TOKEN: req.user.token } },
+          (err, stdout, stderr) => {
+            if (err) {
+              reject(stderr || err);
+            } else {
+              resolve(stdout.trim());
+            }
+          }
+        );
+      });
+
+      let prUrl = null;
+      try {
+        const prList = await execPromise(
+          `gh pr list --state open --head ${currentBranch} --json url`
+        );
+        if (prList) {
+          const prs = JSON.parse(prList);
+          if (prs.length > 0) {
+            prUrl = prs[0].url;
+          }
+        }
+      } catch (error) {
+        console.log('Could not get PR URL:', error.message);
+      }
+
+      res.json({
+        success: true,
+        branch: currentBranch,
+        commit: commit.commit,
+        commitHash: commit.commit.substring(0, 8),
+        pr: prUrl,
+        message: 'Changes committed and pushed to PR successfully'
+      });
+
+    } catch (error) {
+      console.error('Error committing changes:', error);
+      res.status(500).json({ error: `Failed to commit changes: ${error.message}` });
     }
   });
 
@@ -1196,13 +1303,13 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
   function writeLogEntry(session, logEntry, logType = 'INFO') {
     const timestamp = new Date().toISOString();
     const formattedEntry = `[${timestamp}] [${logType}] ${logEntry}`;
-    
+
     // Add to session logs array
     session.logs.push(logEntry);
-    
+
     // Write to console (same as before)
     console.log(`Session ${session.id} ${logType.toLowerCase()}:`, logEntry);
-    
+
     // Write to log file immediately if configured
     if (session.logFile) {
       try {
@@ -1211,10 +1318,10 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
         console.error(`Failed to write to log file ${session.logFile}:`, error);
       }
     }
-    
+
     // Update cost in real-time
     session.cost = extractCostFromLogs(session.logs);
-    
+
     // Update session metadata in persistent storage incrementally
     if (session.logFile) {
       updateSessionMetadata(session);
@@ -1224,7 +1331,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
   // Utility function to update session metadata incrementally
   function updateSessionMetadata(session) {
     if (!session.logFile) return;
-    
+
     try {
       const metadata = {
         sessionId: session.id,
@@ -1281,12 +1388,12 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
       let sessionId;
       let sanitizedSessionName = sessionName ? sanitizeSessionName(sessionName) : '';
       let isSessionContinuation = false;
-      
+
       // If sessionName is provided, check if we're continuing an existing session
       if (sanitizedSessionName) {
         // First check if there was a recently completed session with the same name
         const recentSession = global.interactiveSessions[username];
-        
+
         if (recentSession && !recentSession.running && recentSession.name === sanitizedSessionName) {
           // Continue the recent session
           sessionId = recentSession.id;
@@ -1301,7 +1408,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
               const existingFiles = readdirSync(userLogDir)
                 .filter(file => file.endsWith('.log') || file.endsWith('.meta'))
                 .filter(file => file.startsWith(sanitizedSessionName + '_'));
-              
+
               if (existingFiles.length > 0) {
                 // Continue existing session - use existing session ID from metadata
                 const latestFile = existingFiles
@@ -1311,7 +1418,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
                     return { file, stats, filePath };
                   })
                   .sort((a, b) => b.stats.mtime - a.stats.mtime)[0];
-                
+
                 try {
                   const sessionData = JSON.parse(readFileSync(latestFile.filePath, 'utf8'));
                   if (sessionData.metadata && sessionData.metadata.sessionId) {
@@ -1327,7 +1434,7 @@ export function setupGitAndTestRoutes(app, isAuthenticated, dependencies) {
           }
         }
       }
-      
+
       // Generate new session ID if not continuing existing session
       if (!sessionId) {
         sessionId = sanitizedSessionName
@@ -1431,7 +1538,7 @@ ${input}
         if (session.running && childProcess) {
           console.log(`Session ${sessionId} timed out after ${askAiTimeout}ms`);
           childProcess.kill('SIGTERM');
-          
+
           const timeoutLog = `
 === SESSION TIMEOUT ===
 Session ID: ${sessionId}
@@ -1440,7 +1547,7 @@ Time: ${new Date().toISOString()}
 Process terminated due to timeout
 === TIMEOUT END ===
 `;
-          
+
           writeLogEntry(session, timeoutLog, 'TIMEOUT');
         }
       }, askAiTimeout);
@@ -1485,7 +1592,7 @@ Status: ${code === 0 ? 'SUCCESS' : 'FAILED'}
 Total Log Entries: ${session.logs.length}
 === SESSION COMPLETE ===
 `;
-        
+
         writeLogEntry(session, completionLog, 'END');
 
         // Save session data persistently (final save)
@@ -1529,9 +1636,9 @@ Duration: ${session.endTime.getTime() - session.startTime.getTime()}ms
 ${error.stack || error.message}
 === SESSION TERMINATED ===
 `;
-        
+
         writeLogEntry(session, errorLog, 'ERROR');
-        
+
         session.output = session.logs.join('');
         session.cost = extractCostFromLogs(session.logs);
 
@@ -1658,7 +1765,7 @@ ${error.stack || error.message}
 
       // Group files by session ID to prefer .meta over .log
       const sessionMap = new Map();
-      
+
       allFiles.forEach(file => {
         const sessionId = file.replace(/\.(log|meta)$/, '');
         if (!sessionMap.has(sessionId) || file.endsWith('.meta')) {
@@ -1716,12 +1823,12 @@ ${error.stack || error.message}
       const sessionGroups = new Map();
       logFiles.forEach(session => {
         const key = session.sessionName;
-        if (!sessionGroups.has(key) || 
+        if (!sessionGroups.has(key) ||
             new Date(session.startTime) > new Date(sessionGroups.get(key).startTime)) {
           sessionGroups.set(key, session);
         }
       });
-      
+
       // Convert back to array
       const deduplicatedLogFiles = Array.from(sessionGroups.values())
         .sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
@@ -1735,15 +1842,15 @@ ${error.stack || error.message}
           if (s.sessionId === currentSession.id) {
             return true;
           }
-          
+
           // Then try matching by session name
           if (s.sessionName === currentSession.name) {
             return true;
           }
-          
+
           return false;
         });
-        
+
         if (activeSessionIndex === -1) {
           // Add current session if not in persistent storage yet
           deduplicatedLogFiles.unshift({
@@ -1801,7 +1908,7 @@ ${error.stack || error.message}
       // Prefer .meta files for most up-to-date information
       const metaFile = logFiles.find(file => file.endsWith('.meta'));
       const logFile = logFiles.find(file => file.endsWith('.log'));
-      
+
       const primaryFile = metaFile ? path.join(userLogDir, metaFile) : path.join(userLogDir, logFile);
 
       try {

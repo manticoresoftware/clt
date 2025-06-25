@@ -16,6 +16,7 @@ export interface GitStatusState {
   isLoading: boolean;
   error: string | null;
   lastUpdated: number | null;
+  isPaused: boolean; // Flag to pause updates when modal is open
 }
 
 const initialState: GitStatusState = {
@@ -27,7 +28,8 @@ const initialState: GitStatusState = {
   testPath: 'test/clt-tests',
   isLoading: false,
   error: null,
-  lastUpdated: null
+  lastUpdated: null,
+  isPaused: false
 };
 
 function createGitStatusStore() {
@@ -43,6 +45,8 @@ function createGitStatusStore() {
       update(state => ({ ...state, isLoading: true, error: null }));
       
       try {
+        console.log('Fetching git status from:', `${API_URL}/api/git-status`);
+        
         const response = await fetch(`${API_URL}/api/git-status`, {
           credentials: 'include'
         });
@@ -50,28 +54,94 @@ function createGitStatusStore() {
         console.log('Git status response:', response.status, response.statusText);
         
         if (!response.ok) {
-          throw new Error(`Failed to fetch git status: ${response.statusText}`);
+          if (response.status === 401) {
+            throw new Error('GitHub authentication required');
+          }
+          if (response.status === 404) {
+            throw new Error('Repository not found');
+          }
+          
+          // Try to get error details from response
+          let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+          try {
+            const errorData = await response.json();
+            if (errorData.error) {
+              errorMessage = errorData.error;
+            }
+          } catch (e) {
+            // Ignore JSON parsing error, use default message
+          }
+          
+          throw new Error(errorMessage);
         }
         
         const data = await response.json();
         console.log('Git status data:', data);
         
-        if (data.success) {
-          update(state => ({
-            ...state,
-            isLoading: false,
-            currentBranch: data.currentBranch,
-            isPrBranch: data.isPrBranch,
-            hasChanges: data.hasChanges,
-            modifiedFiles: data.modifiedFiles || [],
-            modifiedDirs: data.modifiedDirs || [],
-            testPath: data.testPath || 'test/clt-tests',
-            lastUpdated: Date.now(),
-            error: null
-          }));
-        } else {
-          throw new Error(data.error || 'Git status request failed');
+        // Check if response contains error
+        if (data.error) {
+          throw new Error(data.error);
         }
+        
+        let hasChanges = false;
+        let modifiedFiles: GitFileStatus[] = [];
+        let modifiedDirs: string[] = [];
+        let currentBranch = 'main';
+        let isPrBranch = false;
+        
+        // Handle different response formats
+        if (data.success !== undefined) {
+          // Format from existing endpoint that returns { success: true, hasChanges, modifiedFiles, ... }
+          hasChanges = data.hasChanges || false;
+          modifiedFiles = data.modifiedFiles || [];
+          modifiedDirs = data.modifiedDirs || [];
+          currentBranch = data.currentBranch || 'main';
+          isPrBranch = data.isPrBranch || false;
+        } else if (data.files) {
+          // Format from /api/git-status endpoint that returns { hasUnstagedChanges, files: { modified, not_added, ... } }
+          hasChanges = data.hasUnstagedChanges || !data.isClean;
+          
+          // Convert backend file arrays to GitFileStatus format
+          if (data.files.modified) {
+            modifiedFiles.push(...data.files.modified.map(path => ({ path, status: 'M' as const })));
+          }
+          if (data.files.not_added) {
+            modifiedFiles.push(...data.files.not_added.map(path => ({ path, status: '??' as const })));
+          }
+          if (data.files.deleted) {
+            modifiedFiles.push(...data.files.deleted.map(path => ({ path, status: 'D' as const })));
+          }
+          if (data.files.conflicted) {
+            modifiedFiles.push(...data.files.conflicted.map(path => ({ path, status: 'U' as const })));
+          }
+          if (data.files.staged) {
+            modifiedFiles.push(...data.files.staged.map(path => ({ path, status: 'A' as const })));
+          }
+          
+          // Extract unique directories from modified files
+          modifiedDirs = [...new Set(
+            modifiedFiles
+              .map(file => file.path.split('/').slice(0, -1).join('/'))
+              .filter(dir => dir.length > 0)
+          )];
+          
+          currentBranch = data.currentBranch || 'main';
+          isPrBranch = currentBranch?.startsWith('clt-ui-') || false;
+        }
+
+        update(state => ({
+          ...state,
+          isLoading: false,
+          currentBranch,
+          isPrBranch,
+          hasChanges,
+          modifiedFiles,
+          modifiedDirs,
+          testPath: 'test/clt-tests',
+          lastUpdated: Date.now(),
+          error: null
+        }));
+        
       } catch (error) {
         console.error('Error fetching git status:', error);
         update(state => ({
@@ -93,7 +163,16 @@ function createGitStatusStore() {
       
       // Then poll periodically
       pollInterval = setInterval(() => {
-        gitStatusStore.fetchGitStatus();
+        // Check if polling is paused before fetching
+        let currentState: GitStatusState;
+        const unsubscribe = subscribe(state => {
+          currentState = state;
+        });
+        unsubscribe();
+        
+        if (!currentState!.isPaused) {
+          gitStatusStore.fetchGitStatus();
+        }
       }, intervalMs);
     },
     
@@ -103,6 +182,15 @@ function createGitStatusStore() {
         clearInterval(pollInterval);
         pollInterval = null;
       }
+    },
+    
+    // Pause/resume polling (for when modal is open)
+    pausePolling: () => {
+      update(state => ({ ...state, isPaused: true }));
+    },
+    
+    resumePolling: () => {
+      update(state => ({ ...state, isPaused: false }));
     },
     
     // Get status for a specific file path
