@@ -2,6 +2,58 @@ import path from 'path';
 import fs from 'fs/promises';
 import { writeFileSync, appendFileSync, existsSync, readdirSync, statSync, readFileSync } from 'fs';
 
+// Cache for default branch detection per repository
+const defaultBranchCache = new Map();
+
+/**
+ * Get the default branch for a repository with caching
+ * @param {Object} git - SimpleGit instance
+ * @param {string} repoPath - Repository path for cache key
+ * @returns {Promise<string>} Default branch name
+ */
+export async function getDefaultBranch(git, repoPath) {
+  // Check cache first
+  if (defaultBranchCache.has(repoPath)) {
+    return defaultBranchCache.get(repoPath);
+  }
+
+  let defaultBranch;
+  try {
+    // Try to get the default branch from the HEAD reference
+    defaultBranch = await git.revparse(['--abbrev-ref', 'origin/HEAD']);
+    defaultBranch = defaultBranch.replace('origin/', '');
+  } catch (headError) {
+    // Fallback: use master or main
+    console.warn('Could not determine default branch from HEAD:', headError);
+
+    // Check if main or master exists
+    const branches = await git.branch(['-r']);
+    if (branches.all.includes('origin/main')) {
+      defaultBranch = 'main';
+    } else {
+      defaultBranch = 'master';
+    }
+  }
+
+  // Cache the result
+  defaultBranchCache.set(repoPath, defaultBranch);
+  console.log(`Default branch cached for ${repoPath}: ${defaultBranch}`);
+  
+  return defaultBranch;
+}
+
+/**
+ * Clear the default branch cache (useful for testing or if repo changes)
+ * @param {string} repoPath - Optional specific repo path to clear, or clear all if not provided
+ */
+export function clearDefaultBranchCache(repoPath = null) {
+  if (repoPath) {
+    defaultBranchCache.delete(repoPath);
+  } else {
+    defaultBranchCache.clear();
+  }
+}
+
 // Helper function to save session data persistently
 export function saveSessionToPersistentStorage(session, username) {
   const logDir = process.env.ASK_AI_LOG;

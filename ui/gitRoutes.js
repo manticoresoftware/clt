@@ -7,6 +7,7 @@ import {
   ensureGitRemoteWithToken,
   slugify
 } from './routes.js';
+import { getDefaultBranch } from './helpers.js';
 
 // Setup Git routes
 export function setupGitRoutes(app, isAuthenticated, dependencies) {
@@ -149,24 +150,8 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         const cleanRemoteUrl = remoteUrl.replace(/https:\/\/[^@]+@/, 'https://');
         console.log(`Remote repository URL: ${cleanRemoteUrl}`);
 
-        // Get default branch
-        let defaultBranch;
-        try {
-          // Try to get the default branch from the HEAD reference
-          defaultBranch = await git.revparse(['--abbrev-ref', 'origin/HEAD']);
-          defaultBranch = defaultBranch.replace('origin/', '');
-        } catch (headError) {
-          // Fallback: use master or main
-          console.warn('Could not determine default branch from HEAD:', headError);
-
-          // Check if main or master exists
-          const branches = await git.branch(['-r']);
-          if (branches.all.includes('origin/main')) {
-            defaultBranch = 'main';
-          } else {
-            defaultBranch = 'master';
-          }
-        }
+        // Get default branch (cached)
+        const defaultBranch = await getDefaultBranch(git, userRepo);
         console.log(`Default branch: ${defaultBranch}`);
 
         return res.json({
@@ -486,18 +471,8 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       const status = await git.status();
       const currentBranch = status.current;
 
-      // Determine base branch (usually main or master)
-      let baseBranch = 'main';
-      try {
-        const branches = await git.branch(['-r']);
-        if (branches.all.includes('origin/master')) {
-          baseBranch = 'master';
-        } else if (branches.all.includes('origin/main')) {
-          baseBranch = 'main';
-        }
-      } catch (e) {
-        console.log('Could not determine base branch, defaulting to main');
-      }
+      // Determine base branch using cached helper
+      const baseBranch = await getDefaultBranch(git, userRepo);
 
       // Build gh pr create arguments safely (no shell injection possible)
       const prArgs = [
@@ -555,24 +530,8 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       const status = await git.status();
       const currentBranch = status.current;
 
-      // Get default branch (same logic as git-status endpoint)
-      let defaultBranch;
-      try {
-        // Try to get the default branch from the HEAD reference
-        defaultBranch = await git.revparse(['--abbrev-ref', 'origin/HEAD']);
-        defaultBranch = defaultBranch.replace('origin/', '');
-      } catch (headError) {
-        // Fallback: use master or main
-        console.warn('Could not determine default branch from HEAD:', headError);
-
-        // Check if main or master exists
-        const branches = await git.branch(['-r']);
-        if (branches.all.includes('origin/main')) {
-          defaultBranch = 'main';
-        } else {
-          defaultBranch = 'master';
-        }
-      }
+      // Get default branch (cached)
+      const defaultBranch = await getDefaultBranch(git, userRepo);
       console.log(`Default branch: ${defaultBranch}`);
 
       // Check if this is a PR branch (not default branch and starts with clt-ui-)
