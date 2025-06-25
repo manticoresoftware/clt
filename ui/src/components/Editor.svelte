@@ -4,8 +4,8 @@
   import { onMount, onDestroy } from 'svelte';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
   import Step from './Step.svelte';
-  import { 
-    initWasm, 
+  import {
+    initWasm,
     wasmLoadedStore,
     patternMatcherStore,
     convertStructuredToCommands,
@@ -46,7 +46,7 @@
     const newCommands = $filesStore.currentFile?.testStructure
       ? convertStructuredToCommands($filesStore.currentFile.testStructure)
       : ($filesStore.currentFile?.commands || []);
-    
+
     // Preserve expanded states from previous commands array
     commands = preserveExpandedStates(newCommands, commands || []);
   }
@@ -212,7 +212,7 @@
     if (typeof window !== 'undefined') {
       window.lastPatternRefresh = 0;
     }
-    
+
     // Start git status polling to get file status updates
     gitStatusStore.startPolling(5000); // Poll every 5 seconds
   });
@@ -415,9 +415,9 @@
   // Handle different types of toggle expansion
   function handleToggleExpansion(detail: { index: number; expanded?: boolean }) {
     const { index, expanded } = detail;
-    
+
     console.log('EDITOR handleToggleExpansion', { index, expanded, currentState: commands[index]?.isOutputExpanded });
-    
+
     if (expanded !== undefined) {
       // This is output expansion - update the command's isOutputExpanded property
       if (index >= 0 && index < commands.length) {
@@ -448,16 +448,16 @@
 
   async function handleCheckoutFile() {
     if (!$filesStore.currentFile) return;
-    
+
     const currentFilePath = $filesStore.currentFile.path;
     const testPath = $gitStatusStore.testPath || 'test/clt-tests';
     const fullFilePath = `${testPath}/${currentFilePath}`;
     const fileName = currentFilePath.split('/').pop() || currentFilePath;
-    
+
     // Show confirmation dialog
     const confirmed = confirm(`This will discard all changes to "${fileName}". Are you sure?`);
     if (!confirmed) return;
-    
+
     // Use the full path for checkout (the path that git knows about)
     const success = await checkoutFile(fullFilePath);
     if (success) {
@@ -468,14 +468,14 @@
   }
 
   // Get git status for current file - make it reactive by accessing the store directly
-  $: currentFileGitStatus = $filesStore.currentFile && $gitStatusStore.modifiedFiles 
+  $: currentFileGitStatus = $filesStore.currentFile && $gitStatusStore.modifiedFiles
     ? (() => {
         const currentFilePath = $filesStore.currentFile.path;
         const testPath = $gitStatusStore.testPath || 'test/clt-tests';
         const fullFilePath = `${testPath}/${currentFilePath}`;
-        
+
         // Try both the original path and the prefixed path
-        const fileStatus = $gitStatusStore.modifiedFiles.find(file => 
+        const fileStatus = $gitStatusStore.modifiedFiles.find(file =>
           file.path === currentFilePath || file.path === fullFilePath
         );
         return fileStatus?.status || null;
@@ -617,7 +617,7 @@
             disabled={!$filesStore.currentFile}
             title="Discard changes to this file"
           >
-            Checkout
+            Discard changes
           </button>
         {/if}
         <button
@@ -625,7 +625,7 @@
           on:click={runTest}
           disabled={!$filesStore.currentFile || $filesStore.running}
         >
-          Run
+          Run Test
         </button>
       </div>
     </div>
