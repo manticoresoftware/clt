@@ -632,13 +632,39 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         } catch (listError) {
           console.log('❌ Both PR detection methods failed:', listError.message);
           
-          // Final fallback: check if gh is working at all
+          // Method 3: Try gh pr view (checks current branch's PR)
           try {
-            const ghVersion = await execPromise('gh --version');
-            console.log('GitHub CLI is available:', ghVersion.split('\n')[0]);
-            console.log('❌ PR detection failed but gh is working - might be auth or repo issue');
-          } catch (ghError) {
-            console.log('❌ GitHub CLI not available:', ghError.message);
+            const prViewOutput = await execPromise('gh pr view --json url,title,number');
+            console.log('gh pr view result:', prViewOutput);
+            
+            if (prViewOutput && prViewOutput.trim()) {
+              const prData = JSON.parse(prViewOutput);
+              existingPr = {
+                url: prData.url,
+                title: prData.title,
+                number: prData.number
+              };
+              isPrBranch = true;
+              console.log('✅ Found existing PR via gh pr view:', existingPr);
+            }
+          } catch (viewError) {
+            console.log('gh pr view also failed:', viewError.message);
+            
+            // Final fallback: if we're on a clt-ui- branch, assume it's a PR branch
+            if (currentBranch?.startsWith('clt-ui-')) {
+              console.log('🔶 On clt-ui- branch but cannot find PR - assuming PR branch for commit mode');
+              isPrBranch = true;
+              // Note: existingPr will remain null, but isPrBranch=true will trigger commit mode
+            }
+            
+            // Check if gh is working at all
+            try {
+              const ghVersion = await execPromise('gh --version');
+              console.log('GitHub CLI is available:', ghVersion.split('\n')[0]);
+              console.log('❌ PR detection failed but gh is working - might be auth or repo issue');
+            } catch (ghError) {
+              console.log('❌ GitHub CLI not available:', ghError.message);
+            }
           }
         }
       }

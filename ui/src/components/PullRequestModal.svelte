@@ -14,7 +14,9 @@
   // Workflow detection with better logging
   $: prStatus = github.prStatus;
   $: existingPr = prStatus?.existingPr;
-  $: isCommitMode = !!(prStatus?.isPrBranch && existingPr);
+  // If we're on a PR branch, we should be in commit mode even if we can't find the PR object
+  // This handles cases where GitHub CLI fails but we know it's a PR branch
+  $: isCommitMode = !!(prStatus?.isPrBranch || existingPr);
   $: recentCommits = prStatus?.recentCommits || [];
   
   // Debug logging
@@ -306,6 +308,30 @@
                   </svg>
                   View Pull Request
                 </a>
+              </div>
+            </div>
+          </div>
+        {/if}
+
+        <!-- PR Branch Section (when we know it's a PR branch but don't have PR details) -->
+        {#if isCommitMode && !existingPr}
+          <div class="pr-branch-section">
+            <h4>🔀 Pull Request Branch</h4>
+            <div class="pr-info">
+              <p class="pr-description">You're on a pull request branch. Your changes will be committed to the existing pull request for this branch.</p>
+              <div class="pr-actions">
+                <button 
+                  class="find-pr-button"
+                  on:click={() => githubStore.fetchPrStatus()}
+                  disabled={github.isLoadingStatus}
+                >
+                  {#if github.isLoadingStatus}
+                    <span class="spinner"></span>
+                    Finding PR...
+                  {:else}
+                    🔍 Find Pull Request
+                  {/if}
+                </button>
               </div>
             </div>
           </div>
@@ -970,6 +996,20 @@
     font-size: 1.1em;
   }
 
+  .pr-branch-section {
+    margin-bottom: 20px;
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 6px;
+    padding: 16px;
+  }
+
+  .pr-branch-section h4 {
+    margin: 0 0 12px 0;
+    color: #f59e0b;
+    font-size: 1.1em;
+  }
+
   .pr-info {
     background: var(--color-bg-primary);
     border-radius: 4px;
@@ -1021,6 +1061,30 @@
     background: #2563eb;
     color: var(--color-text-inverted);
     text-decoration: none;
+  }
+
+  .find-pr-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #f59e0b;
+    color: var(--color-text-inverted);
+    border: none;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }
+
+  .find-pr-button:hover:not(:disabled) {
+    background: #d97706;
+  }
+
+  .find-pr-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .recent-commits-section {
