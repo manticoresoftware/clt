@@ -556,7 +556,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       const currentBranch = status.current;
 
       // Check if this is a PR branch
-      const isPrBranch = currentBranch?.startsWith('clt-ui-');
+      let isPrBranch = currentBranch?.startsWith('clt-ui-');
 
       const { exec } = await import('child_process');
       const execPromise = (cmd) => new Promise((resolve, reject) => {
