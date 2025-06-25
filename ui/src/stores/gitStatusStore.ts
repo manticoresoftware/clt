@@ -36,6 +36,7 @@ function createGitStatusStore() {
   const { subscribe, set, update } = writable<GitStatusState>(initialState);
 
   let pollInterval: number | null = null;
+  let isPollingActive = false;
 
   return {
     subscribe,
@@ -152,11 +153,22 @@ function createGitStatusStore() {
       }
     },
     
-    // Start periodic polling
+    // Start periodic polling (only allow one active polling instance)
     startPolling: (intervalMs: number = 5000) => {
+      // If already polling, don't start another instance
+      if (isPollingActive) {
+        console.log('Git status polling already active, ignoring duplicate start request');
+        return;
+      }
+      
+      // Clear any existing interval
       if (pollInterval) {
         clearInterval(pollInterval);
+        pollInterval = null;
       }
+      
+      isPollingActive = true;
+      console.log(`Starting git status polling with ${intervalMs}ms interval`);
       
       // Fetch immediately
       gitStatusStore.fetchGitStatus();
@@ -182,7 +194,19 @@ function createGitStatusStore() {
         clearInterval(pollInterval);
         pollInterval = null;
       }
+      isPollingActive = false;
+      console.log('Git status polling stopped');
     },
+    
+    // Force restart polling (useful when multiple components try to start)
+    restartPolling: (intervalMs: number = 5000) => {
+      gitStatusStore.stopPolling();
+      isPollingActive = false; // Ensure flag is reset
+      gitStatusStore.startPolling(intervalMs);
+    },
+    
+    // Check if polling is currently active
+    isPolling: () => isPollingActive,
     
     // Pause/resume polling (for when modal is open)
     pausePolling: () => {

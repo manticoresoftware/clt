@@ -213,13 +213,15 @@
       window.lastPatternRefresh = 0;
     }
 
-    // Start git status polling to get file status updates
-    gitStatusStore.startPolling(5000); // Poll every 5 seconds
+    // Start git status polling only if not already active
+    if (!gitStatusStore.isPolling()) {
+      gitStatusStore.startPolling(5000); // Poll every 5 seconds
+    }
   });
 
   onDestroy(() => {
-    // Stop git status polling when component is destroyed
-    gitStatusStore.stopPolling();
+    // Don't stop polling here since other components might need it
+    // Let Header.svelte manage the main polling lifecycle
   });
 
   // Update localStorage when checkbox changes

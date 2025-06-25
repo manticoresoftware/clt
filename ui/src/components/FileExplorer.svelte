@@ -479,7 +479,11 @@
         
         // Continue with normal initialization but skip git operations
         await filesStore.refreshFileTree();
-        gitStatusStore.startPolling(5000);
+        
+        // Start git status polling only if not already active
+        if (!gitStatusStore.isPolling()) {
+          gitStatusStore.startPolling(5000);
+        }
         
         // Start file tree polling
         const fileTreePollingInterval = setInterval(async () => {
@@ -519,8 +523,10 @@
     preserveExpandedState();
     await filesStore.refreshFileTree();
 
-    // Start git status polling
-    gitStatusStore.startPolling(5000); // Poll every 5 seconds
+    // Start git status polling only if not already active
+    if (!gitStatusStore.isPolling()) {
+      gitStatusStore.startPolling(5000); // Poll every 5 seconds
+    }
     
     // Start file tree polling for new files
     const fileTreePollingInterval = setInterval(async () => {

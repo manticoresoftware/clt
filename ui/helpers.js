@@ -23,15 +23,22 @@ export async function getDefaultBranch(git, repoPath) {
     defaultBranch = await git.revparse(['--abbrev-ref', 'origin/HEAD']);
     defaultBranch = defaultBranch.replace('origin/', '');
   } catch (headError) {
-    // Fallback: use master or main
-    console.warn('Could not determine default branch from HEAD:', headError);
+    console.warn('Could not determine default branch from HEAD, using fallback:', headError.message);
 
-    // Check if main or master exists
-    const branches = await git.branch(['-r']);
-    if (branches.all.includes('origin/main')) {
+    try {
+      // Fallback: Check if main or master exists
+      const branches = await git.branch(['-r']);
+      if (branches.all.includes('origin/main')) {
+        defaultBranch = 'main';
+      } else if (branches.all.includes('origin/master')) {
+        defaultBranch = 'master';
+      } else {
+        // Final fallback
+        defaultBranch = 'main';
+      }
+    } catch (branchError) {
+      console.warn('Could not determine default branch from remote branches, defaulting to main:', branchError.message);
       defaultBranch = 'main';
-    } else {
-      defaultBranch = 'master';
     }
   }
 
