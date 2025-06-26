@@ -5,19 +5,19 @@
   // Store subscriptions
   $: github = $githubStore;
   $: gitStatus = $gitStatusStore;
-
+  
   // Form state
   let title = '';
   let description = '';
   let showAdvanced = false;
-
+  
   // Workflow detection - only commit mode if we have an actual existing PR
   $: prStatus = github.prStatus;
   $: existingPr = prStatus?.existingPr;
   // Show commit mode ONLY if we have an existing PR (regardless of branch name)
   $: isCommitMode = !!(existingPr);
   $: recentCommits = prStatus?.recentCommits || [];
-
+  
   // Debug logging
   $: if (prStatus) {
     console.log('PR Status:', {
@@ -27,27 +27,27 @@
       currentBranch: prStatus.currentBranch
     });
   }
-
+  
   // Validation
   $: isValidTitle = title.trim().length >= 3;
   $: isValidDescription = isCommitMode || description.trim().length >= 10; // Require description for PR creation
   $: canSubmit = isValidTitle && isValidDescription && !github.isCreating && !github.isCommitting && gitStatus.hasChanges;
   $: isLoading = github.isCreating || github.isCommitting || github.isLoadingStatus;
-
+  
   // Auto-generate title and description based on changes and mode (only once when modal opens)
   let titleGenerated = false;
   let descriptionGenerated = false;
-
+  
   $: if (gitStatus.modifiedFiles.length > 0 && !title && !isCommitMode && !titleGenerated) {
     title = generateTitle(gitStatus.modifiedFiles, gitStatus.modifiedDirs);
     titleGenerated = true;
   }
-
+  
   $: if (gitStatus.modifiedFiles.length > 0 && !description && !isCommitMode && !descriptionGenerated) {
     description = generateDescription(gitStatus.modifiedFiles, gitStatus.modifiedDirs);
     descriptionGenerated = true;
   }
-
+  
   // For commit mode, only generate title (commit message) once
   $: if (gitStatus.modifiedFiles.length > 0 && !title && isCommitMode && !titleGenerated) {
     title = generateCommitMessage(gitStatus.modifiedFiles, gitStatus.modifiedDirs);
@@ -64,10 +64,10 @@
     const addedFiles = files.filter(f => f.status === '??').length;
     const modifiedFiles = files.filter(f => f.status === 'M').length;
     const deletedFiles = files.filter(f => f.status === 'D').length;
-
+    
     const mainDir = dirs[0] || 'files';
     const baseName = mainDir.split('/').pop() || mainDir;
-
+    
     if (files.length === 1) {
       const file = files[0];
       const fileName = file.path.split('/').pop().replace('.rec', '');
@@ -79,7 +79,7 @@
         return `Remove test: ${fileName}`;
       }
     }
-
+    
     if (addedFiles > 0 && modifiedFiles === 0 && deletedFiles === 0) {
       return `Add ${addedFiles} test${addedFiles > 1 ? 's' : ''} in ${baseName}`;
     } else if (modifiedFiles > 0 && addedFiles === 0 && deletedFiles === 0) {
@@ -95,13 +95,13 @@
       return `Update tests in ${baseName} (${parts.join(', ')})`;
     }
   }
-
+  
   function generateCommitMessage(files, dirs) {
     // Simpler commit messages
     const addedFiles = files.filter(f => f.status === '??').length;
     const modifiedFiles = files.filter(f => f.status === 'M').length;
     const deletedFiles = files.filter(f => f.status === 'D').length;
-
+    
     if (files.length === 1) {
       const file = files[0];
       const fileName = file.path.split('/').pop();
@@ -113,7 +113,7 @@
         return `Remove ${fileName}`;
       }
     }
-
+    
     const totalFiles = files.length;
     if (addedFiles > 0 && modifiedFiles === 0) {
       return `Add ${addedFiles} file${addedFiles > 1 ? 's' : ''}`;
@@ -123,34 +123,34 @@
       return `Update ${totalFiles} file${totalFiles > 1 ? 's' : ''}`;
     }
   }
-
+  
   function generateDescription(files, dirs) {
     const byDirectory = {};
     const addedFiles = [];
     const modifiedFiles = [];
     const deletedFiles = [];
-
+    
     // Organize files by directory and status
     files.forEach(file => {
       const dir = file.path.includes('/') ? file.path.substring(0, file.path.lastIndexOf('/')) : '.';
       if (!byDirectory[dir]) byDirectory[dir] = [];
       byDirectory[dir].push(file);
-
+      
       if (file.status === '??') addedFiles.push(file);
       else if (file.status === 'M') modifiedFiles.push(file);
       else if (file.status === 'D') deletedFiles.push(file);
     });
-
+    
     let description = '';
-
+    
     // Summary
     const parts = [];
     if (addedFiles.length > 0) parts.push(`${addedFiles.length} added`);
     if (modifiedFiles.length > 0) parts.push(`${modifiedFiles.length} modified`);
     if (deletedFiles.length > 0) parts.push(`${deletedFiles.length} deleted`);
-
+    
     description += `## Summary\n${parts.join(', ')} files\n\n`;
-
+    
     // Changes by status
     if (addedFiles.length > 0) {
       description += `## Added Files\n`;
@@ -160,7 +160,7 @@
       });
       description += '\n';
     }
-
+    
     if (modifiedFiles.length > 0) {
       description += `## Modified Files\n`;
       modifiedFiles.forEach(file => {
@@ -169,7 +169,7 @@
       });
       description += '\n';
     }
-
+    
     if (deletedFiles.length > 0) {
       description += `## Removed Files\n`;
       deletedFiles.forEach(file => {
@@ -178,7 +178,7 @@
       });
       description += '\n';
     }
-
+    
     // Directory breakdown if multiple directories
     const dirCount = Object.keys(byDirectory).length;
     if (dirCount > 1) {
@@ -189,15 +189,15 @@
       });
       description += '\n';
     }
-
+    
     description += `---\n*Auto-generated from CLT UI*`;
-
+    
     return description;
   }
 
   function handleSubmit() {
     if (!canSubmit) return;
-
+    
     if (isCommitMode) {
       // Commit to existing PR
       githubStore.commitChanges(title.trim())
@@ -280,7 +280,7 @@
         </div>
         <button class="close-button" on:click={handleCancel}>&times;</button>
       </div>
-
+      
       <div class="modal-body">
         <!-- Existing PR Section -->
         {#if isCommitMode && existingPr}
@@ -319,7 +319,7 @@
             <div class="pr-info">
               <p class="pr-description">You're on a pull request branch. Your changes will be committed to the existing pull request for this branch.</p>
               <div class="pr-actions">
-                <button
+                <button 
                   class="find-pr-button"
                   on:click={() => githubStore.fetchPrStatus()}
                   disabled={github.isLoadingStatus}
@@ -377,11 +377,11 @@
                   <span class="pr-branch-badge">PR Branch</span>
                 {/if}
               </div>
-
+              
               <div class="files-summary">
                 <span class="file-count">{gitStatus.modifiedFiles.length} files changed</span>
               </div>
-
+              
               <div class="file-details">
                 {#each gitStatus.modifiedFiles.slice(0, 10) as file}
                   <div class="file-item">
@@ -389,7 +389,7 @@
                     <span class="file-path">{file.path}</span>
                   </div>
                 {/each}
-
+                
                 {#if gitStatus.modifiedFiles.length > 10}
                   <div class="more-files">
                     ... and {gitStatus.modifiedFiles.length - 10} more files
@@ -401,7 +401,7 @@
         </div>
 
         <!-- Form Section -->
-        {#if gitStatus.hasChanges && !gitStatus.error && !githStatus.success}
+        {#if gitStatus.hasChanges && !gitStatus.error}
           <div class="pr-form-section">
             <div class="form-group">
               <label for="pr-title">{isCommitMode ? 'Commit Message' : 'Pull Request Title'} *</label>
@@ -444,8 +444,8 @@
             {/if}
 
             <div class="advanced-toggle">
-              <button
-                type="button"
+              <button 
+                type="button" 
                 class="toggle-button"
                 on:click={() => showAdvanced = !showAdvanced}
               >
@@ -458,7 +458,7 @@
                 <div class="info-box">
                   <h5>Branch Strategy</h5>
                   <p>A new branch will be created: <code>clt-ui-{title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}</code></p>
-
+                  
                   <h5>Commit Strategy</h5>
                   <p>All changes will be committed with the PR title as the commit message.</p>
                 </div>
@@ -473,10 +473,10 @@
             <div class="success-message">
               <h4>✅ {isCommitMode ? 'Changes Committed Successfully!' : 'Pull Request Created Successfully!'}</h4>
               <p>{github.message}</p>
-
+              
               <!-- Debug info -->
               <!-- <p>Debug: PR URL = {github.prUrl || 'null'}</p> -->
-
+              
               {#if github.prUrl}
                 <a href={github.prUrl} target="_blank" class="pr-link">
                   View Pull Request →
@@ -502,17 +502,17 @@
       </div>
 
       <div class="modal-footer">
-        <button
-          class="cancel-button"
+        <button 
+          class="cancel-button" 
           on:click={handleCancel}
           disabled={isLoading}
         >
           {(github.success || github.error) ? 'Close' : 'Cancel'}
         </button>
-
+        
         {#if !github.success && !github.error}
-          <button
-            class="submit-button {isCommitMode ? 'commit-mode' : 'pr-mode'}"
+          <button 
+            class="submit-button {isCommitMode ? 'commit-mode' : 'pr-mode'}" 
             on:click={handleSubmit}
             disabled={!canSubmit}
             class:loading={isLoading}

@@ -2,7 +2,6 @@
   import { onMount, onDestroy } from 'svelte';
   import { filesStore, type FileNode, addNodeToDirectory, updateChildPaths } from '../stores/filesStore';
   import { branchStore } from '../stores/branchStore';
-  import { repoSyncStore } from '../stores/repoSyncStore';
   import { gitStatusStore, checkUnstagedChanges } from '../stores/gitStatusStore';
   import { API_URL } from '../config.js';
 
@@ -1359,40 +1358,6 @@
           {/if}
         </button>
       </div>
-      
-      <!-- Repository Sync Section -->
-      {#if $repoSyncStore.error || !$repoSyncStore.isInitialized}
-        <div class="sync-section">
-          <button
-            class="sync-button"
-            on:click={() => {
-              repoSyncStore.syncRepository().then(() => {
-                if (!$repoSyncStore.isInitialized) {
-                  repoSyncStore.startSyncPolling();
-                }
-              });
-            }}
-            disabled={$repoSyncStore.isSyncing}
-          >
-            {#if $repoSyncStore.isSyncing}
-              <span class="loading-indicator-small">
-                <svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-              </span>
-              Syncing...
-            {:else}
-              🔄 Sync Repository
-            {/if}
-          </button>
-          {#if $repoSyncStore.error}
-            <div class="sync-error-small">
-              Repository sync failed
-            </div>
-          {/if}
-        </div>
-      {/if}
     </div>
   </div>
 </div>
@@ -1940,45 +1905,6 @@
 
   .file-node {
     user-select: none;
-  }
-
-  /* Repository Sync Styles */
-  .sync-section {
-    padding: 8px 12px;
-    border-top: 1px solid var(--color-border);
-    background-color: var(--color-bg-secondary);
-  }
-
-  .sync-button {
-    width: 100%;
-    padding: 6px 12px;
-    background-color: #3498db;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    font-size: 12px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    transition: background-color 0.2s;
-  }
-
-  .sync-button:hover:not(:disabled) {
-    background-color: #2980b9;
-  }
-
-  .sync-button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .sync-error-small {
-    margin-top: 4px;
-    font-size: 11px;
-    color: #e74c3c;
-    text-align: center;
   }
 
   /* VSCode-style inline new item input */
