@@ -401,7 +401,7 @@
         </div>
 
         <!-- Form Section -->
-        {#if gitStatus.hasChanges && !gitStatus.error && !githStatus.success}
+        {#if gitStatus.hasChanges && !gitStatus.error && !gitStatus.success}
           <div class="pr-form-section">
             <div class="form-group">
               <label for="pr-title">{isCommitMode ? 'Commit Message' : 'Pull Request Title'} *</label>
