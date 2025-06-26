@@ -27,8 +27,8 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       }
 
       // Get the user's repo path
-      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
-      const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+      const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepo).then(() => true).catch(() => false);
 
       if (!repoExists) {
         return res.status(404).json({ error: 'Repository not found' });
@@ -36,7 +36,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
 
       try {
         // Initialize simple-git with the user's repo path
-        const git = simpleGit({ baseDir: userRepoPath });
+        const git = simpleGit({ baseDir: userRepo });
 
         // Get current branch
         const branchSummary = await git.branch();
@@ -57,7 +57,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
 
         const testDir = getUserTestPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
         // Get the relative path to the test directory from the repo root
-        const relativeTestPath = path.relative(userRepoPath, testDir);
+        const relativeTestPath = path.relative(userRepo, testDir);
         console.log(`Relative test path: ${relativeTestPath}`);
 
         // Process modified, created, and deleted files
@@ -129,8 +129,8 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       }
 
       // Get the user's repo path
-      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
-      const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+      const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepo).then(() => true).catch(() => false);
 
       if (!repoExists) {
         return res.status(404).json({ error: 'Repository not found' });
@@ -138,7 +138,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
 
       try {
         // Initialize simple-git with the user's repo path
-        const git = simpleGit({ baseDir: userRepoPath });
+        const git = simpleGit({ baseDir: userRepo });
 
         // Get branch information
         const branchSummary = await git.branch();
@@ -151,7 +151,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         console.log(`Remote repository URL: ${cleanRemoteUrl}`);
 
         // Get default branch (cached)
-        const defaultBranch = await getDefaultBranch(git, userRepoPath);
+        const defaultBranch = await getDefaultBranch(git, userRepo);
         console.log(`Default branch: ${defaultBranch}`);
 
         return res.json({
@@ -188,8 +188,8 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       }
 
       // Get the user's repo path
-      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
-      const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+      const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepo).then(() => true).catch(() => false);
 
       if (!repoExists) {
         return res.status(404).json({ error: 'Repository not found' });
@@ -197,7 +197,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
 
       try {
         // Initialize simple-git with the user's repo path
-        const git = simpleGit(userRepoPath);
+        const git = simpleGit(userRepo);
         await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
 
         // Get current status to check for changes
@@ -269,8 +269,8 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       }
 
       // Get the user's repo path
-      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
-      const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+      const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepo).then(() => true).catch(() => false);
 
       if (!repoExists) {
         return res.status(404).json({ error: 'Repository not found' });
@@ -278,7 +278,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
 
       try {
         // Initialize simple-git with the user's repo path
-        const git = simpleGit(userRepoPath);
+        const git = simpleGit(userRepo);
         await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
 
         // Fetch latest from remote
@@ -450,7 +450,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         await git.add('.');
         const commit = await git.commit(title);
         await git.push('origin', branchName);
-        
+
         // Now create PR from existing branch - continue to PR creation logic below
         console.log('Committed to existing branch, now creating PR');
       } else {
@@ -458,8 +458,17 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         console.log('Branch does not exist, creating new branch');
         await git.checkoutLocalBranch(branchName);
         await git.add('.');
-        const commit = await git.commit(title);
-        await git.push('origin', branchName, ['--set-upstream']);
+
+        try {
+          const commit = await git.commit(title);
+          await git.push('origin', branchName, ['--set-upstream']);
+          console.log('Successfully created branch and pushed changes');
+        } catch (commitError) {
+          console.error('Failed to commit changes:', commitError);
+          return res.status(400).json({
+            error: 'Failed to commit changes. This might happen if there are no changes to commit or if there are conflicts.'
+          });
+        }
       }
 
       // At this point, we have a branch with committed changes, now create the PR
@@ -535,8 +544,8 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       console.log(`Default branch: ${defaultBranch}`);
 
       // Check if this is a PR branch (not default branch and starts with clt-ui-)
-      let isPrBranch = currentBranch && 
-                      currentBranch !== defaultBranch && 
+      let isPrBranch = currentBranch &&
+                      currentBranch !== defaultBranch &&
                       currentBranch.startsWith('clt-ui-');
 
       const { exec } = await import('child_process');
@@ -560,18 +569,18 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       if (isPrBranch) {
         try {
           console.log('🔍 Checking for existing PR on branch:', currentBranch);
-          
+
           // Method 1: Use gh pr list to find PRs for this specific branch
           const prListCmd = `gh pr list --state open --head ${currentBranch} --json url,title,number`;
           console.log('Running command:', prListCmd);
-          
+
           const prListOutput = await execPromise(prListCmd);
           console.log('gh pr list result:', prListOutput);
-          
+
           if (prListOutput && prListOutput.trim() && prListOutput.trim() !== '[]') {
             const prs = JSON.parse(prListOutput);
             console.log('Parsed PRs:', prs);
-            
+
             if (Array.isArray(prs) && prs.length > 0) {
               existingPr = {
                 url: prs[0].url,
@@ -585,13 +594,13 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
           }
         } catch (error) {
           console.log('❌ Error checking for PR:', error.message);
-          
+
           // Fallback: try gh pr view (if we're currently on the PR branch)
           try {
             console.log('Trying fallback: gh pr view');
             const prViewOutput = await execPromise('gh pr view --json url,title,number');
             console.log('gh pr view result:', prViewOutput);
-            
+
             if (prViewOutput && prViewOutput.trim()) {
               const prData = JSON.parse(prViewOutput);
               existingPr = {
@@ -728,8 +737,8 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       }
 
       // Get the user's repo path
-      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
-      const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+      const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepo).then(() => true).catch(() => false);
 
       if (!repoExists) {
         return res.status(404).json({ error: 'Repository not found' });
@@ -737,7 +746,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
 
       try {
         // Initialize simple-git with the user's repo path
-        const git = simpleGit(userRepoPath);
+        const git = simpleGit(userRepo);
 
         // Check if file exists and has changes
         const status = await git.status();
