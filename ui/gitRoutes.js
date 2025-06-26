@@ -151,7 +151,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         console.log(`Remote repository URL: ${cleanRemoteUrl}`);
 
         // Get default branch (cached)
-        const defaultBranch = await getDefaultBranch(git, userRepo);
+        const defaultBranch = await getDefaultBranch(git, userRepoPath);
         console.log(`Default branch: ${defaultBranch}`);
 
         return res.json({
