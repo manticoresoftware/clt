@@ -26,9 +26,9 @@
   // Cost extraction and formatting functions
   function extractCostFromLogs(logs: string[]): number | null {
     if (!logs || logs.length === 0) return null;
-    
+
     const costRegex = /cost:\s*\$(\d+\.?\d*)/gi;
-    
+
     // Check last 100 lines first for most recent cost
     const linesToCheck = logs.slice(-100);
     for (let i = linesToCheck.length - 1; i >= 0; i--) {
@@ -37,7 +37,7 @@
         return parseFloat(matches[matches.length - 1][1]);
       }
     }
-    
+
     // If no cost found in last 100 lines, check all logs for first occurrence
     for (let i = 0; i < logs.length; i++) {
       const matches = [...logs[i].matchAll(costRegex)];
@@ -45,7 +45,7 @@
         return parseFloat(matches[0][1]);
       }
     }
-    
+
     return null;
   }
 
@@ -57,7 +57,7 @@
   // Sanitize session name for file system compatibility
   function sanitizeSessionName(name: string): string {
     if (!name || !name.trim()) return '';
-    
+
     return name.trim()
       .toLowerCase()
       .replace(/[^a-z0-9\s-]/g, '') // Remove special characters except spaces and hyphens
@@ -166,7 +166,7 @@
       const response = await fetch(`${API_URL}/api/interactive/sessions`, {
         credentials: 'include'
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         persistentLoggingAvailable = data.persistent;
@@ -180,13 +180,13 @@
   // Load available sessions
   async function loadAvailableSessions() {
     if (!persistentLoggingAvailable) return;
-    
+
     loadingSessions = true;
     try {
       const response = await fetch(`${API_URL}/api/interactive/sessions`, {
         credentials: 'include'
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         availableSessions = data.sessions || [];
@@ -210,28 +210,28 @@
       const response = await fetch(`${API_URL}/api/interactive/session/${session.sessionId}/logs`, {
         credentials: 'include'
       });
-      
+
       if (response.ok) {
         const data = await response.json();
-        
+
         // Clear current state
         isRunning = false;
         sessionId = null;
         currentCost = data.cost || null;
-        
+
         // Load historical session data
         logs = data.logs || [];
         lastRunOutput = logs.join('\n');
         currentSessionName = session.sessionName || session.sessionId;
         lastSessionCost = data.cost || null;
-        
+
         // Clear input for potential continuation
         input = '';
         error = '';
-        
+
         // Close sidebar
         showSessionSidebar = false;
-        
+
         console.log(`Switched to session: ${session.sessionName}`);
       } else {
         const errorText = await response.text();
@@ -254,29 +254,29 @@
   // Check if a session is currently active
   function isSessionActive(session) {
     if (!sessionId || !isRunning) return false;
-    
+
     // First try exact session ID match
     if (session.sessionId === sessionId) {
       return true;
     }
-    
+
     // Then try matching by session name for backward compatibility
     if (currentSessionName && session.sessionName === currentSessionName) {
       return true;
     }
-    
+
     // Legacy fallback: Extract the session name part from the current sessionId
     // Format: username-sessionname-timestamp
     const currentSessionParts = sessionId.split('-');
     const sessionParts = session.sessionId.split('-');
-    
+
     // Compare the session name part (excluding username and timestamp)
     if (currentSessionParts.length >= 3 && sessionParts.length >= 3) {
       const currentSessionNameFromId = currentSessionParts.slice(1, -1).join('-');
       const sessionNameFromId = sessionParts.slice(1, -1).join('-');
       return currentSessionNameFromId === sessionNameFromId;
     }
-    
+
     return false;
   }
 
@@ -289,18 +289,18 @@
     isRunning = false;
     sessionId = null;
     currentCost = null;
-    
+
     // Set new session name (sanitized)
     const rawName = newSessionName.trim();
     currentSessionName = rawName ? sanitizeSessionName(rawName) : '';
-    
+
     // Close dialog
     showNewSessionModal = false;
     newSessionName = '';
-    
+
     // Clear input to start fresh
     input = '';
-    
+
     console.log(`Created new session: ${currentSessionName || 'unnamed'}`);
   }
 
@@ -328,7 +328,7 @@
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           input: commandToRun,
           sessionName: currentSessionName || undefined
         }),
@@ -407,7 +407,7 @@
             clearInterval(pollingInterval);
             pollingInterval = null;
           }
-          
+
           // DON'T clear sessionId and currentSessionName - keep them for session continuation
           // sessionId = null;  // REMOVED - keep for continuation
           currentCost = null;
@@ -439,17 +439,17 @@
 
         if (statusResponse.ok) {
           const data = await statusResponse.json();
-          
+
           // Preserve the logs that were collected before cancellation
           if (data.logs && data.logs.length > 0) {
             logs = data.logs;
           }
-          
+
           // Set the final output with all collected logs
           lastRunOutput = data.output || logs.join('\\n');
           lastSessionCost = data.cost;
           lastSessionCancelled = true; // Mark as cancelled
-          
+
           // Save to localStorage as a completed (cancelled) session
           saveSessionHistory(`Cancelled: ${input}`, lastRunOutput, lastSessionCost);
           lastCommand = `Cancelled: ${input}`;
@@ -469,10 +469,10 @@
 
     // Clear active session but keep the session context for continuation
     clearActiveSession();
-    
+
     // DON'T clear sessionId immediately - keep for potential continuation
     // sessionId = null;  // REMOVED - keep for continuation like normal completion
-    
+
     // Clear current input
     input = '';
   }
@@ -730,9 +730,9 @@
     </div>
     <div class="modal-body">
       <label for="session-name">Session Name (optional):</label>
-      <input 
+      <input
         id="session-name"
-        bind:value={newSessionName} 
+        bind:value={newSessionName}
         placeholder="Enter session name..."
         on:keypress={(e) => e.key === 'Enter' && createNewSession()}
         autofocus
@@ -1006,55 +1006,55 @@
       color: #7dd3fc !important;
       border-left-color: #0ea5e9 !important;
     }
-    
+
     .session-item.active {
       background: rgba(14, 165, 233, 0.15) !important;
       border-color: #0ea5e9 !important;
     }
-    
+
     .session-item.active:hover {
       background: rgba(14, 165, 233, 0.2) !important;
     }
-    
+
     .logs-container {
       background-color: #1f2937 !important;
       border-color: #374151 !important;
     }
-    
+
     .log-line {
       color: #e5e7eb !important;
     }
-    
+
     .last-output {
       color: #e5e7eb !important;
     }
-    
+
     .last-output pre {
       background-color: #1f2937 !important;
       border-color: #374151 !important;
       color: #e5e7eb !important;
     }
-    
+
     .session-header strong {
       color: #60a5fa !important;
     }
-    
+
     .waiting-message {
       color: #9ca3af !important;
     }
-    
+
     .no-logs {
       color: #6b7280 !important;
     }
-    
+
     .error-message {
       color: #f87171 !important;
     }
-    
+
     .error-message strong {
       color: #f87171 !important;
     }
-    
+
     .error-message pre {
       background-color: rgba(239, 68, 68, 0.1) !important;
       border-color: rgba(239, 68, 68, 0.3) !important;
@@ -1162,10 +1162,6 @@
     cursor: pointer;
     font-size: 12px;
     transition: background-color 0.2s;
-  }
-
-  .new-session-btn:hover {
-    background: var(--color-bg-accent-hover);
   }
 
   .sessions-btn {
