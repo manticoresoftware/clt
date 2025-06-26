@@ -15,7 +15,8 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
     WORKDIR,
     ROOT_DIR,
     REPO_URL,
-    getAuthConfig
+    getAuthConfig,
+    ensureUserRepo
   } = dependencies;
 
   // API endpoint to get git status information
@@ -117,6 +118,93 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
     } catch (error) {
       console.error('Error getting git status:', error);
       res.status(500).json({ error: `Failed to get git status: ${error.message}` });
+    }
+  });
+
+  // API endpoint to check repository status
+  app.get('/api/repo-status', isAuthenticated, async (req, res) => {
+    try {
+      // Check if user is authenticated with GitHub
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      // Get the user's repo path
+      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepoPath).then(() => true).catch(() => false);
+
+      if (!repoExists) {
+        return res.json({
+          isInitialized: false,
+          message: 'Repository not found - needs initialization'
+        });
+      }
+
+      // Check if it's a valid git repository with test directory
+      const testDir = getUserTestPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const testDirExists = await fs.access(testDir).then(() => true).catch(() => false);
+
+      if (!testDirExists) {
+        return res.json({
+          isInitialized: false,
+          message: 'Repository exists but test directory not found - needs sync'
+        });
+      }
+
+      // Check if git repository is properly initialized
+      try {
+        const git = simpleGit({ baseDir: userRepoPath });
+        await git.status(); // This will throw if not a git repo
+        
+        return res.json({
+          isInitialized: true,
+          message: 'Repository is properly initialized',
+          lastSyncTime: Date.now()
+        });
+      } catch (gitError) {
+        return res.json({
+          isInitialized: false,
+          message: 'Repository exists but git is not properly initialized'
+        });
+      }
+    } catch (error) {
+      console.error('Error checking repository status:', error);
+      res.status(500).json({ error: `Failed to check repository status: ${error.message}` });
+    }
+  });
+
+  // API endpoint to sync/initialize repository
+  app.post('/api/sync-repository', isAuthenticated, async (req, res) => {
+    try {
+      // Check if user is authenticated with GitHub
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      const username = req.user.username;
+      console.log(`Starting repository sync for user: ${username}`);
+
+      // Use the global ensureUserRepo function
+      const result = await ensureUserRepo(username);
+
+      if (!result) {
+        return res.status(500).json({ 
+          error: 'Failed to initialize repository. Please check your GitHub token and repository permissions.' 
+        });
+      }
+
+      console.log(`Repository sync completed for user: ${username}`);
+      
+      return res.json({
+        success: true,
+        message: 'Repository synchronized successfully',
+        userDir: result.userDir,
+        testDir: result.testDir,
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      console.error('Error syncing repository:', error);
+      res.status(500).json({ error: `Failed to sync repository: ${error.message}` });
     }
   });
 

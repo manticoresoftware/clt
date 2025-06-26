@@ -6,10 +6,16 @@
   import { filesStore } from './stores/filesStore';
   import { authStore, fetchAuthState } from './stores/authStore';
   import { branchStore } from './stores/branchStore';
+  import { repoSyncStore } from './stores/repoSyncStore';
   import { API_URL, AUTH_GITHUB_URL } from './config.js';
   import { onMount } from 'svelte';
 
   let isLoading = true;
+
+  // Reactive statement to fetch branch info when repo becomes ready
+  $: if ($authStore.isAuthenticated && $repoSyncStore.isInitialized && !$branchStore.currentBranch) {
+    branchStore.fetchCurrentBranch().catch(console.error);
+  }
 
   // Fetch authentication state when the app loads
   onMount(async () => {
@@ -18,9 +24,33 @@
       isLoading = false;
       // Don't set authError here - let the store handle error states
       
-      // Fetch current branch info after authentication
+      // Check repository status after authentication
       if ($authStore.isAuthenticated) {
-        await branchStore.fetchCurrentBranch();
+        try {
+          // Always check repository status (handles refresh scenarios)
+          const repoStatus = await repoSyncStore.checkRepoStatus();
+          
+          if (!repoStatus.isInitialized) {
+            // Repository needs initialization
+            console.log('Repository not initialized, starting sync...');
+            
+            // Start the sync process
+            await repoSyncStore.syncRepository();
+            
+            // If sync didn't complete immediately, start polling
+            if (!$repoSyncStore.isInitialized) {
+              console.log('Starting sync polling...');
+              repoSyncStore.startSyncPolling();
+            }
+          } else {
+            // Repository is ready, fetch branch info
+            console.log('Repository already initialized');
+            await branchStore.fetchCurrentBranch();
+          }
+        } catch (error) {
+          console.error('Error during repository initialization:', error);
+          // Continue anyway - user can retry manually
+        }
       }
 
       // Set up periodic check of authentication status to keep in sync with backend
@@ -65,15 +95,54 @@
       <p>Loading...</p>
     </div>
   {:else if $authStore.isAuthenticated || $authStore.skipAuth}
-    <Header />
+    <!-- Show repository sync status if syncing or not initialized -->
+    {#if $repoSyncStore.isSyncing || ($authStore.isAuthenticated && !$repoSyncStore.isInitialized)}
+      <div class="sync-screen">
+        <div class="sync-content">
+          <div class="sync-spinner">
+            <svg class="animate-spin h-12 w-12" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </div>
+          <h2>Setting up your workspace...</h2>
+          <p class="sync-message">
+            {#if $repoSyncStore.progress}
+              {$repoSyncStore.progress}
+            {:else if $repoSyncStore.isSyncing}
+              Cloning repository and setting up your environment...
+            {:else}
+              Checking repository status...
+            {/if}
+          </p>
+          {#if $repoSyncStore.error}
+            <div class="sync-error">
+              <p class="error-message">❌ {$repoSyncStore.error}</p>
+              <button class="retry-button" on:click={() => {
+                repoSyncStore.reset();
+                repoSyncStore.syncRepository().then(() => {
+                  if (!$repoSyncStore.isInitialized) {
+                    repoSyncStore.startSyncPolling();
+                  }
+                });
+              }}>
+                Retry Setup
+              </button>
+            </div>
+          {/if}
+        </div>
+      </div>
+    {:else}
+      <Header />
 
-    <div class="main-content">
-      <FileExplorer />
-      <Editor />
-    </div>
+      <div class="main-content">
+        <FileExplorer />
+        <Editor />
+      </div>
 
-    <!-- Pull Request Modal -->
-    <PullRequestModal />
+      <!-- Pull Request Modal -->
+      <PullRequestModal />
+    {/if}
   {:else}
     <div class="login-required">
       <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -169,6 +238,78 @@
     color: #c0392b;
     border-radius: 3px;
     font-size: 0.9rem;
+  }
+
+  /* Repository Sync Styles */
+  .sync-screen {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    width: 100%;
+    background-color: #f8f9fa;
+  }
+
+  .sync-content {
+    text-align: center;
+    padding: 2rem;
+    max-width: 500px;
+  }
+
+  .sync-spinner {
+    margin-bottom: 1.5rem;
+    display: flex;
+    justify-content: center;
+  }
+
+  .sync-spinner svg {
+    color: #3498db;
+  }
+
+  .sync-screen h2 {
+    margin-bottom: 1rem;
+    font-size: 1.5rem;
+    color: #2c3e50;
+  }
+
+  .sync-message {
+    color: #7f8c8d;
+    margin-bottom: 1rem;
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+
+  .sync-error {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background-color: rgba(255, 0, 0, 0.1);
+    border-left: 3px solid #e74c3c;
+    border-radius: 4px;
+  }
+
+  .error-message {
+    color: #c0392b;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+  }
+
+  .retry-button {
+    background-color: #3498db;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background-color 0.2s;
+  }
+
+  .retry-button:hover {
+    background-color: #2980b9;
+  }
+
+  .animate-spin {
+    animation: spin 1s linear infinite;
   }
 
   .github-button {
