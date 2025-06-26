@@ -58,7 +58,7 @@ container_exec() {
 		-v \"$PWD/.clt:$DOCKER_PROJECT_DIR/.clt\" \
 		-v \"$temp_file:$DOCKER_PROJECT_DIR/.clt/patterns\" \
 		-w \"$DOCKER_PROJECT_DIR\" \
-		$RUN_ARGS \
+		$CLT_RUN_ARGS \
 		--entrypoint /bin/bash \
 		--rm $flag -t \"$image\" \
 		-i -c \"$command\")
@@ -82,4 +82,3 @@ container_exec() {
 
 	return $exit_code
 }
-

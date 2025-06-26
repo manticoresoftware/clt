@@ -225,7 +225,7 @@ CLT's behavior can be customized through several environment variables:
 | `CLT_PROMPTS` | Array of additional prompts to detect (e.g., `CLT_PROMPTS=("mysql> ")`) | `("clt> ")` |
 | `CLT_NO_COLOR` | Disable colored output | Not set |
 | `DEFAULT_DELAY` | Default delay in ms between each command in the test | `5` |
-| `RUN_ARGS` | Additional arguments to pass to `docker run` | Not set |
+| `CLT_RUN_ARGS` | Additional arguments to pass to `docker run` | Not set |
 
 ## GitHub Actions Integration
 

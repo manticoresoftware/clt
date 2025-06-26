@@ -106,9 +106,9 @@ runs:
         fi
         while read -r prefix; do
           for test in ${prefix}*.rec; do
-            echo "Running test: $test with command: RUN_ARGS=\"${{ inputs.run_args }}\" clt/clt test -t $test ${{ inputs.image }}"
+            echo "Running test: $test with command: CLT_RUN_ARGS=\"${{ inputs.run_args }}\" clt/clt test -t $test ${{ inputs.image }}"
             echo "Run locally: clt test -d -t $test ${{ inputs.image }}"
-            RUN_ARGS="${{ inputs.run_args }}" clt/clt test -t $test ${{ inputs.image }}
+            CLT_RUN_ARGS="${{ inputs.run_args }}" clt/clt test -t $test ${{ inputs.image }}
             exit_code=$?
             rep_file=$(echo $test | cut -d. -f1).rep
             cat $rep_file
@@ -183,4 +183,3 @@ runs:
           exit 1
         fi
       shell: bash
-

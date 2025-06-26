@@ -53,6 +53,7 @@ export function setupTestRoutes(app, isAuthenticated, dependencies) {
         env: {
           ...process.env,
           CLT_NO_COLOR: '1',
+					CLT_RUN_ARGS: process.env.CLT_RUN_ARGS || '',
         }
       };
 
