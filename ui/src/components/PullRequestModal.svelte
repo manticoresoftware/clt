@@ -282,189 +282,191 @@
       </div>
 
       <div class="modal-body">
-        <!-- Existing PR Section -->
-        {#if isCommitMode && existingPr}
-          <div class="existing-pr-section">
-            <h4>📋 Existing Pull Request</h4>
-            <div class="pr-info">
-              <div class="pr-header">
-                <a href={existingPr.url} target="_blank" class="pr-title-link">
-                  <strong>#{existingPr.number}: {existingPr.title}</strong>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                    <polyline points="15,3 21,3 21,9"></polyline>
-                    <line x1="10" y1="14" x2="21" y2="3"></line>
-                  </svg>
-                </a>
-              </div>
-              <p class="pr-description">Your changes will be committed to this existing pull request.</p>
-              <div class="pr-actions">
-                <a href={existingPr.url} target="_blank" class="view-pr-button">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                    <polyline points="15,3 21,3 21,9"></polyline>
-                    <line x1="10" y1="14" x2="21" y2="3"></line>
-                  </svg>
-                  View Pull Request
-                </a>
-              </div>
-            </div>
-          </div>
-        {/if}
-
-        <!-- PR Branch Section (when we know it's a PR branch but don't have PR details) -->
-        {#if isCommitMode && !existingPr}
-          <div class="pr-branch-section">
-            <h4>🔀 Pull Request Branch</h4>
-            <div class="pr-info">
-              <p class="pr-description">You're on a pull request branch. Your changes will be committed to the existing pull request for this branch.</p>
-              <div class="pr-actions">
-                <button
-                  class="find-pr-button"
-                  on:click={() => githubStore.fetchPrStatus()}
-                  disabled={github.isLoadingStatus}
-                >
-                  {#if github.isLoadingStatus}
-                    <span class="spinner"></span>
-                    Finding PR...
-                  {:else}
-                    🔍 Find Pull Request
-                  {/if}
-                </button>
-              </div>
-            </div>
-          </div>
-        {/if}
-
-        <!-- Recent Commits Section -->
-        {#if isCommitMode && recentCommits.length > 0}
-          <div class="recent-commits-section">
-            <h4>📝 Recent Commits</h4>
-            <div class="commits-list">
-              {#each recentCommits.slice(0, 3) as commit}
-                <div class="commit-item">
-                  <span class="commit-hash">{commit.hash}</span>
-                  <span class="commit-message">{commit.message}</span>
-                  <span class="commit-author">{commit.author}</span>
+        {#if !github.success && !github.error}
+          <!-- Existing PR Section -->
+          {#if isCommitMode && existingPr}
+            <div class="existing-pr-section">
+              <h4>📋 Existing Pull Request</h4>
+              <div class="pr-info">
+                <div class="pr-header">
+                  <a href={existingPr.url} target="_blank" class="pr-title-link">
+                    <strong>#{existingPr.number}: {existingPr.title}</strong>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                      <polyline points="15,3 21,3 21,9"></polyline>
+                      <line x1="10" y1="14" x2="21" y2="3"></line>
+                    </svg>
+                  </a>
                 </div>
-              {/each}
-              {#if recentCommits.length > 3}
-                <div class="more-commits">... and {recentCommits.length - 3} more commits</div>
-              {/if}
-            </div>
-          </div>
-        {/if}
-        <!-- Git Status Section -->
-        <div class="git-status-section">
-          <h4>Changes to be committed</h4>
-          {#if gitStatus.isLoading}
-            <div class="loading">Checking git status...</div>
-          {:else if gitStatus.error}
-            <div class="error">
-              <strong>Error:</strong> {gitStatus.error}
-              <button on:click={() => gitStatusStore.fetchGitStatus()}>Retry</button>
-            </div>
-          {:else if !gitStatus.hasChanges}
-            <div class="no-changes">
-              <p>No changes detected in your working directory.</p>
-              <p>Make some changes to your test files first.</p>
-            </div>
-          {:else}
-            <div class="file-list">
-              <div class="branch-info">
-                <strong>Branch:</strong> {gitStatus.currentBranch}
-                {#if gitStatus.isPrBranch}
-                  <span class="pr-branch-badge">PR Branch</span>
-                {/if}
+                <p class="pr-description">Your changes will be committed to this existing pull request.</p>
+                <div class="pr-actions">
+                  <a href={existingPr.url} target="_blank" class="view-pr-button">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                      <polyline points="15,3 21,3 21,9"></polyline>
+                      <line x1="10" y1="14" x2="21" y2="3"></line>
+                    </svg>
+                    View Pull Request
+                  </a>
+                </div>
               </div>
+            </div>
+          {/if}
 
-              <div class="files-summary">
-                <span class="file-count">{gitStatus.modifiedFiles.length} files changed</span>
+          <!-- PR Branch Section (when we know it's a PR branch but don't have PR details) -->
+          {#if isCommitMode && !existingPr}
+            <div class="pr-branch-section">
+              <h4>🔀 Pull Request Branch</h4>
+              <div class="pr-info">
+                <p class="pr-description">You're on a pull request branch. Your changes will be committed to the existing pull request for this branch.</p>
+                <div class="pr-actions">
+                  <button
+                    class="find-pr-button"
+                    on:click={() => githubStore.fetchPrStatus()}
+                    disabled={github.isLoadingStatus}
+                  >
+                    {#if github.isLoadingStatus}
+                      <span class="spinner"></span>
+                      Finding PR...
+                    {:else}
+                      🔍 Find Pull Request
+                    {/if}
+                  </button>
+                </div>
               </div>
+            </div>
+          {/if}
 
-              <div class="file-details">
-                {#each gitStatus.modifiedFiles.slice(0, 10) as file}
-                  <div class="file-item">
-                    <span class="file-status status-{file.status === '??' ? 'untracked' : file.status.toLowerCase()}">{file.status}</span>
-                    <span class="file-path">{file.path}</span>
+          <!-- Recent Commits Section -->
+          {#if isCommitMode && recentCommits.length > 0}
+            <div class="recent-commits-section">
+              <h4>📝 Recent Commits</h4>
+              <div class="commits-list">
+                {#each recentCommits.slice(0, 3) as commit}
+                  <div class="commit-item">
+                    <span class="commit-hash">{commit.hash}</span>
+                    <span class="commit-message">{commit.message}</span>
+                    <span class="commit-author">{commit.author}</span>
                   </div>
                 {/each}
-
-                {#if gitStatus.modifiedFiles.length > 10}
-                  <div class="more-files">
-                    ... and {gitStatus.modifiedFiles.length - 10} more files
-                  </div>
+                {#if recentCommits.length > 3}
+                  <div class="more-commits">... and {recentCommits.length - 3} more commits</div>
                 {/if}
               </div>
             </div>
           {/if}
-        </div>
-
-        <!-- Form Section -->
-        {#if gitStatus.hasChanges && !gitStatus.error && !gitStatus.success}
-          <div class="pr-form-section">
-            <div class="form-group">
-              <label for="pr-title">{isCommitMode ? 'Commit Message' : 'Pull Request Title'} *</label>
-              <input
-                id="pr-title"
-                type="text"
-                bind:value={title}
-                placeholder={isCommitMode ? 'Describe your changes...' : 'Describe your pull request...'}
-                class:invalid={title && !isValidTitle}
-                disabled={isLoading}
-              />
-              {#if title && !isValidTitle}
-                <div class="validation-error">{isCommitMode ? 'Commit message' : 'Title'} must be at least 3 characters</div>
-              {/if}
-              {#if !isCommitMode}
-                <div class="form-help">
-                  💡 Auto-generated from your changes - you can edit if needed
-                </div>
-              {/if}
-            </div>
-
-            {#if !isCommitMode}
-              <div class="form-group">
-                <label for="pr-description">Description *</label>
-                <textarea
-                  id="pr-description"
-                  bind:value={description}
-                  placeholder="Detailed description of your changes..."
-                  rows="6"
-                  disabled={isLoading}
-                  class:invalid={!isCommitMode && description && !isValidDescription}
-                ></textarea>
-                {#if !isCommitMode && description && !isValidDescription}
-                  <div class="validation-error">Description must be at least 10 characters for PR creation</div>
-                {/if}
-                <div class="form-help">
-                  💡 Auto-generated summary of your file changes - you can edit if needed
-                </div>
+          <!-- Git Status Section -->
+          <div class="git-status-section">
+            <h4>Changes to be committed</h4>
+            {#if gitStatus.isLoading}
+              <div class="loading">Checking git status...</div>
+            {:else if gitStatus.error}
+              <div class="error">
+                <strong>Error:</strong> {gitStatus.error}
+                <button on:click={() => gitStatusStore.fetchGitStatus()}>Retry</button>
               </div>
-            {/if}
+            {:else if !gitStatus.hasChanges}
+              <div class="no-changes">
+                <p>No changes detected in your working directory.</p>
+                <p>Make some changes to your test files first.</p>
+              </div>
+            {:else}
+              <div class="file-list">
+                <div class="branch-info">
+                  <strong>Branch:</strong> {gitStatus.currentBranch}
+                  {#if gitStatus.isPrBranch}
+                    <span class="pr-branch-badge">PR Branch</span>
+                  {/if}
+                </div>
 
-            <div class="advanced-toggle">
-              <button
-                type="button"
-                class="toggle-button"
-                on:click={() => showAdvanced = !showAdvanced}
-              >
-                {showAdvanced ? '▼' : '▶'} Advanced Options
-              </button>
-            </div>
+                <div class="files-summary">
+                  <span class="file-count">{gitStatus.modifiedFiles.length} files changed</span>
+                </div>
 
-            {#if showAdvanced}
-              <div class="advanced-options">
-                <div class="info-box">
-                  <h5>Branch Strategy</h5>
-                  <p>A new branch will be created: <code>clt-ui-{title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}</code></p>
+                <div class="file-details">
+                  {#each gitStatus.modifiedFiles.slice(0, 10) as file}
+                    <div class="file-item">
+                      <span class="file-status status-{file.status === '??' ? 'untracked' : file.status.toLowerCase()}">{file.status}</span>
+                      <span class="file-path">{file.path}</span>
+                    </div>
+                  {/each}
 
-                  <h5>Commit Strategy</h5>
-                  <p>All changes will be committed with the PR title as the commit message.</p>
+                  {#if gitStatus.modifiedFiles.length > 10}
+                    <div class="more-files">
+                      ... and {gitStatus.modifiedFiles.length - 10} more files
+                    </div>
+                  {/if}
                 </div>
               </div>
             {/if}
           </div>
+
+          <!-- Form Section -->
+          {#if gitStatus.hasChanges && !gitStatus.error && !gitStatus.success}
+            <div class="pr-form-section">
+              <div class="form-group">
+                <label for="pr-title">{isCommitMode ? 'Commit Message' : 'Pull Request Title'} *</label>
+                <input
+                  id="pr-title"
+                  type="text"
+                  bind:value={title}
+                  placeholder={isCommitMode ? 'Describe your changes...' : 'Describe your pull request...'}
+                  class:invalid={title && !isValidTitle}
+                  disabled={isLoading}
+                />
+                {#if title && !isValidTitle}
+                  <div class="validation-error">{isCommitMode ? 'Commit message' : 'Title'} must be at least 3 characters</div>
+                {/if}
+                {#if !isCommitMode}
+                  <div class="form-help">
+                    💡 Auto-generated from your changes - you can edit if needed
+                  </div>
+                {/if}
+              </div>
+
+              {#if !isCommitMode}
+                <div class="form-group">
+                  <label for="pr-description">Description *</label>
+                  <textarea
+                    id="pr-description"
+                    bind:value={description}
+                    placeholder="Detailed description of your changes..."
+                    rows="6"
+                    disabled={isLoading}
+                    class:invalid={!isCommitMode && description && !isValidDescription}
+                  ></textarea>
+                  {#if !isCommitMode && description && !isValidDescription}
+                    <div class="validation-error">Description must be at least 10 characters for PR creation</div>
+                  {/if}
+                  <div class="form-help">
+                    💡 Auto-generated summary of your file changes - you can edit if needed
+                  </div>
+                </div>
+              {/if}
+
+              <div class="advanced-toggle">
+                <button
+                  type="button"
+                  class="toggle-button"
+                  on:click={() => showAdvanced = !showAdvanced}
+                >
+                  {showAdvanced ? '▼' : '▶'} Advanced Options
+                </button>
+              </div>
+
+              {#if showAdvanced}
+                <div class="advanced-options">
+                  <div class="info-box">
+                    <h5>Branch Strategy</h5>
+                    <p>A new branch will be created: <code>clt-ui-{title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}</code></p>
+
+                    <h5>Commit Strategy</h5>
+                    <p>All changes will be committed with the PR title as the commit message.</p>
+                  </div>
+                </div>
+              {/if}
+            </div>
+          {/if}
         {/if}
 
         <!-- Success/Error States -->
