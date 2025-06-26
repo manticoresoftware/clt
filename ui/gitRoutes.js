@@ -446,13 +446,40 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
 
         // If we get here, branch exists but NO PR → checkout existing branch and create PR
         console.log('Branch exists but no PR found, checking out existing branch to create PR');
+        
+        // Check current status before checkout
+        const preCheckoutStatus = await git.status();
+        if (!preCheckoutStatus.isClean()) {
+          // Stash changes before checkout to avoid conflicts
+          const timestamp = new Date().toISOString();
+          const stashMessage = `Auto-stash before checkout to ${branchName} at ${timestamp}`;
+          await git.stash(['push', '-m', stashMessage]);
+          console.log(`Stashed changes: ${stashMessage}`);
+        }
+        
         await git.checkout(branchName);
-        await git.add('.');
-        const commit = await git.commit(title);
-        await git.push('origin', branchName);
-
-        // Now create PR from existing branch - continue to PR creation logic below
-        console.log('Committed to existing branch, now creating PR');
+        
+        // If we stashed changes, pop them back
+        if (!preCheckoutStatus.isClean()) {
+          try {
+            await git.stash(['pop']);
+            console.log('Restored stashed changes');
+          } catch (stashError) {
+            console.warn('Could not restore stashed changes:', stashError.message);
+            // Continue anyway - the stash is still available
+          }
+        }
+        
+        // Check for changes after checkout and stash restore
+        const postCheckoutStatus = await git.status();
+        if (!postCheckoutStatus.isClean()) {
+          await git.add('.');
+          const commit = await git.commit(title);
+          await git.push('origin', branchName);
+          console.log('Committed to existing branch, now creating PR');
+        } else {
+          console.log('No new changes to commit on existing branch');
+        }
       } else {
         // branch does not exist → create it, commit & push, open PR
         console.log('Branch does not exist, creating new branch');
