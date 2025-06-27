@@ -14,7 +14,7 @@ interface BranchState {
 
 const initialState: BranchState = {
   currentBranch: 'unknown', // Will be updated from the server
-  defaultBranch: 'main', // Default branch name - will be updated from server
+  defaultBranch: 'master', // Default branch name
   isResetting: false,
   isLoading: false,
   error: null,
