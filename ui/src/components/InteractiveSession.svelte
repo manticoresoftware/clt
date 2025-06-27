@@ -701,7 +701,7 @@
             {:else if lastRunOutput}
               <pre class="output-content">{lastRunOutput}</pre>
             {:else}
-              <div class="no-logs">No sessions yet. Enter a command below to start.</div>
+              <div class="no-logs">No sessions yet. Enter your request below to start.</div>
             {/if}
           </div>
         </div>
