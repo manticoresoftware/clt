@@ -629,43 +629,69 @@
 
         <!-- Main Content Area -->
         <div class="main-content" class:with-sidebar={showSessionSidebar}>
+
+        <!-- Session Status Header (Always Visible) -->
+        {#if isRunning}
+          <div class="session-status-header">
+            <div class="status-left">
+              <div class="status-indicator running">
+                <svg class="spinner" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <circle class="spinner-track" cx="12" cy="12" r="10" />
+                  <circle class="spinner-circle" cx="12" cy="12" r="10" />
+                </svg>
+                <span>Active Session</span>
+              </div>
+            </div>
+            <div class="status-right">
+              {#if currentCost}
+                <span class="cost-badge">{formatCost(currentCost)}</span>
+              {/if}
+            </div>
+          </div>
+        {:else if lastRunOutput}
+          <div class="session-status-header">
+            <div class="status-left">
+              <div class="status-indicator completed">
+                <span class="status-icon">{lastSessionCancelled ? '🚫' : '✅'}</span>
+                <span>{lastSessionCancelled ? 'Session Cancelled' : 'Session Completed'}</span>
+              </div>
+              {#if lastCommand}
+                <div class="command-preview" title={lastCommand}>
+                  <code>{lastCommand.length > 50 ? lastCommand.substring(0, 50) + '...' : lastCommand}</code>
+                </div>
+              {/if}
+            </div>
+            <div class="status-right">
+              <div class="meta-info">
+                {#if lastSessionTime}
+                  <span class="timestamp">{formatTimestamp(lastSessionTime)}</span>
+                {/if}
+                {#if lastSessionCost}
+                  <span class="cost-badge">{formatCost(lastSessionCost)}</span>
+                {/if}
+                <button class="clear-history-button" on:click={clearSessionHistory} title="Clear history" aria-label="Clear session history">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 6h18"></path>
+                    <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        {/if}
+
         <!-- Logs Section -->
         <div class="logs-section">
           <div class="logs-header">
             <h3>Live Output</h3>
-            <div class="header-actions">
-              {#if isRunning}
-                <div class="running-indicator">
-                  <svg class="spinner" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <circle class="spinner-track" cx="12" cy="12" r="10" />
-                    <circle class="spinner-circle" cx="12" cy="12" r="10" />
-                  </svg>
-                  Running{#if currentCost} ({formatCost(currentCost)}){/if}
-                </div>
-              {:else if lastRunOutput}
-                <div class="history-indicator">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <polyline points="12,6 12,12 16,14"></polyline>
-                  </svg>
-                  Last run log{#if lastSessionCost} ({formatCost(lastSessionCost)}){/if}
-                </div>
-              {/if}
-            </div>
           </div>
 
           <div class="logs-container" bind:this={logsContainer}>
             {#if isRunning && logs.length > 0}
-              <div class="active-session-header">
-                <strong>🔄 Active Session - Live Output:</strong>
-              </div>
               {#each logs as log}
                 <div class="log-line">{log}</div>
               {/each}
             {:else if isRunning && logs.length === 0}
-              <div class="active-session-header">
-                <strong>🔄 Active Session - Waiting for output...</strong>
-              </div>
               <div class="waiting-message">Command is running, waiting for output...</div>
             {:else if error}
               <div class="error-message">
@@ -673,29 +699,7 @@
                 <pre>{error}</pre>
               </div>
             {:else if lastRunOutput}
-              <div class="last-output">
-                <div class="session-header">
-                  <div class="session-meta">
-											<strong>{lastSessionCancelled ? '🚫 Last session was cancelled' : '✅ Last session completed'}</strong>
-                    {#if lastCommand}
-                      <div class="last-command"> <code>{lastCommand}</code></div>
-                    {/if}
-                    {#if lastSessionTime}
-                      <div class="session-time">Run at: {formatTimestamp(lastSessionTime)}</div>
-                    {/if}
-                    {#if lastSessionCost}
-                      <div class="session-cost">Cost: {formatCost(lastSessionCost)}</div>
-                    {/if}
-                    <button class="clear-history-button" on:click={clearSessionHistory} title="Clear history" aria-label="Clear session history">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M3 6h18"></path>
-                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-                <pre>{lastRunOutput}</pre>
-              </div>
+              <pre class="output-content">{lastRunOutput}</pre>
             {:else}
               <div class="no-logs">No sessions yet. Enter a command below to start.</div>
             {/if}
@@ -821,12 +825,103 @@
     min-height: 0;
   }
 
+  /* Session Status Header - Always Visible */
+  .session-status-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg-secondary);
+    min-height: 48px;
+  }
+
+  .status-left {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+  }
+
+  .status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+		font-size: 11px;
+  }
+
+  .status-indicator.running {
+    color: var(--color-text-accent);
+  }
+
+  .status-indicator.completed {
+    color: var(--color-text-primary);
+  }
+
+  .command-preview {
+    margin-top: 2px;
+    opacity: 0.8;
+  }
+
+  .command-preview code {
+    background-color: var(--color-bg-primary);
+		padding: 0;
+    border-radius: 3px;
+    font-size: 12px;
+    color: var(--color-text-secondary);
+  }
+
+  .status-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .meta-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+  }
+
+  .timestamp {
+    color: var(--color-text-secondary);
+    font-size: 11px;
+  }
+
+  .cost-badge {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-weight: 500;
+    font-size: 11px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .clear-history-button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    padding: 4px;
+    border-radius: 3px;
+    transition: all 0.2s;
+  }
+
+  .clear-history-button:hover {
+    background-color: var(--color-bg-error, #fee2e2);
+    color: var(--color-text-error, #dc2626);
+  }
+
   .logs-section {
     flex: 1;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    padding: 20px 20px 0 20px;
+    padding: 0 20px 0 20px;
   }
 
   .logs-header {
@@ -834,11 +929,7 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 12px;
-  }
-
-  .header-actions {
-    display: flex;
-    align-items: center;
+    padding-top: 12px;
   }
 
   .logs-header h3 {
@@ -847,17 +938,17 @@
     font-size: 16px;
   }
 
-  .running-indicator, .history-indicator {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 14px;
-    color: var(--color-text-accent);
-  }
-
-  .history-indicator {
-    color: var(--color-text-secondary);
+  .output-content {
+    background-color: var(--color-bg-primary);
+    padding: 8px;
+    border-radius: 4px;
+    border: 1px solid var(--color-border);
+    white-space: pre-wrap;
+    margin: 0;
+    font-family: monospace;
     font-size: 12px;
+    color: var(--color-text-primary);
+    scroll-snap-align: end;
   }
 
   .spinner {
@@ -1036,6 +1127,34 @@
   }
 
   @media (prefers-color-scheme: dark) {
+    .session-status-header {
+      background-color: #1f2937 !important;
+      border-color: #374151 !important;
+    }
+
+    .status-indicator.running {
+      color: #60a5fa !important;
+    }
+
+    .command-preview code {
+      background-color: #374151 !important;
+      color: #d1d5db !important;
+    }
+
+    .cost-badge {
+      background: linear-gradient(135deg, #059669, #047857) !important;
+    }
+
+    .timestamp {
+      color: #9ca3af !important;
+    }
+
+    .output-content {
+      background-color: #1f2937 !important;
+      border-color: #374151 !important;
+      color: #e5e7eb !important;
+    }
+
     .active-session-header {
       background-color: rgba(14, 165, 233, 0.1) !important;
       color: #7dd3fc !important;
