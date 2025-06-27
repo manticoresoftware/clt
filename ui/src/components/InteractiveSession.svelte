@@ -759,7 +759,7 @@
     </div>
     <div class="modal-footer">
       <button class="primary-btn" on:click={createNewSession}>Create Session</button>
-      <button class="secondary-btn" on:click={() => showNewSessionModal = false}>Cancel</button>
+      <button class="secondary-btn" on:click={() => showNewSessionModal = false}>Stop</button>
     </div>
   </div>
 </div>
