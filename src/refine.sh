@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -e
+# ! We are handling exit codes so we cannot use set -e here
 source "$PROJECT_DIR/lib/rec.sh"
 source "$PROJECT_DIR/lib/argument.sh"
 
@@ -43,3 +43,4 @@ while [[ $# -gt 0 ]]; do
 done
 
 refine "$docker_image" "$record_file"
+exit $?

@@ -1,5 +1,51 @@
-use serde::{Deserialize, Serialize};
+pub use parser::{TestStep, TestStructure};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
+
+/// Wrapper for TestStructure that tracks if it was parsed from a string
+#[derive(Debug)]
+pub struct TestStructureWithWarning {
+    pub structure: TestStructure,
+    pub was_string: bool,
+}
+
+impl<'de> Deserialize<'de> for TestStructureWithWarning {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error;
+        use serde_json::Value;
+
+        let value = Value::deserialize(deserializer)?;
+
+        match value {
+            // Try to deserialize as TestStructure object first
+            Value::Object(_) => {
+                let structure = TestStructure::deserialize(value).map_err(D::Error::custom)?;
+                Ok(TestStructureWithWarning {
+                    structure,
+                    was_string: false,
+                })
+            }
+            // If it's a string, try to parse it as JSON
+            Value::String(s) => {
+                let parsed_value: Value = serde_json::from_str(&s).map_err(|e| {
+                    D::Error::custom(format!("Invalid JSON string in test_structure: {}", e))
+                })?;
+                let structure =
+                    TestStructure::deserialize(parsed_value).map_err(D::Error::custom)?;
+                Ok(TestStructureWithWarning {
+                    structure,
+                    was_string: true,
+                })
+            }
+            _ => Err(D::Error::custom(
+                "test_structure must be an object or a JSON string",
+            )),
+        }
+    }
+}
 
 /// MCP JSON-RPC 2.0 Request
 #[derive(Debug, Deserialize)]
@@ -177,21 +223,23 @@ pub struct ReadTestOutput {
     pub steps: Vec<TestStep>,
 }
 
+/// Version of WriteTestInput that tracks if test_structure was parsed from string
 #[derive(Debug, Deserialize)]
-pub struct WriteTestInput {
+pub struct WriteTestInputWithWarning {
     pub test_file: String,
-    pub test_structure: TestStructure,
+    pub test_structure: TestStructureWithWarning,
 }
 
 #[derive(Debug, Serialize)]
 pub struct WriteTestOutput {
     pub success: bool,
 }
+/// Version of TestReplaceInput that tracks if test_structure was parsed from string
 #[derive(Debug, Deserialize)]
-pub struct TestReplaceInput {
+pub struct TestReplaceInputWithWarning {
     pub test_file: String,
-    pub old_test_structure: TestStructure,
-    pub new_test_structure: TestStructure,
+    pub old_test_structure: TestStructureWithWarning,
+    pub new_test_structure: TestStructureWithWarning,
 }
 
 #[derive(Debug, Serialize)]
@@ -200,10 +248,11 @@ pub struct TestReplaceOutput {
     pub message: String,
 }
 
+/// Version of TestAppendInput that tracks if test_structure was parsed from string
 #[derive(Debug, Deserialize)]
-pub struct TestAppendInput {
+pub struct TestAppendInputWithWarning {
     pub test_file: String,
-    pub test_structure: TestStructure,
+    pub test_structure: TestStructureWithWarning,
 }
 
 #[derive(Debug, Serialize)]
@@ -218,23 +267,7 @@ pub struct GetPatternsOutput {
     pub patterns: std::collections::HashMap<String, String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TestStructure {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub steps: Vec<TestStep>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TestStep {
-    #[serde(rename = "type")]
-    pub step_type: String,
-    pub args: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub steps: Option<Vec<TestStep>>, // For nested blocks
-}
+// TestStructure and TestStep are now imported from parser crate
 
 impl McpResponse {
     pub fn success(id: Option<serde_json::Value>, result: serde_json::Value) -> Self {

@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -e
+# ! We are handling exit codes so we cannot use set -e here
 
 # Detect proper path to the binary to run
 ARCH=$(arch)
@@ -27,11 +27,13 @@ container_exec() {
 	directory=${3:-tests}
 	interactive=${4:-}
 	if [ ! -d "$directory" ]; then
-		>&2 echo "Directory with tests does not exist: $directory" && exit 1
+		>&2 echo "Directory with tests does not exist: $directory"
+		return 1
 	fi
 
 	if [ -z "$image" ] || [ -z "$command" ]; then
-		>&2 echo 'Usage: container_exec "image" "command"' && exit 1
+		>&2 echo 'Usage: container_exec "image" "command"'
+		return 1
 	fi
 
 	# Merge base of patterns
@@ -56,21 +58,27 @@ container_exec() {
 		-v \"$PWD/.clt:$DOCKER_PROJECT_DIR/.clt\" \
 		-v \"$temp_file:$DOCKER_PROJECT_DIR/.clt/patterns\" \
 		-w \"$DOCKER_PROJECT_DIR\" \
-		$RUN_ARGS \
+		$CLT_RUN_ARGS \
 		--entrypoint /bin/bash \
 		--rm $flag -t \"$image\" \
 		-i -c \"$command\")
 
 	if [ -n "$interactive" ]; then
 		eval "$process"
+		exit_code=$?
 	else
 		eval "$process" & pid=$!
 
 		trap "kill -s INT '$pid'; exit 130" SIGINT
 		trap "kill -s TERM '$pid'; exit 143" SIGTERM
 		wait "$pid"
+		exit_code=$?
 
 		trap - SIGINT SIGTERM
-		wait "$pid"
 	fi
+
+	# Clean up temp file
+	rm -f "$temp_file"
+
+	return $exit_code
 }

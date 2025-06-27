@@ -102,7 +102,7 @@ impl PatternMatcher {
         let mut config: HashMap<String, String> = HashMap::new();
 
         let file_path = std::path::Path::new(&file_name);
-        let file = File::open(&file_path)?;
+        let file = File::open(file_path)?;
         let reader = BufReader::new(file);
 
         for line in reader.lines() {

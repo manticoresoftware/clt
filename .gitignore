@@ -2,3 +2,4 @@
 *.recc
 /tests/*
 !/tests/.gitkeep
+.env
