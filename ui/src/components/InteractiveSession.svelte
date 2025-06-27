@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, afterUpdate } from 'svelte';
   import { API_URL } from '../config.js';
 
   let isOpen = false;
@@ -22,6 +22,7 @@
   let showSessionSidebar = false;
   let loadingSessions = false;
   let lastSessionCancelled = false;
+  let logsContainer: HTMLElement;
 
   // Cost extraction and formatting functions
   function extractCostFromLogs(logs: string[]): number | null {
@@ -517,6 +518,20 @@
     }
   }
 
+  // Auto-scroll to bottom function
+  function scrollToBottom() {
+    if (logsContainer) {
+      logsContainer.scrollTop = logsContainer.scrollHeight;
+    }
+  }
+
+  // Auto-scroll when logs update
+  afterUpdate(() => {
+    if (isOpen && (logs.length > 0 || lastRunOutput)) {
+      scrollToBottom();
+    }
+  });
+
   // Load session state when component mounts (for background polling)
   onMount(() => {
     loadSessionState();
@@ -639,7 +654,7 @@
             </div>
           </div>
 
-          <div class="logs-container">
+          <div class="logs-container" bind:this={logsContainer}>
             {#if isRunning && logs.length > 0}
               <div class="active-session-header">
                 <strong>🔄 Active Session - Live Output:</strong>
@@ -660,10 +675,10 @@
             {:else if lastRunOutput}
               <div class="last-output">
                 <div class="session-header">
-                  <strong>{lastSessionCancelled ? '🚫 Last Cancelled Session:' : '✅ Last Completed Session:'}</strong>
                   <div class="session-meta">
+											<strong>{lastSessionCancelled ? '🚫 Last session was cancelled' : '✅ Last session completed'}</strong>
                     {#if lastCommand}
-                      <div class="last-command">Task: <code>{lastCommand}</code></div>
+                      <div class="last-command"> <code>{lastCommand}</code></div>
                     {/if}
                     {#if lastSessionTime}
                       <div class="session-time">Run at: {formatTimestamp(lastSessionTime)}</div>
@@ -877,9 +892,11 @@
     border: 1px solid var(--color-border);
     border-radius: 4px;
     padding: 12px;
-    overflow-y: auto;
+    overflow-y: scroll;
+    overscroll-behavior-y: contain;
+    scroll-snap-type: y proximity;
     font-family: monospace;
-    font-size: 14px;
+    font-size: 12px;
     line-height: 1.4;
     min-height: 200px;
   }
@@ -890,6 +907,10 @@
     color: var(--color-text-primary);
   }
 
+  .log-line:last-child {
+    scroll-snap-align: end;
+  }
+
   .active-session-header {
     background-color: var(--color-bg-info, rgba(59, 130, 246, 0.1));
     color: var(--color-text-info, #3b82f6);
@@ -897,6 +918,7 @@
     border-radius: 4px;
     margin-bottom: 12px;
     border-left: 4px solid var(--color-bg-accent);
+    scroll-snap-align: end;
   }
 
   .waiting-message {
@@ -904,10 +926,12 @@
     font-style: italic;
     text-align: center;
     padding: 20px;
+    scroll-snap-align: end;
   }
 
   .last-output {
     color: var(--color-text-primary);
+    scroll-snap-align: end;
   }
 
   .session-header {
@@ -930,10 +954,14 @@
     font-size: 12px;
     color: var(--color-text-secondary);
     align-items: flex-end;
+		flex-grow: 1;
   }
 
+	.session-meta strong {
+		font-size: 11px;
+	}
+
   .last-command {
-    max-width: 300px;
     word-break: break-all;
   }
 
@@ -941,10 +969,11 @@
     background-color: var(--color-bg-secondary);
     padding: 2px 4px;
     border-radius: 2px;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .session-time {
+		font-size: 11px;
     font-style: italic;
   }
 
@@ -971,10 +1000,13 @@
     border: 1px solid var(--color-border);
     white-space: pre-wrap;
     margin: 0;
+    font-family: monospace;
+    font-size: 12px;
   }
 
   .error-message {
     color: var(--color-text-error, #dc2626);
+    scroll-snap-align: end;
   }
 
   .error-message strong {
@@ -991,6 +1023,8 @@
     white-space: pre-wrap;
     margin: 0;
     color: var(--color-text-error, #dc2626);
+    font-family: monospace;
+    font-size: 12px;
   }
 
   .no-logs {
@@ -998,6 +1032,7 @@
     font-style: italic;
     text-align: center;
     padding: 40px 20px;
+    scroll-snap-align: end;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -1033,6 +1068,8 @@
       background-color: #1f2937 !important;
       border-color: #374151 !important;
       color: #e5e7eb !important;
+      font-family: monospace;
+      font-size: 12px;
     }
 
     .session-header strong {
@@ -1059,6 +1096,8 @@
       background-color: rgba(239, 68, 68, 0.1) !important;
       border-color: rgba(239, 68, 68, 0.3) !important;
       color: #f87171 !important;
+      font-family: monospace;
+      font-size: 12px;
     }
   }
 
