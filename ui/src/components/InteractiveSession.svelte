@@ -692,7 +692,7 @@
           <div class="input-container">
             <textarea
               bind:value={input}
-              placeholder="Enter your command or question..."
+              placeholder="Enter your request..."
               disabled={isRunning}
               on:keypress={handleKeyPress}
               rows="3"

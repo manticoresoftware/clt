@@ -7,8 +7,16 @@ Make sure you have Docker configured and nginx or any other webserver
 
 ## Install dependencies
 
+Install Rust dependencies
+
 ```bash
 cargo install ripgrep octocode octomind ast-grep wasm-pack
+```
+
+Install GH tool
+
+```bash
+curl -sS https://webi.sh/gh | sh
 ```
 
 ## Install UI
