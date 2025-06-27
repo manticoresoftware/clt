@@ -671,7 +671,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
 
       // Get the current status to determine base branch
       const status = await git.status();
-      const currentBranch = status.current;
+      const finalBranch = status.current;
 
       // Determine base branch using cached helper
       const baseBranch = await getDefaultBranch(git, userRepo);
