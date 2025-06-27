@@ -450,7 +450,7 @@
                   class="toggle-button"
                   on:click={() => showAdvanced = !showAdvanced}
                 >
-                  {showAdvanced ? '▼' : '▶'} Advanced Options
+                  {showAdvanced ? '▼' : '▶'} Details
                 </button>
               </div>
 
