@@ -468,10 +468,56 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
     await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
 
     try {
+      // First check if we're already on a branch with an existing PR
+      const currentStatus = await git.status();
+      const currentBranch = currentStatus.current;
+      const defaultBranch = await getDefaultBranch(git, userRepo);
+      
+      // Check for existing PR on current branch
+      if (currentBranch && currentBranch !== defaultBranch) {
+        const { exec } = await import('child_process');
+        const execPromise = (cmd) => new Promise((resolve, reject) => {
+          exec(cmd, { cwd: userRepo, env: { ...process.env, GH_TOKEN: req.user.token } },
+            (err, stdout, stderr) => {
+              if (err) reject(stderr || err);
+              else resolve(stdout.trim());
+            }
+          );
+        });
+
+        try {
+          const prListCmd = `gh pr list --state open --head ${currentBranch} --json url,title,number`;
+          const prListOutput = await execPromise(prListCmd);
+          
+          if (prListOutput && prListOutput.trim() && prListOutput.trim() !== '[]') {
+            const prs = JSON.parse(prListOutput);
+            if (Array.isArray(prs) && prs.length > 0) {
+              // We're on a branch with existing PR - just commit to it
+              console.log('Already on PR branch, committing to existing PR:', prs[0]);
+              
+              await git.add('.');
+              const commit = await git.commit(title);
+              await git.push('origin', currentBranch);
+
+              return res.json({
+                success: true,
+                branch: currentBranch,
+                commit: commit.commit,
+                pr: prs[0].url,
+                message: `Committed to existing PR: ${prs[0].title}`
+              });
+            }
+          }
+        } catch (error) {
+          console.log('Error checking for existing PR on current branch:', error.message);
+          // Continue with normal flow if PR check fails
+        }
+      }
+
       // fetch all
       await git.fetch(['--all']);
 
-      // list local + remote branches
+      // list local + remote branches  
       const local  = await git.branchLocal();
       const remote = await git.branch(['-r']);
       const existsLocally = local.all.includes(branchName);
@@ -809,13 +855,46 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
     await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
 
     try {
-      // Get current branch and verify it's a PR branch
+      // Get current branch and verify it's a PR branch (has existing PR)
       const status = await git.status();
       const currentBranch = status.current;
+      const defaultBranch = await getDefaultBranch(git, userRepo);
 
-      if (!currentBranch?.startsWith('clt-ui-')) {
+      // Check if current branch has an existing PR
+      let hasExistingPr = false;
+      if (currentBranch && currentBranch !== defaultBranch) {
+        const { exec } = await import('child_process');
+        const execPromise = (cmd) => new Promise((resolve, reject) => {
+          exec(cmd, { cwd: userRepo, env: { ...process.env, GH_TOKEN: req.user.token } },
+            (err, stdout, stderr) => {
+              if (err) reject(stderr || err);
+              else resolve(stdout.trim());
+            }
+          );
+        });
+
+        try {
+          const prListCmd = `gh pr list --state open --head ${currentBranch} --json url,title,number`;
+          const prListOutput = await execPromise(prListCmd);
+          
+          if (prListOutput && prListOutput.trim() && prListOutput.trim() !== '[]') {
+            const prs = JSON.parse(prListOutput);
+            if (Array.isArray(prs) && prs.length > 0) {
+              hasExistingPr = true;
+            }
+          }
+        } catch (error) {
+          console.log('Error checking for existing PR:', error.message);
+        }
+      }
+
+      // Allow commits to: tool-created branches OR branches with existing PRs
+      const isPrBranch = (currentBranch && currentBranch !== defaultBranch) &&
+                        (currentBranch.startsWith('clt-ui-') || hasExistingPr);
+
+      if (!isPrBranch) {
         return res.status(400).json({
-          error: 'Can only commit to PR branches (branches starting with clt-ui-)'
+          error: 'Can only commit to PR branches (branches with existing pull requests)'
         });
       }
 
@@ -830,21 +909,18 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       await git.push('origin', currentBranch);
 
       // Get PR URL if exists
-      const { exec } = await import('child_process');
-      const execPromise = (cmd) => new Promise((resolve, reject) => {
-        exec(cmd, { cwd: userRepo, env: { ...process.env, GH_TOKEN: req.user.token } },
-          (err, stdout, stderr) => {
-            if (err) {
-              reject(stderr || err);
-            } else {
-              resolve(stdout.trim());
-            }
-          }
-        );
-      });
-
       let prUrl = null;
       try {
+        const { exec } = await import('child_process');
+        const execPromise = (cmd) => new Promise((resolve, reject) => {
+          exec(cmd, { cwd: userRepo, env: { ...process.env, GH_TOKEN: req.user.token } },
+            (err, stdout, stderr) => {
+              if (err) reject(stderr || err);
+              else resolve(stdout.trim());
+            }
+          );
+        });
+        
         const prList = await execPromise(
           `gh pr list --state open --head ${currentBranch} --json url`
         );
