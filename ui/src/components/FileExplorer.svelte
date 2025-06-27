@@ -14,7 +14,7 @@
   let selectedFolder: string | null = null; // Track selected folder for creation context
 
   // Reset branch state
-  let resetBranch = 'master';
+  let resetBranch = 'main';
 
   // Update resetBranch when default branch is loaded
   $: if ($branchStore.defaultBranch) {

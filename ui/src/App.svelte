@@ -13,7 +13,9 @@
   let isLoading = true;
 
   // Reactive statement to fetch branch info when repo becomes ready
-  $: if ($authStore.isAuthenticated && $repoSyncStore.isInitialized && !$branchStore.currentBranch) {
+  $: if ($authStore.isAuthenticated && $repoSyncStore.isInitialized && 
+        (!$branchStore.currentBranch || $branchStore.currentBranch === 'unknown' || 
+         !$branchStore.defaultBranch || $branchStore.defaultBranch === 'main')) {
     branchStore.fetchCurrentBranch().catch(console.error);
   }
 
