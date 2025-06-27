@@ -658,10 +658,10 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       const defaultBranch = await getDefaultBranch(git, userRepo);
       console.log(`Default branch: ${defaultBranch}`);
 
-      // Check if this is a PR branch (not default branch and starts with clt-ui-)
-      let isPrBranch = currentBranch &&
-                      currentBranch !== defaultBranch &&
-                      currentBranch.startsWith('clt-ui-');
+      // Initialize PR detection
+      let isPrBranch = false;
+      let existingPr = null;
+      let recentCommits = [];
 
       const { exec } = await import('child_process');
       const execPromise = (cmd) => new Promise((resolve, reject) => {
@@ -676,12 +676,9 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         );
       });
 
-      let existingPr = null;
-      let recentCommits = [];
-
       // Check for existing PR for current branch using GitHub CLI
-      // Only check for PR if we're on a potential PR branch
-      if (isPrBranch) {
+      // Check for any non-default branch to detect existing PRs
+      if (currentBranch && currentBranch !== defaultBranch) {
         try {
           console.log('🔍 Checking for existing PR on branch:', currentBranch);
 
@@ -732,6 +729,12 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       } else {
         console.log('ℹ️ Not on a PR branch, skipping PR detection');
       }
+
+      // Determine if this is a PR branch:
+      // 1. Branch created by our tool (starts with clt-ui-)
+      // 2. Any branch with an existing PR
+      isPrBranch = (currentBranch && currentBranch !== defaultBranch) &&
+                   (currentBranch.startsWith('clt-ui-') || existingPr !== null);
 
       // Get recent commits for current branch (last 5)
       try {

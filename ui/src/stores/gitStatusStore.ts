@@ -127,7 +127,8 @@ function createGitStatusStore() {
           )];
           
           currentBranch = data.currentBranch || 'main';
-          isPrBranch = currentBranch?.startsWith('clt-ui-') || false;
+          // Let server determine isPrBranch based on branch name OR existing PR
+          isPrBranch = data.isPrBranch || false;
         }
 
         update(state => ({
