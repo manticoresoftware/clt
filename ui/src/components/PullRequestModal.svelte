@@ -457,11 +457,13 @@
               {#if showAdvanced}
                 <div class="advanced-options">
                   <div class="info-box">
-                    <h5>Branch Strategy</h5>
-                    <p>A new branch will be created: <code>clt-ui-{title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}</code></p>
+                    {#if !isCommitMode}
+                      <h5>Branch Strategy</h5>
+                      <p>A new branch will be created: <code>clt-ui-{title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}</code></p>
+                    {/if}
 
                     <h5>Commit Strategy</h5>
-                    <p>All changes will be committed with the PR title as the commit message.</p>
+                    <p>{isCommitMode ? 'Changes will be committed to the existing PR branch.' : 'All changes will be committed with the PR title as the commit message.'}</p>
                   </div>
                 </div>
               {/if}
