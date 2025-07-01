@@ -184,7 +184,33 @@ function createGithubStore() {
         throw error;
       }
     },
-    reset: () => set(initialState)
+    reset: () => set(initialState),
+    
+    // Update PR status from external source (called by gitStatusStore)
+    updatePrStatus: (prStatusData: Partial<PrStatus>) => {
+      update(state => ({
+        ...state,
+        prStatus: state.prStatus ? { ...state.prStatus, ...prStatusData } : {
+          currentBranch: prStatusData.currentBranch || '',
+          isPrBranch: prStatusData.isPrBranch || false,
+          existingPr: prStatusData.existingPr || null,
+          recentCommits: prStatusData.recentCommits || [],
+          hasChanges: prStatusData.hasChanges || false,
+          timestamp: Date.now()
+        }
+      }));
+    },
+    
+    // Start automatic PR status polling
+    startPrStatusPolling: (intervalMs: number = 10000) => {
+      // Fetch immediately
+      store.fetchPrStatus();
+      
+      // Then poll periodically (less frequently than git status)
+      setInterval(() => {
+        store.fetchPrStatus();
+      }, intervalMs);
+    }
   };
   
   return store;

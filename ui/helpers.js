@@ -18,28 +18,71 @@ export async function getDefaultBranch(git, repoPath) {
   }
 
   let defaultBranch;
+  
   try {
-    // Try to get the default branch from the HEAD reference
-    defaultBranch = await git.revparse(['--abbrev-ref', 'origin/HEAD']);
-    defaultBranch = defaultBranch.replace('origin/', '');
-  } catch (headError) {
-    console.warn('Could not determine default branch from HEAD, using fallback:', headError.message);
+    // Method 1: Try to get default branch from remote show origin
+    const remoteInfo = await git.raw(['remote', 'show', 'origin']);
+    const headBranchMatch = remoteInfo.match(/HEAD branch:\s*(.+)/);
+    if (headBranchMatch && headBranchMatch[1].trim()) {
+      defaultBranch = headBranchMatch[1].trim();
+      console.log(`Default branch found via remote show: ${defaultBranch}`);
+    }
+  } catch (remoteError) {
+    console.warn('Could not determine default branch from remote show, trying fallback methods:', remoteError.message);
+  }
 
+  if (!defaultBranch) {
     try {
-      // Fallback: Check if main or master exists
+      // Method 2: Try ls-remote to get HEAD reference
+      const lsRemoteOutput = await git.raw(['ls-remote', '--symref', 'origin', 'HEAD']);
+      const symrefMatch = lsRemoteOutput.match(/ref:\s*refs\/heads\/(.+)\s+HEAD/);
+      if (symrefMatch && symrefMatch[1]) {
+        defaultBranch = symrefMatch[1].trim();
+        console.log(`Default branch found via ls-remote: ${defaultBranch}`);
+      }
+    } catch (lsRemoteError) {
+      console.warn('Could not determine default branch from ls-remote:', lsRemoteError.message);
+    }
+  }
+
+  if (!defaultBranch) {
+    try {
+      // Method 3: Check if origin/HEAD exists and try to resolve it
+      defaultBranch = await git.revparse(['--abbrev-ref', 'origin/HEAD']);
+      defaultBranch = defaultBranch.replace('origin/', '');
+      console.log(`Default branch found via origin/HEAD: ${defaultBranch}`);
+    } catch (headError) {
+      console.warn('Could not determine default branch from origin/HEAD:', headError.message);
+    }
+  }
+
+  if (!defaultBranch) {
+    try {
+      // Method 4: Fallback - Check remote branches and use common defaults
       const branches = await git.branch(['-r']);
       if (branches.all.includes('origin/main')) {
         defaultBranch = 'main';
+        console.log('Default branch fallback: using main (found in remote branches)');
       } else if (branches.all.includes('origin/master')) {
         defaultBranch = 'master';
-      } else {
-        // Final fallback
-        defaultBranch = 'main';
+        console.log('Default branch fallback: using master (found in remote branches)');
+      } else if (branches.all.length > 0) {
+        // Use the first remote branch as fallback
+        const firstRemote = branches.all.find(branch => branch.startsWith('origin/'));
+        if (firstRemote) {
+          defaultBranch = firstRemote.replace('origin/', '');
+          console.log(`Default branch fallback: using first remote branch ${defaultBranch}`);
+        }
       }
     } catch (branchError) {
-      console.warn('Could not determine default branch from remote branches, defaulting to main:', branchError.message);
-      defaultBranch = 'main';
+      console.warn('Could not determine default branch from remote branches:', branchError.message);
     }
+  }
+
+  // Final fallback if all methods fail
+  if (!defaultBranch) {
+    defaultBranch = 'main';
+    console.warn('All default branch detection methods failed, defaulting to main');
   }
 
   // Cache the result
@@ -59,6 +102,127 @@ export function clearDefaultBranchCache(repoPath = null) {
   } else {
     defaultBranchCache.clear();
   }
+}
+
+/**
+ * Create an exec promise wrapper for child_process.exec
+ * @param {string} repoPath - Repository path for working directory
+ * @param {string} token - GitHub token for authentication
+ * @returns {Function} execPromise function
+ */
+async function createExecPromise(repoPath, token) {
+  const { exec } = await import('child_process');
+  return (cmd) => new Promise((resolve, reject) => {
+    console.log(`[DEBUG] Executing: ${cmd} in ${repoPath}`);
+    exec(cmd, { 
+      cwd: repoPath, 
+      env: { ...process.env, GH_TOKEN: token } 
+    }, (err, stdout, stderr) => {
+      if (err) {
+        console.error(`[DEBUG] Command failed: ${cmd}`);
+        console.error(`[DEBUG] Error: ${stderr || err.message}`);
+        reject(stderr || err);
+      } else {
+        console.log(`[DEBUG] Command success: ${stdout.trim()}`);
+        resolve(stdout.trim());
+      }
+    });
+  });
+}
+
+/**
+ * Check if the current branch has an existing PR (excluding forks)
+ * @param {string} currentBranch - Current branch name
+ * @param {string} defaultBranch - Default branch name
+ * @param {string} repoPath - Repository path
+ * @param {string} token - GitHub token
+ * @returns {Promise<Object|null>} PR object if found, null otherwise
+ */
+export async function checkExistingPR(currentBranch, defaultBranch, repoPath, token) {
+  // Only check for PRs on non-default branches
+  if (!currentBranch || currentBranch === defaultBranch) {
+    return null;
+  }
+
+  const execPromise = await createExecPromise(repoPath, token);
+
+  try {
+    console.log('🔍 Checking for existing PR on branch:', currentBranch);
+
+    // Method 1: Use gh pr list to find PRs FROM this branch TO default branch (excluding forks)
+    const prListCmd = `gh pr list --state open --head ${currentBranch} --base ${defaultBranch} --json url,title,number,isCrossRepository`;
+    console.log('Running command:', prListCmd);
+
+    const prListOutput = await execPromise(prListCmd);
+    console.log('gh pr list result:', prListOutput);
+
+    if (prListOutput && prListOutput.trim() && prListOutput.trim() !== '[]') {
+      const prs = JSON.parse(prListOutput);
+      console.log('Parsed PRs:', prs);
+
+      if (Array.isArray(prs) && prs.length > 0) {
+        // Filter out cross-repository PRs (forks)
+        const sameBranchPRs = prs.filter(pr => !pr.isCrossRepository);
+        console.log('PRs from same repository (excluding forks):', sameBranchPRs);
+
+        if (sameBranchPRs.length > 0) {
+          const existingPr = {
+            url: sameBranchPRs[0].url,
+            title: sameBranchPRs[0].title,
+            number: sameBranchPRs[0].number
+          };
+          console.log('✅ Found existing PR (same repo):', existingPr);
+          return existingPr;
+        } else {
+          console.log('❌ All found PRs are from forks, ignoring');
+        }
+      }
+    } else {
+      console.log('❌ No PR found for branch:', currentBranch);
+    }
+  } catch (error) {
+    console.log('❌ Error checking for PR:', error.message);
+
+    // Fallback: try gh pr view (if we're currently on the PR branch)
+    try {
+      console.log('Trying fallback: gh pr view');
+      const prViewOutput = await execPromise('gh pr view --json url,title,number,isCrossRepository');
+      console.log('gh pr view result:', prViewOutput);
+
+      if (prViewOutput && prViewOutput.trim()) {
+        const prData = JSON.parse(prViewOutput);
+        
+        // Only return if it's not a cross-repository PR
+        if (!prData.isCrossRepository) {
+          const existingPr = {
+            url: prData.url,
+            title: prData.title,
+            number: prData.number
+          };
+          console.log('✅ Found existing PR via gh pr view (same repo):', existingPr);
+          return existingPr;
+        } else {
+          console.log('❌ PR found via gh pr view is from fork, ignoring');
+        }
+      }
+    } catch (viewError) {
+      console.log('❌ gh pr view also failed:', viewError.message);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Determine if current branch is a PR branch
+ * @param {string} currentBranch - Current branch name
+ * @param {string} defaultBranch - Default branch name
+ * @param {Object|null} existingPr - Existing PR object if found
+ * @returns {boolean} True if this is a PR branch
+ */
+export function isPRBranch(currentBranch, defaultBranch, existingPr) {
+  return (currentBranch && currentBranch !== defaultBranch) &&
+         (currentBranch.startsWith('clt-ui-') || existingPr !== null);
 }
 
 // Helper function to save session data persistently

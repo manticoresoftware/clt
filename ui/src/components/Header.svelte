@@ -17,9 +17,9 @@
   $: hasGitChanges = gitStatus.hasChanges;
   $: gitStatusError = gitStatus.error;
   
-  // Smart button logic based on PR status
-  $: isOnPrBranch = github.prStatus?.isPrBranch || gitStatus.isPrBranch;
-  $: existingPr = github.prStatus?.existingPr;
+  // Smart button logic based on PR status - prioritize fresh data from gitStatus
+  $: isOnPrBranch = gitStatus.isPrBranch || github.prStatus?.isPrBranch || false;
+  $: existingPr = github.prStatus?.existingPr || null;
   $: buttonText = isOnPrBranch && existingPr ? 'Commit' : 'Create PR';
   $: buttonTitle = !hasGitChanges 
     ? 'No changes to commit' 
@@ -114,8 +114,14 @@
       </button>
       
       <button
-        on:click={() => {
+        on:click={async () => {
           if (hasGitChanges) {
+            // Fetch fresh PR status before showing modal
+            try {
+              await githubStore.fetchPrStatus();
+            } catch (error) {
+              console.error('Failed to fetch PR status:', error);
+            }
             githubStore.showModal();
           }
         }}
