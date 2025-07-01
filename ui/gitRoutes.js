@@ -7,7 +7,7 @@ import {
   ensureGitRemoteWithToken,
   slugify
 } from './routes.js';
-import { getDefaultBranch } from './helpers.js';
+import { getDefaultBranch, checkExistingPR, isPRBranch } from './helpers.js';
 
 // Setup Git routes
 export function setupGitRoutes(app, isAuthenticated, dependencies) {
@@ -46,39 +46,15 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
 
         // Get default branch to determine if this is a PR branch
         const defaultBranch = await getDefaultBranch(git, userRepo);
-        
-        // Check for existing PR on this branch
-        let existingPr = null;
-        if (currentBranch && currentBranch !== defaultBranch) {
-          try {
-            const { exec } = await import('child_process');
-            const execPromise = (cmd) => new Promise((resolve, reject) => {
-              exec(cmd, { cwd: userRepo, env: { ...process.env, GH_TOKEN: req.user.token } },
-                (err, stdout, stderr) => {
-                  if (err) reject(stderr || err);
-                  else resolve(stdout.trim());
-                }
-              );
-            });
 
-            const prListCmd = `gh pr list --state open --head ${currentBranch} --json url,title,number`;
-            const prListOutput = await execPromise(prListCmd);
-            
-            if (prListOutput && prListOutput.trim() && prListOutput.trim() !== '[]') {
-              const prs = JSON.parse(prListOutput);
-              if (Array.isArray(prs) && prs.length > 0) {
-                existingPr = prs[0];
-              }
-            }
-          } catch (error) {
-            console.log('Error checking for existing PR:', error.message);
-          }
-        }
+        // Check for existing PR on this branch (excluding forks)
+        console.log(`[DEBUG] About to check PR for branch: ${currentBranch}, default: ${defaultBranch}`);
+        const existingPr = await checkExistingPR(currentBranch, defaultBranch, userRepo, req.user.token);
+        console.log(`[DEBUG] checkExistingPR returned:`, existingPr);
 
         // Determine if this is a PR branch: tool-created OR has existing PR
-        const isPrBranch = (currentBranch && currentBranch !== defaultBranch) &&
-                          (currentBranch.startsWith('clt-ui-') || existingPr !== null);
-        console.log(`Is PR branch: ${isPrBranch}`);
+        const isPrBranch = isPRBranch(currentBranch, defaultBranch, existingPr);
+        console.log(`[DEBUG] isPRBranch result: ${isPrBranch} (branch: ${currentBranch}, default: ${defaultBranch}, existingPr: ${existingPr ? 'found' : 'null'})`);
 
         // Get status information
         const status = await git.status();
@@ -187,7 +163,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       try {
         const git = simpleGit({ baseDir: userRepoPath });
         await git.status(); // This will throw if not a git repo
-        
+
         return res.json({
           isInitialized: true,
           message: 'Repository is properly initialized',
@@ -220,13 +196,13 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       const result = await ensureUserRepo(username);
 
       if (!result) {
-        return res.status(500).json({ 
-          error: 'Failed to initialize repository. Please check your GitHub token and repository permissions.' 
+        return res.status(500).json({
+          error: 'Failed to initialize repository. Please check your GitHub token and repository permissions.'
         });
       }
 
       console.log(`Repository sync completed for user: ${username}`);
-      
+
       return res.json({
         success: true,
         message: 'Repository synchronized successfully',
@@ -472,7 +448,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       const currentStatus = await git.status();
       const currentBranch = currentStatus.current;
       const defaultBranch = await getDefaultBranch(git, userRepo);
-      
+
       // Check for existing PR on current branch
       if (currentBranch && currentBranch !== defaultBranch) {
         const { exec } = await import('child_process');
@@ -486,15 +462,15 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         });
 
         try {
-          const prListCmd = `gh pr list --state open --head ${currentBranch} --json url,title,number`;
+          const prListCmd = `gh pr list --state open --base ${currentBranch} --json url,title,number`;
           const prListOutput = await execPromise(prListCmd);
-          
+
           if (prListOutput && prListOutput.trim() && prListOutput.trim() !== '[]') {
             const prs = JSON.parse(prListOutput);
             if (Array.isArray(prs) && prs.length > 0) {
               // We're on a branch with existing PR - just commit to it
               console.log('Already on PR branch, committing to existing PR:', prs[0]);
-              
+
               await git.add('.');
               const commit = await git.commit(title);
               await git.push('origin', currentBranch);
@@ -517,7 +493,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       // fetch all
       await git.fetch(['--all']);
 
-      // list local + remote branches  
+      // list local + remote branches
       const local  = await git.branchLocal();
       const remote = await git.branch(['-r']);
       const existsLocally = local.all.includes(branchName);
@@ -612,7 +588,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
 
         // If we get here, branch exists but NO PR → checkout existing branch and create PR
         console.log('Branch exists but no PR found, checking out existing branch to create PR');
-        
+
         // Check current status before checkout
         const preCheckoutStatus = await git.status();
         if (!preCheckoutStatus.isClean()) {
@@ -622,9 +598,9 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
           await git.stash(['push', '-m', stashMessage]);
           console.log(`Stashed changes: ${stashMessage}`);
         }
-        
+
         await git.checkout(branchName);
-        
+
         // If we stashed changes, pop them back
         if (!preCheckoutStatus.isClean()) {
           try {
@@ -635,7 +611,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
             // Continue anyway - the stash is still available
           }
         }
-        
+
         // Check for changes after checkout and stash restore
         const postCheckoutStatus = await git.status();
         if (!postCheckoutStatus.isClean()) {
@@ -737,82 +713,16 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       console.log(`Default branch: ${defaultBranch}`);
 
       // Initialize PR detection
-      let isPrBranch = false;
-      let existingPr = null;
       let recentCommits = [];
 
-      const { exec } = await import('child_process');
-      const execPromise = (cmd) => new Promise((resolve, reject) => {
-        exec(cmd, { cwd: userRepo, env: { ...process.env, GH_TOKEN: req.user.token } },
-          (err, stdout, stderr) => {
-            if (err) {
-              reject(stderr || err);
-            } else {
-              resolve(stdout.trim());
-            }
-          }
-        );
-      });
+      // Check for existing PR for current branch (excluding forks)
+      console.log(`[DEBUG] PR Status - About to check PR for branch: ${currentBranch}, default: ${defaultBranch}`);
+      const existingPr = await checkExistingPR(currentBranch, defaultBranch, userRepo, req.user.token);
+      console.log(`[DEBUG] PR Status - checkExistingPR returned:`, existingPr);
 
-      // Check for existing PR for current branch using GitHub CLI
-      // Check for any non-default branch to detect existing PRs
-      if (currentBranch && currentBranch !== defaultBranch) {
-        try {
-          console.log('🔍 Checking for existing PR on branch:', currentBranch);
-
-          // Method 1: Use gh pr list to find PRs for this specific branch
-          const prListCmd = `gh pr list --state open --head ${currentBranch} --json url,title,number`;
-          console.log('Running command:', prListCmd);
-
-          const prListOutput = await execPromise(prListCmd);
-          console.log('gh pr list result:', prListOutput);
-
-          if (prListOutput && prListOutput.trim() && prListOutput.trim() !== '[]') {
-            const prs = JSON.parse(prListOutput);
-            console.log('Parsed PRs:', prs);
-
-            if (Array.isArray(prs) && prs.length > 0) {
-              existingPr = {
-                url: prs[0].url,
-                title: prs[0].title,
-                number: prs[0].number
-              };
-              console.log('✅ Found existing PR:', existingPr);
-            }
-          } else {
-            console.log('❌ No PR found for branch:', currentBranch);
-          }
-        } catch (error) {
-          console.log('❌ Error checking for PR:', error.message);
-
-          // Fallback: try gh pr view (if we're currently on the PR branch)
-          try {
-            console.log('Trying fallback: gh pr view');
-            const prViewOutput = await execPromise('gh pr view --json url,title,number');
-            console.log('gh pr view result:', prViewOutput);
-
-            if (prViewOutput && prViewOutput.trim()) {
-              const prData = JSON.parse(prViewOutput);
-              existingPr = {
-                url: prData.url,
-                title: prData.title,
-                number: prData.number
-              };
-              console.log('✅ Found existing PR via gh pr view:', existingPr);
-            }
-          } catch (viewError) {
-            console.log('❌ gh pr view also failed:', viewError.message);
-          }
-        }
-      } else {
-        console.log('ℹ️ Not on a PR branch, skipping PR detection');
-      }
-
-      // Determine if this is a PR branch:
-      // 1. Branch created by our tool (starts with clt-ui-)
-      // 2. Any branch with an existing PR
-      isPrBranch = (currentBranch && currentBranch !== defaultBranch) &&
-                   (currentBranch.startsWith('clt-ui-') || existingPr !== null);
+      // Determine if this is a PR branch: tool-created OR has existing PR
+      const isPrBranch = isPRBranch(currentBranch, defaultBranch, existingPr);
+      console.log(`[DEBUG] PR Status - isPRBranch result: ${isPrBranch} (branch: ${currentBranch}, existingPr: ${existingPr ? 'found' : 'null'})`);
 
       // Get recent commits for current branch (last 5)
       try {
@@ -860,37 +770,14 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       const currentBranch = status.current;
       const defaultBranch = await getDefaultBranch(git, userRepo);
 
-      // Check if current branch has an existing PR
-      let hasExistingPr = false;
-      if (currentBranch && currentBranch !== defaultBranch) {
-        const { exec } = await import('child_process');
-        const execPromise = (cmd) => new Promise((resolve, reject) => {
-          exec(cmd, { cwd: userRepo, env: { ...process.env, GH_TOKEN: req.user.token } },
-            (err, stdout, stderr) => {
-              if (err) reject(stderr || err);
-              else resolve(stdout.trim());
-            }
-          );
-        });
-
-        try {
-          const prListCmd = `gh pr list --state open --head ${currentBranch} --json url,title,number`;
-          const prListOutput = await execPromise(prListCmd);
-          
-          if (prListOutput && prListOutput.trim() && prListOutput.trim() !== '[]') {
-            const prs = JSON.parse(prListOutput);
-            if (Array.isArray(prs) && prs.length > 0) {
-              hasExistingPr = true;
-            }
-          }
-        } catch (error) {
-          console.log('Error checking for existing PR:', error.message);
-        }
-      }
+      // Check if current branch has an existing PR (excluding forks)
+      console.log(`[DEBUG] Commit - About to check PR for branch: ${currentBranch}, default: ${defaultBranch}`);
+      const existingPr = await checkExistingPR(currentBranch, defaultBranch, userRepo, req.user.token);
+      console.log(`[DEBUG] Commit - checkExistingPR returned:`, existingPr);
 
       // Allow commits to: tool-created branches OR branches with existing PRs
-      const isPrBranch = (currentBranch && currentBranch !== defaultBranch) &&
-                        (currentBranch.startsWith('clt-ui-') || hasExistingPr);
+      const isPrBranch = isPRBranch(currentBranch, defaultBranch, existingPr);
+      console.log(`[DEBUG] Commit - isPRBranch result: ${isPrBranch} (branch: ${currentBranch}, existingPr: ${existingPr ? 'found' : 'null'})`);
 
       if (!isPrBranch) {
         return res.status(400).json({
@@ -920,9 +807,9 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
             }
           );
         });
-        
+
         const prList = await execPromise(
-          `gh pr list --state open --head ${currentBranch} --json url`
+          `gh pr list --state open --base ${currentBranch} --json url`
         );
         if (prList) {
           const prs = JSON.parse(prList);
