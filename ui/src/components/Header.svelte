@@ -21,13 +21,11 @@
   $: isOnPrBranch = github.prStatus?.isPrBranch || gitStatus.isPrBranch;
   $: existingPr = github.prStatus?.existingPr;
   $: buttonText = isOnPrBranch && existingPr ? 'Commit' : 'Create PR';
-  $: buttonTitle = gitStatus.isLoading 
-    ? 'Checking git status...' 
-    : !hasGitChanges 
-      ? 'No changes to commit' 
-      : isOnPrBranch && existingPr
-        ? `Commit ${gitStatus.modifiedFiles.length} changes to existing PR`
-        : `Create PR with ${gitStatus.modifiedFiles.length} changed files`;
+  $: buttonTitle = !hasGitChanges 
+    ? 'No changes to commit' 
+    : isOnPrBranch && existingPr
+      ? `Commit ${gitStatus.modifiedFiles.length} changes to existing PR`
+      : `Create PR with ${gitStatus.modifiedFiles.length} changed files`;
 
   function updateDockerImage() {
     filesStore.setDockerImage(dockerImage);
@@ -121,13 +119,11 @@
             githubStore.showModal();
           }
         }}
-        disabled={!hasGitChanges || gitStatus.isLoading}
-        class="create-pr-button {!hasGitChanges || gitStatus.isLoading ? 'disabled' : ''} {isOnPrBranch && existingPr ? 'commit-mode' : 'pr-mode'}"
+        disabled={!hasGitChanges}
+        class="create-pr-button {!hasGitChanges ? 'disabled' : ''} {isOnPrBranch && existingPr ? 'commit-mode' : 'pr-mode'}"
         title={buttonTitle}
       >
-        {#if gitStatus.isLoading}
-          <span class="loading-spinner"></span>
-        {/if}
+
         
         {#if isOnPrBranch && existingPr}
           <!-- Commit icon -->
@@ -338,21 +334,7 @@
     background-color: var(--color-bg-info-hover, #0284c7);
   }
 
-  .loading-spinner {
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    border: 2px solid #ccc;
-    border-top: 2px solid #007bff;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-    margin-right: 4px;
-  }
 
-  @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-  }
 
   .change-count {
     font-size: 0.8em;

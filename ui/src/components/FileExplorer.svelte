@@ -471,12 +471,11 @@
     if (hasGitAffectingParams) {
       const canProceed = await checkUnstagedChanges();
       if (!canProceed) {
-        // User cancelled, re-parse params (they should be cleared now)
-        const clearedParams = parseUrlParams();
-        // Set failed tests for highlighting (this is safe to do)
-        if (clearedParams.failedTests) {
-          failedTestPaths = new Set(clearedParams.failedTests);
-        }
+        // User cancelled, clear URL parameters and stop processing
+        const url = new URL(window.location.href);
+        url.searchParams.delete('branch');
+        url.searchParams.delete('file');
+        window.history.replaceState({}, '', url.toString());
         
         // Continue with normal initialization but skip git operations
         await filesStore.refreshFileTree();
@@ -497,6 +496,16 @@
         return () => {
           clearInterval(fileTreePollingInterval);
         };
+      } else {
+        // User confirmed, clean up URL parameters immediately
+        const url = new URL(window.location.href);
+        if (urlParams.branch) {
+          url.searchParams.delete('branch');
+        }
+        if (urlParams.filePath) {
+          url.searchParams.delete('file');
+        }
+        window.history.replaceState({}, '', url.toString());
       }
     }
     
@@ -514,6 +523,9 @@
     if (urlParams.branch && urlParams.branch !== $branchStore.currentBranch) {
       try {
         await branchStore.checkoutAndPull(urlParams.branch);
+        
+
+        
       } catch (error) {
         console.error('Failed to switch branch:', error);
         alert(`Failed to switch to branch "${urlParams.branch}": ${error.message}`);
