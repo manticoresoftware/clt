@@ -15,8 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -e
-
+# ! We are
 source "$PROJECT_DIR/lib/rec.sh"
 source "$PROJECT_DIR/lib/argument.sh"
 
@@ -57,8 +56,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 record "$docker_image" "$record_file"
+record_exit_code=$?
 
-# Check if we have refine
-if [ $refine -eq 1 ]; then
+# Only proceed to refine if record was successful
+if [ $record_exit_code -eq 0 ] && [ $refine -eq 1 ]; then
   refine "$docker_image" "$record_file"
+  refine_exit_code=$?
+  exit $refine_exit_code
+else
+  exit $record_exit_code
 fi

@@ -61,6 +61,18 @@ echo $?
 
 The exit code will be 0 if the test passed (outputs match) or 1 if there are differences.
 
+## Web-based UI
+
+CLT includes a web-based user interface for editing and running tests. The UI provides an intuitive interface for managing test files, with real-time pattern matching and diff comparison. To learn more about the UI, its features, and how to set it up, see the [UI documentation](ui/README.md).
+
+Key UI features include:
+- File tree explorer for navigating test files
+- Real-time comparison with pattern matching
+- Docker image configuration for test validation
+- GitHub authentication for access control
+
+We utilize bash to initiate an interactive environment when you record a test. It's important to note that we reset the environment to ensure maximum compatibility with various operating systems. As of now, there is no option to pass environment variables from outside into the test environment.
+
 ### Refining Tests
 
 After recording, you can refine your test to handle dynamic outputs:
@@ -213,7 +225,7 @@ CLT's behavior can be customized through several environment variables:
 | `CLT_PROMPTS` | Array of additional prompts to detect (e.g., `CLT_PROMPTS=("mysql> ")`) | `("clt> ")` |
 | `CLT_NO_COLOR` | Disable colored output | Not set |
 | `DEFAULT_DELAY` | Default delay in ms between each command in the test | `5` |
-| `RUN_ARGS` | Additional arguments to pass to `docker run` | Not set |
+| `CLT_RUN_ARGS` | Additional arguments to pass to `docker run` | Not set |
 
 ## GitHub Actions Integration
 
