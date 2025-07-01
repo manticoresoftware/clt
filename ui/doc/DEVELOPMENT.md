@@ -146,6 +146,12 @@ npm run preview # Preview build
 - Verify file paths are within test directory
 - Ensure proper authentication for git operations
 
+### Git Default Branch Issues
+- **Fixed in helpers.js**: Robust multi-method default branch detection
+- Uses progressive fallback: `remote show origin` → `ls-remote` → `origin/HEAD` → branch detection
+- All git operations use `baseDir: userRepo` for correct working directory
+- Cached per repository to avoid repeated git calls
+
 ## Performance Notes
 
 - **Batch edits**: Use `batch_edit` for multiple file changes
