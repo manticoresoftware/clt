@@ -144,6 +144,11 @@ function createGitStatusStore() {
           error: null
         }));
         
+        // Force update github store to sync PR status immediately
+        if (typeof window !== 'undefined' && window.githubStore) {
+          window.githubStore.updatePrStatus({ isPrBranch, currentBranch });
+        }
+        
       } catch (error) {
         console.error('Error fetching git status:', error);
         update(state => ({

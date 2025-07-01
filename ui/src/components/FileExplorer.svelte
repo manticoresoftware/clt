@@ -728,6 +728,12 @@
     if (urlParams.branch && urlParams.branch !== $branchStore.currentBranch) {
       try {
         await branchStore.checkoutAndPull(urlParams.branch);
+        
+        // Clear the branch parameter from URL after successful switch
+        const url = new URL(window.location.href);
+        url.searchParams.delete('branch');
+        window.history.replaceState({}, '', url.toString());
+        
       } catch (error) {
         console.error('Failed to switch branch:', error);
         alert(`Failed to switch to branch "${urlParams.branch}": ${error.message}`);

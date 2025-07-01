@@ -42,8 +42,10 @@
   onMount(() => {
     fetchAuthState();
     
-    // Initialize git status polling
-    gitStatusStore.startPolling(10000); // Poll every 10 seconds
+  // Initialize git status polling with immediate fetch
+  gitStatusStore.fetchGitStatus().then(() => {
+    gitStatusStore.startPolling(10000); // Poll every 10 seconds after initial fetch
+  });
     
     return () => {
       gitStatusStore.stopPolling();
@@ -288,7 +290,7 @@
     font-size: 0.875rem;
     font-weight: 500;
     margin-right: var(--spacing-md);
-    transition: background-color 0.2s ease;
+    transition: none;
   }
 
   .create-pr-button:hover:not(.disabled) {

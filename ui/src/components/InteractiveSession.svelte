@@ -282,6 +282,7 @@
   }
 
   // Create new session
+  // Create new session with timestamp-based name
   function createNewSession() {
     // Clear current state
     logs = [];
@@ -291,18 +292,20 @@
     sessionId = null;
     currentCost = null;
 
-    // Set new session name (sanitized)
-    const rawName = newSessionName.trim();
-    currentSessionName = rawName ? sanitizeSessionName(rawName) : '';
-
-    // Close dialog
-    showNewSessionModal = false;
-    newSessionName = '';
+    // Generate timestamp-based session name
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    currentSessionName = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
 
     // Clear input to start fresh
     input = '';
 
-    console.log(`Created new session: ${currentSessionName || 'unnamed'}`);
+    console.log(`Created new session: ${currentSessionName}`);
   }
 
   export function closeSession() {
@@ -490,7 +493,13 @@
     try {
       const date = new Date(isoString);
       if (isNaN(date.getTime())) return 'N/A';
-      return date.toLocaleString();
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      const seconds = String(date.getSeconds()).padStart(2, '0');
+      return `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
     } catch {
       return 'N/A';
     }
@@ -518,6 +527,32 @@
     }
   }
 
+
+  // Track user interaction state for scroll behavior
+  let userIsScrolling = false;
+  let scrollTimeout: number;
+  let lastScrollTop = 0;
+
+  function handleScroll() {
+    if (!logsContainer) return;
+    
+    const currentScrollTop = logsContainer.scrollTop;
+    const scrollHeight = logsContainer.scrollHeight;
+    const clientHeight = logsContainer.clientHeight;
+    
+    // Check if user scrolled manually (not at bottom)
+    const isAtBottom = Math.abs(scrollHeight - clientHeight - currentScrollTop) < 5;
+    
+    if (!isAtBottom && Math.abs(currentScrollTop - lastScrollTop) > 0) {
+      userIsScrolling = true;
+      clearTimeout(scrollTimeout);
+      scrollTimeout = setTimeout(() => {
+        userIsScrolling = false;
+      }, 1000); // Reset after 1 second of no scrolling
+    }
+    
+    lastScrollTop = currentScrollTop;
+  }
   // Auto-scroll to bottom function
   function scrollToBottom() {
     if (logsContainer) {
@@ -525,9 +560,9 @@
     }
   }
 
-  // Auto-scroll when logs update
+  // Auto-scroll when logs update (only if user is not manually scrolling)
   afterUpdate(() => {
-    if (isOpen && (logs.length > 0 || lastRunOutput)) {
+    if (isOpen && (logs.length > 0 || lastRunOutput) && !userIsScrolling) {
       scrollToBottom();
     }
   });
@@ -556,7 +591,7 @@
           {/if}
         </div>
         <div class="header-right">
-          <button class="new-session-btn" on:click={() => showNewSessionModal = true}>
+          <button class="new-session-btn" on:click={createNewSession}>
             📄 New Session
           </button>
           {#if persistentLoggingAvailable}
@@ -686,7 +721,7 @@
             <h3>Live Output</h3>
           </div>
 
-          <div class="logs-container" bind:this={logsContainer}>
+          <div class="logs-container" bind:this={logsContainer} on:scroll={handleScroll}>
             {#if isRunning && logs.length > 0}
               {#each logs as log}
                 <div class="log-line">{log}</div>
@@ -719,7 +754,7 @@
             <div class="input-actions">
               {#if isRunning}
                 <button class="cancel-button" on:click={cancelCommand}>
-                  Cancel
+                  Stop
                 </button>
               {:else}
                 <button
@@ -740,30 +775,6 @@
 {/if}
 
 <!-- New Session Dialog -->
-{#if showNewSessionModal}
-<div class="modal-overlay" on:click={() => showNewSessionModal = false} role="button" tabindex="0">
-  <div class="modal-content small" on:click|stopPropagation role="dialog">
-    <div class="modal-header">
-      <h3>Create New Session</h3>
-      <button class="close-button" on:click={() => showNewSessionModal = false}>×</button>
-    </div>
-    <div class="modal-body">
-      <label for="session-name">Session Name (optional):</label>
-      <input
-        id="session-name"
-        bind:value={newSessionName}
-        placeholder="Enter session name..."
-        on:keypress={(e) => e.key === 'Enter' && createNewSession()}
-        autofocus
-      />
-    </div>
-    <div class="modal-footer">
-      <button class="primary-btn" on:click={createNewSession}>Create Session</button>
-      <button class="secondary-btn" on:click={() => showNewSessionModal = false}>Stop</button>
-    </div>
-  </div>
-</div>
-{/if}
 
 <style>
   .modal-overlay {
