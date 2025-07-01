@@ -89,6 +89,7 @@ function createGitStatusStore() {
         let modifiedDirs: string[] = [];
         let currentBranch = 'main';
         let isPrBranch = false;
+        let existingPr = null;
         
         // Handle different response formats
         if (data.success !== undefined) {
@@ -98,6 +99,7 @@ function createGitStatusStore() {
           modifiedDirs = data.modifiedDirs || [];
           currentBranch = data.currentBranch || 'main';
           isPrBranch = data.isPrBranch || false;
+          existingPr = data.existingPr || null; // Extract existingPr data
         } else if (data.files) {
           // Format from /api/git-status endpoint that returns { hasUnstagedChanges, files: { modified, not_added, ... } }
           hasChanges = data.hasUnstagedChanges || !data.isClean;
@@ -145,9 +147,15 @@ function createGitStatusStore() {
         }));
         
         // Force update github store to sync PR status immediately
-        if (typeof window !== 'undefined' && window.githubStore) {
-          window.githubStore.updatePrStatus({ isPrBranch, currentBranch });
-        }
+        import('./githubStore.ts').then(({ githubStore }) => {
+          githubStore.updatePrStatus({ 
+            isPrBranch, 
+            currentBranch,
+            existingPr, // Include existingPr data
+            hasChanges,
+            timestamp: Date.now()
+          });
+        }).catch(console.error);
         
       } catch (error) {
         console.error('Error fetching git status:', error);
