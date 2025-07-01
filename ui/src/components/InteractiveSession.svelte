@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, afterUpdate } from 'svelte';
   import { API_URL } from '../config.js';
+  import { authStore } from '../stores/authStore';
 
   let isOpen = false;
   let input = '';
@@ -61,7 +62,7 @@
 
     return name.trim()
       .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, '') // Remove special characters except spaces and hyphens
+      .replace(/[^a-z0-9\s-_]/g, '') // Remove special characters except spaces, hyphens, and underscores
       .replace(/\s+/g, '-')         // Replace spaces with hyphens
       .replace(/-+/g, '-')          // Replace multiple hyphens with single hyphen
       .replace(/^-|-$/g, '');       // Remove leading/trailing hyphens
@@ -282,7 +283,7 @@
   }
 
   // Create new session
-  // Create new session with timestamp-based name
+  // Create new session with username and timestamp-based name
   function createNewSession() {
     // Clear current state
     logs = [];
@@ -292,7 +293,7 @@
     sessionId = null;
     currentCost = null;
 
-    // Generate timestamp-based session name
+    // Generate username-timestamp-based session name
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -300,7 +301,11 @@
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const seconds = String(now.getSeconds()).padStart(2, '0');
-    currentSessionName = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
+    const timestamp = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
+
+    // Get username from auth store
+    const username = $authStore.user?.username || $authStore.user?.displayName || 'user';
+    currentSessionName = `${username}-${timestamp}`;
 
     // Clear input to start fresh
     input = '';
@@ -316,6 +321,21 @@
 
   async function startCommand() {
     if (!input.trim() || isRunning) return;
+
+    // Auto-generate session name if not set
+    if (!currentSessionName) {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+      const timestamp = `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
+      
+      const username = $authStore.user?.username || $authStore.user?.displayName || 'user';
+      currentSessionName = `${username}-${timestamp}`;
+    }
 
     isRunning = true;
     logs = [];
@@ -535,14 +555,14 @@
 
   function handleScroll() {
     if (!logsContainer) return;
-    
+
     const currentScrollTop = logsContainer.scrollTop;
     const scrollHeight = logsContainer.scrollHeight;
     const clientHeight = logsContainer.clientHeight;
-    
+
     // Check if user scrolled manually (not at bottom)
     const isAtBottom = Math.abs(scrollHeight - clientHeight - currentScrollTop) < 5;
-    
+
     if (!isAtBottom && Math.abs(currentScrollTop - lastScrollTop) > 0) {
       userIsScrolling = true;
       clearTimeout(scrollTimeout);
@@ -550,7 +570,7 @@
         userIsScrolling = false;
       }, 1000); // Reset after 1 second of no scrolling
     }
-    
+
     lastScrollTop = currentScrollTop;
   }
   // Auto-scroll to bottom function

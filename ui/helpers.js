@@ -45,7 +45,7 @@ export async function getDefaultBranch(git, repoPath) {
   // Cache the result
   defaultBranchCache.set(repoPath, defaultBranch);
   console.log(`Default branch cached for ${repoPath}: ${defaultBranch}`);
-  
+
   return defaultBranch;
 }
 
@@ -142,7 +142,7 @@ export function sanitizeSessionName(name) {
 
   return name.trim()
     .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '') // Remove special characters except spaces and hyphens
+    .replace(/[^a-z0-9\s-_]/g, '') // Remove special characters except spaces, hyphens, and underscores
     .replace(/\s+/g, '-')         // Replace spaces with hyphens
     .replace(/-+/g, '-')          // Replace multiple hyphens with single hyphen
     .replace(/^-|-$/g, '');       // Remove leading/trailing hyphens

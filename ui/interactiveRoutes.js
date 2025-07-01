@@ -24,16 +24,18 @@ export function setupInteractiveRoutes(app, isAuthenticated, dependencies) {
     try {
       const { input, sessionName } = req.body;
 
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({ error: 'Authentication required' });
+      }
+      const username = req.user.username;
+
       if (!input || !input.trim()) {
         return res.status(400).json({ error: 'Input is required' });
       }
 
-      // Check if user is authenticated
-      if (!req.user || !req.user.username) {
-        return res.status(401).json({ error: 'Authentication required' });
-      }
-
-      const username = req.user.username;
+			if (!sessionName) {
+				return res.status(400).json({ error: 'Session name is required' });
+			}
 
       // Check if user already has a running session
       if (global.interactiveSessions[username] && global.interactiveSessions[username].running) {
@@ -42,7 +44,7 @@ export function setupInteractiveRoutes(app, isAuthenticated, dependencies) {
 
       // Check if continuing an existing session or creating a new one
       let sessionId;
-      let sanitizedSessionName = sessionName ? sanitizeSessionName(sessionName) : '';
+      let sanitizedSessionName = sanitizeSessionName(sessionName);
       let isSessionContinuation = false;
 
       // If sessionName is provided, check if we're continuing an existing session
@@ -93,10 +95,7 @@ export function setupInteractiveRoutes(app, isAuthenticated, dependencies) {
 
       // Generate new session ID if not continuing existing session
       if (!sessionId) {
-        sessionId = sanitizedSessionName
-          ? `${username}-${sanitizedSessionName}-${Date.now()}`
-          : `${username}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        console.log(`Generated new session ID: ${sessionId}`);
+        sessionId = sanitizedSessionName || `${username}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       }
 
       // Get the interactive command from environment
@@ -183,7 +182,7 @@ ${input}
         env: {
           ...process.env,
           WORKDIR_PATH: userRepoPath,
-          SESSION_NAME: sanitizedSessionName || sessionId
+          SESSION_NAME: sanitizedSessionName
         }
       });
 

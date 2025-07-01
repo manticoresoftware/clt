@@ -14,7 +14,7 @@
   // Subscribe to git status and GitHub store for smart button logic
   $: gitStatus = $gitStatusStore;
   $: github = $githubStore;
-  $: hasGitChanges = gitStatus.hasChanges && !gitStatus.isLoading;
+  $: hasGitChanges = gitStatus.hasChanges;
   $: gitStatusError = gitStatus.error;
   
   // Smart button logic based on PR status
@@ -148,7 +148,7 @@
       </button>
       
       <!-- Show existing PR link if available -->
-      {#if existingPr && !gitStatus.isLoading}
+      {#if existingPr}
         <a 
           href={existingPr.url} 
           target="_blank" 
