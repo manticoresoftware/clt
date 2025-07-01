@@ -48,13 +48,10 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         const defaultBranch = await getDefaultBranch(git, userRepo);
 
         // Check for existing PR on this branch (excluding forks)
-        console.log(`[DEBUG] About to check PR for branch: ${currentBranch}, default: ${defaultBranch}`);
         const existingPr = await checkExistingPR(currentBranch, defaultBranch, userRepo, req.user.token);
-        console.log(`[DEBUG] checkExistingPR returned:`, existingPr);
 
         // Determine if this is a PR branch: tool-created OR has existing PR
         const isPrBranch = isPRBranch(currentBranch, defaultBranch, existingPr);
-        console.log(`[DEBUG] isPRBranch result: ${isPrBranch} (branch: ${currentBranch}, default: ${defaultBranch}, existingPr: ${existingPr ? 'found' : 'null'})`);
 
         // Get status information
         const status = await git.status();
@@ -111,6 +108,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
           success: true,
           currentBranch,
           isPrBranch,
+          existingPr, // Add the existing PR data to the response
           hasChanges,
           modifiedFiles,
           modifiedDirs: Array.from(modifiedDirs),
@@ -716,13 +714,10 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       let recentCommits = [];
 
       // Check for existing PR for current branch (excluding forks)
-      console.log(`[DEBUG] PR Status - About to check PR for branch: ${currentBranch}, default: ${defaultBranch}`);
       const existingPr = await checkExistingPR(currentBranch, defaultBranch, userRepo, req.user.token);
-      console.log(`[DEBUG] PR Status - checkExistingPR returned:`, existingPr);
 
       // Determine if this is a PR branch: tool-created OR has existing PR
       const isPrBranch = isPRBranch(currentBranch, defaultBranch, existingPr);
-      console.log(`[DEBUG] PR Status - isPRBranch result: ${isPrBranch} (branch: ${currentBranch}, existingPr: ${existingPr ? 'found' : 'null'})`);
 
       // Get recent commits for current branch (last 5)
       try {
@@ -771,13 +766,10 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       const defaultBranch = await getDefaultBranch(git, userRepo);
 
       // Check if current branch has an existing PR (excluding forks)
-      console.log(`[DEBUG] Commit - About to check PR for branch: ${currentBranch}, default: ${defaultBranch}`);
       const existingPr = await checkExistingPR(currentBranch, defaultBranch, userRepo, req.user.token);
-      console.log(`[DEBUG] Commit - checkExistingPR returned:`, existingPr);
 
       // Allow commits to: tool-created branches OR branches with existing PRs
       const isPrBranch = isPRBranch(currentBranch, defaultBranch, existingPr);
-      console.log(`[DEBUG] Commit - isPRBranch result: ${isPrBranch} (branch: ${currentBranch}, existingPr: ${existingPr ? 'found' : 'null'})`);
 
       if (!isPrBranch) {
         return res.status(400).json({
