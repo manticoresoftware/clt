@@ -56,11 +56,27 @@
     actualEditorView = actualCodeMirror.getEditorView();
   }
 
-  // Update contenteditable content only when value changes externally (not during user editing or focus)
+  // Reset editing flags when command changes (fixes Expected Output rendering after discard changes)
+  $: if (command) {
+    isUserEditing = false;
+    isFocused = false;
+    lastExternalValue = ''; // Force reset to ensure reactive statement triggers
+  }
+
+  // Clean reactive statement for content updates
   $: if (expectedOutputEl && command.expectedOutput !== lastExternalValue && !isUserEditing && !isFocused) {
     expectedOutputEl.textContent = command.expectedOutput || '';
     lastExternalValue = command.expectedOutput || '';
   }
+
+  // Handle DOM initialization and ensure content is set when element becomes available
+  onMount(() => {
+    // Force initial content update when DOM is ready
+    if (expectedOutputEl && command.expectedOutput) {
+      expectedOutputEl.textContent = command.expectedOutput || '';
+      lastExternalValue = command.expectedOutput || '';
+    }
+  });
 
   // Wrapper function for scroll sync
   function syncScroll(fromExpected: boolean) {
