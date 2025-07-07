@@ -27,6 +27,7 @@ dotenv.config();
 // Import auth modules AFTER environment variables are loaded
 import { setupPassport, isAuthenticated, addAuthRoutes } from './auth.js';
 import { getAuthConfig } from './config/auth.js';
+import tokenManager from './tokenManager.js';
 
 const app = express();
 const PORT = process.env.BACKEND_PORT || process.env.PORT || 3000;

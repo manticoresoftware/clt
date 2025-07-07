@@ -35,6 +35,16 @@ export function setupPassport() {
       console.log('GitHub OAuth callback executed');
       console.log('Profile:', profile.username);
       console.log('Allowed users:', authConfig.allowedUsers);
+      console.log('Has refresh token:', !!refreshToken);
+      console.log('Access token received:', !!accessToken);
+      
+      // Log token expiration info (GitHub tokens typically don't expire but log anyway)
+      if (accessToken) {
+        console.log(`[AUTH] Token received for user ${profile.username} at ${new Date().toISOString()}`);
+        console.log(`[AUTH] Token length: ${accessToken.length} characters`);
+        // GitHub personal access tokens don't have expiration in OAuth response
+        // but we log when we received it for tracking purposes
+      }
 
       // Check if the user is in the allowed list
       const username = profile.username;
@@ -42,6 +52,10 @@ export function setupPassport() {
         authConfig.allowedUsers.length === 0 ||
         authConfig.allowedUsers.includes(username)
       ) {
+        // Store tokens in global storage (simple approach)
+        if (!global.userTokens) global.userTokens = {};
+        global.userTokens[username] = accessToken;
+
         // Store just the necessary user info
         const user = {
           id: profile.id,
@@ -156,6 +170,13 @@ export function addAuthRoutes(app) {
   app.get('/logout', (req, res, next) => {
     // Get the frontend URL for redirect
     const frontendUrl = process.env.FRONTEND_URL || `http://${process.env.HOST || 'localhost'}:${process.env.FRONTEND_PORT || 5173}`;
+
+    // Remove tokens from global storage
+    if (req.user && req.user.username) {
+      if (global.userTokens && global.userTokens[req.user.username]) {
+        delete global.userTokens[req.user.username];
+      }
+    }
 
     // Destroy the session completely
     req.session.destroy((err) => {

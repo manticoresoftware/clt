@@ -347,18 +347,24 @@ export function extractDuration(content) {
 
 // Make sure that we use the origin with the user's authentication token when connecting online
 export async function ensureGitRemoteWithToken(gitInstance, token, REPO_URL) {
-  if (!token) return;
+  if (!token) {
+    console.warn('No token provided for git remote configuration');
+    return;
+  }
 
   try {
     // Use the REPO_URL variable directly for consistent base URL
     const tokenUrl = REPO_URL.replace('https://', `https://x-access-token:${token}@`);
 
     // Remove existing origin and add new one with token
-    await gitInstance.removeRemote('origin');
+    await gitInstance.removeRemote('origin').catch(() => {
+      // Ignore error if remote doesn't exist
+    });
     await gitInstance.addRemote('origin', tokenUrl);
     console.log('Git remote configured with authentication token');
   } catch (error) {
     console.warn('Error configuring git remote with token:', error.message);
+    throw new Error(`Failed to configure git authentication: ${error.message}`);
   }
 }
 
