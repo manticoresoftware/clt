@@ -514,47 +514,84 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       });
 
 
-      const { spawn } = await import('child_process');
+/**
+ * Helper to execute GitHub CLI commands with token validation and retry
+ */
+async function executeGitHubCommand(args, userRepo, username, retryCount = 0) {
+  const MAX_RETRIES = 1;
+  
+  try {
+    // Get valid token
+    const validToken = await tokenManager.getValidToken(username);
+    if (!validToken) {
+      throw new Error('No valid GitHub token available');
+    }
 
-      // Helper to run gh commands safely with spawn (no shell injection)
-      const execGhCommand = (args) => new Promise((resolve, reject) => {
-        console.log('Running gh command with args:', args);
-        const gh = spawn('gh', args, {
-          cwd: userRepo,
-          env: { ...process.env, GH_TOKEN: req.user.token },
-          stdio: ['pipe', 'pipe', 'pipe']
-        });
-
-        let stdout = '';
-        let stderr = '';
-
-        gh.stdout.on('data', (data) => {
-          stdout += data.toString();
-        });
-
-        gh.stderr.on('data', (data) => {
-          stderr += data.toString();
-        });
-
-        gh.on('close', (code) => {
-          if (code === 0) {
-            resolve(stdout.trim());
-          } else {
-            console.error(`gh command failed with code ${code}: ${stderr}`);
-            reject(new Error(stderr || `gh command failed with code ${code}`));
-          }
-        });
-
-        gh.on('error', (error) => {
-          console.error('gh command error:', error);
-          reject(error);
-        });
+    const { spawn } = await import('child_process');
+    
+    return new Promise((resolve, reject) => {
+      console.log(`[GitHubCommand] Running gh command with args:`, args);
+      const gh = spawn('gh', args, {
+        cwd: userRepo,
+        env: { ...process.env, GH_TOKEN: validToken },
+        stdio: ['pipe', 'pipe', 'pipe']
       });
+
+      let stdout = '';
+      let stderr = '';
+
+      gh.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      gh.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      gh.on('close', async (code) => {
+        if (code === 0) {
+          resolve(stdout.trim());
+        } else {
+          console.error(`[GitHubCommand] Command failed with code ${code}: ${stderr}`);
+          
+          // Check if it's an authentication error
+          if ((code === 1 || code === 4) && stderr.includes('authentication') && retryCount < MAX_RETRIES) {
+            console.log(`[GitHubCommand] Authentication error, invalidating token and retrying...`);
+            
+            // Remove invalid token
+            tokenManager.removeTokens(username);
+            
+            // Retry once
+            try {
+              const result = await executeGitHubCommand(args, userRepo, username, retryCount + 1);
+              resolve(result);
+            } catch (retryError) {
+              reject(new Error(`GitHub command failed after retry: ${retryError.message}`));
+            }
+          } else {
+            reject(new Error(stderr || `GitHub command failed with code ${code}`));
+          }
+        }
+      });
+
+      gh.on('error', (error) => {
+        console.error('[GitHubCommand] Command error:', error);
+        reject(error);
+      });
+    });
+  } catch (error) {
+    if (retryCount < MAX_RETRIES && error.message.includes('token')) {
+      console.log(`[GitHubCommand] Token error, retrying...`);
+      return executeGitHubCommand(args, userRepo, username, retryCount + 1);
+    }
+    throw error;
+  }
+}
 
       if (branchExists) {
         // check if there's an OPEN PR for that head using safe spawn
         const prArgs = ['pr', 'list', '--state', 'open', '--head', branchName, '--json', 'url'];
-        const prList = await execGhCommand(prArgs).catch(() => '');
+        const prList = await executeGitHubCommand(prArgs, userRepo, username).catch(() => '');
 
         if (prList && prList.trim() && prList.trim() !== '[]') {
           // PROPERLY check if we have actual PRs
@@ -665,7 +702,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       }
 
       console.log('Creating PR with args:', prArgs);
-      const prOutput = await execGhCommand(prArgs).catch(e => { throw e });
+      const prOutput = await executeGitHubCommand(prArgs, userRepo, username);
       console.log('PR creation output:', prOutput);
 
       const prUrlMatch = prOutput.match(/https:\/\/github\.com\/[^\s]+/);
