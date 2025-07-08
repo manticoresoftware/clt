@@ -24,6 +24,18 @@
   let commands: any[] = [];
   let autoSaveEnabled = true;
 
+  // Reactive statement to check if current file is running
+  $: isCurrentFileRunning = $filesStore.currentFile ? $filesStore.runningTests.has($filesStore.currentFile.path) : false;
+
+  // Debug reactive statement
+  $: {
+    console.log('🔍 Reactive check:', {
+      currentFile: $filesStore.currentFile?.path,
+      runningTests: Array.from($filesStore.runningTests.keys()),
+      isRunning: isCurrentFileRunning
+    });
+  }
+
   // Get WASM state from the reactive stores
   $: wasmLoaded = $wasmLoadedStore;
   $: patternMatcher = $patternMatcherStore;
@@ -444,7 +456,15 @@
       filesStore.saveAndRun();
     } else {
       // If everything is already saved, just run
-      filesStore.runTest();
+      filesStore.runCurrentTest();
+    }
+  }
+
+  function stopTest() {
+    try {
+      filesStore.stopCurrentTest();
+    } catch (error) {
+      console.error('Error stopping test:', error);
     }
   }
 
@@ -558,6 +578,23 @@
           <span class="file-status-badge {$filesStore.currentFile.status}-status">
             {@html getStatusIcon($filesStore.currentFile.status)}
             <span>{$filesStore.currentFile.status.charAt(0).toUpperCase() + $filesStore.currentFile.status.slice(1)}</span>
+            {#if isCurrentFileRunning}
+              <svg class="status-spinner" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="31.416" stroke-dashoffset="31.416">
+                  <animate attributeName="stroke-dasharray" dur="2s" values="0 31.416;15.708 15.708;0 31.416" repeatCount="indefinite"/>
+                  <animate attributeName="stroke-dashoffset" dur="2s" values="0;-15.708;-31.416" repeatCount="indefinite"/>
+                </circle>
+              </svg>
+            {/if}
+          </span>
+        {/if}
+        {#if isCurrentFileRunning}
+          <span class="running-status">
+            <svg class="spinner" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <circle class="spinner-track" cx="12" cy="12" r="10" />
+              <circle class="spinner-circle" cx="12" cy="12" r="10" />
+            </svg>
+            <span>Running...</span>
           </span>
         {/if}
         {#if $filesStore.currentFile.dirty}
@@ -576,7 +613,7 @@
     </div>
 
     <div class="header-actions">
-      {#if $filesStore.running}
+      {#if filesStore.isCurrentFileRunning()}
         <span class="running-indicator">
           <svg class="spinner" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <circle class="spinner-track" cx="12" cy="12" r="10" />
@@ -622,13 +659,23 @@
             Discard changes
           </button>
         {/if}
-        <button
-          class="run-button"
-          on:click={runTest}
-          disabled={!$filesStore.currentFile || $filesStore.running}
-        >
-          Run Test
-        </button>
+        {#if isCurrentFileRunning}
+          <button
+            class="stop-button"
+            on:click={stopTest}
+            disabled={!$filesStore.currentFile}
+          >
+            Stop Test
+          </button>
+        {:else}
+          <button
+            class="run-button"
+            on:click={runTest}
+            disabled={!$filesStore.currentFile}
+          >
+            Run Test
+          </button>
+        {/if}
       </div>
     </div>
   </div>
@@ -812,6 +859,28 @@
     background-color: var(--color-bg-accent-hover);
   }
 
+  .stop-button {
+    padding: 6px 12px;
+    background-color: #dc3545;
+    color: white;
+    border: 1px solid #dc3545;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+  }
+
+  .stop-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .stop-button:not(:disabled):hover {
+    background-color: #c82333;
+    border-color: #bd2130;
+  }
+
   .auto-save-toggle {
     display: flex;
     align-items: center;
@@ -878,19 +947,39 @@
     stroke-dashoffset: 20;
   }
 
-  @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+  .status-spinner {
+    width: 12px;
+    height: 12px;
+    margin-left: 6px;
+    opacity: 0.8;
   }
 
-  .command-status {
+  .status-spinner circle {
+    stroke: currentColor;
+  }
+
+  /* Simple running indicator */
+  .running-indicator {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-    border-radius: 9999px;
-    font-size: 12px;
-    margin-left: 8px;
+    gap: 8px;
+    color: var(--color-bg-accent);
+    font-weight: 500;
+  }
+
+  .running-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-bg-accent);
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .spinner {
+    width: 16px;
+    height: 16px;
+    animation: spin 1.5s linear infinite;
   }
 
   /* Status-specific styles */

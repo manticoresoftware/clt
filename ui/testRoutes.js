@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs/promises';
+import { spawn } from 'child_process';
 import {
   parseRecFileFromMapWasm,
   validateTestFromMapWasm
@@ -12,6 +13,77 @@ import {
 } from './routes.js';
 import { processTestResults } from './testProcessor.js';
 
+// Process tracking for concurrent test execution
+const runningTests = new Map(); // jobId -> { process, userPath, startTime, filePath, dockerImage, username, absolutePath, testDir }
+const userConcurrency = new Map(); // username -> count
+
+// Helper to generate unique job ID
+function generateJobId() {
+  return `test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+// Helper to get username from request
+function getUsername(req, getAuthConfig) {
+  const authConfig = getAuthConfig();
+  if (authConfig.skipAuth) {
+    return 'dev-mode';
+  }
+  return req.user?.username || 'anonymous';
+}
+
+// Helper to check user concurrency limits
+function canStartTest(username) {
+  const maxConcurrency = parseInt(process.env.RUN_TEST_CONCURRENCY_PER_USER) || 3;
+  const currentCount = userConcurrency.get(username) || 0;
+  return currentCount < maxConcurrency;
+}
+
+// Helper to increment user concurrency
+function incrementUserConcurrency(username) {
+  const currentCount = userConcurrency.get(username) || 0;
+  userConcurrency.set(username, currentCount + 1);
+}
+
+// Helper to decrement user concurrency
+function decrementUserConcurrency(username) {
+  const currentCount = userConcurrency.get(username) || 0;
+  if (currentCount > 0) {
+    userConcurrency.set(username, currentCount - 1);
+  }
+}
+
+// Helper to clean up finished job
+function cleanupJob(jobId, username) {
+  runningTests.delete(jobId);
+  decrementUserConcurrency(username);
+}
+
+// Helper to stop a running test
+function stopRunningTest(jobId) {
+  const testInfo = runningTests.get(jobId);
+  if (!testInfo) return false;
+
+  try {
+    if (testInfo.process && !testInfo.process.killed) {
+      testInfo.process.kill('SIGTERM');
+      // Force kill after 5 seconds if still running
+      setTimeout(() => {
+        if (testInfo.process && !testInfo.process.killed) {
+          testInfo.process.kill('SIGKILL');
+        }
+      }, 5000);
+    }
+    testInfo.finished = true;
+    testInfo.stopped = true;
+    testInfo.exitCode = -1;
+    testInfo.error = 'Test stopped by user';
+    return true;
+  } catch (error) {
+    console.error('Error stopping test:', error);
+    return false;
+  }
+}
+
 // Setup Test routes
 export function setupTestRoutes(app, isAuthenticated, dependencies) {
   const {
@@ -20,6 +92,439 @@ export function setupTestRoutes(app, isAuthenticated, dependencies) {
     __dirname,
     getAuthConfig
   } = dependencies;
+
+  // API endpoint to start a test (non-blocking)
+  app.post('/api/start-test', isAuthenticated, async (req, res) => {
+    try {
+      const { filePath, dockerImage } = req.body;
+
+      if (!filePath) {
+        return res.status(400).json({ error: 'File path is required' });
+      }
+
+      const username = getUsername(req, getAuthConfig);
+
+      // Check concurrency limits
+      if (!canStartTest(username)) {
+        const maxConcurrency = parseInt(process.env.RUN_TEST_CONCURRENCY_PER_USER) || 3;
+        return res.status(429).json({
+          error: `Maximum concurrent tests reached (${maxConcurrency} per user)`
+        });
+      }
+
+      // Use the user's test directory as the base
+      const testDir = getUserTestPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const absolutePath = path.join(testDir, filePath);
+
+      // Basic security check to ensure the path is within the test directory
+      if (!absolutePath.startsWith(testDir)) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      // Clean up old .rep file before starting test to prevent old results
+      const repFilePath = absolutePath.replace(/\.rec$/, '.rep');
+      try {
+        await fs.unlink(repFilePath);
+        console.log(`🗑️ Cleaned up old rep file: ${repFilePath}`);
+      } catch (error) {
+        // File doesn't exist, which is fine
+        console.log(`📝 No existing rep file to clean: ${repFilePath}`);
+      }
+
+      // Execute the clt test command to run the test (from the user's project directory)
+      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const relativeFilePath = path.relative(userRepoPath, absolutePath);
+
+			// Use EXACT same command format as original working implementation
+			const testCommand = `clt test -d -t ${relativeFilePath} ${dockerImage ? dockerImage : ''}`;
+			console.log(`Starting test command: ${testCommand} in dir: ${userRepoPath}`);
+
+			// Generate unique job ID
+			const jobId = generateJobId();
+
+			// Prepare spawn options - EXACT same as original working exec options
+			const spawnOptions = {
+				cwd: userRepoPath,
+				env: {
+					...process.env,
+					CLT_NO_COLOR: '1',
+					CLT_RUN_ARGS: process.env.CLT_RUN_ARGS || '',
+				}
+			};
+
+			// Start the process directly without using sh -c
+			const childProcess = spawn(testCommand, [], {
+				...spawnOptions,
+				shell: true
+			});
+
+      // Set up timeout if configured
+      let timeoutId = null;
+      const timeoutMs = parseInt(process.env.RUN_TEST_TIMEOUT) || 0;
+      if (timeoutMs > 0) {
+        timeoutId = setTimeout(() => {
+          console.log(`Test ${jobId} timed out after ${timeoutMs}ms, killing process`);
+          childProcess.kill('SIGTERM');
+          // Give it 5 seconds to terminate gracefully, then force kill
+          setTimeout(() => {
+            if (!childProcess.killed) {
+              childProcess.kill('SIGKILL');
+            }
+          }, 5000);
+        }, timeoutMs);
+      }
+
+      // Store process information
+      const testInfo = {
+        process: childProcess,
+        userPath: userRepoPath,
+        startTime: Date.now(),
+        filePath,
+        dockerImage,
+        username,
+        absolutePath,
+        testDir,
+        timeoutId,
+        stdout: '',
+        stderr: '',
+        exitCode: null,
+        finished: false
+      };
+
+      runningTests.set(jobId, testInfo);
+      incrementUserConcurrency(username);
+
+      // Collect stdout and stderr
+      childProcess.stdout.on('data', (data) => {
+        testInfo.stdout += data.toString();
+      });
+
+      childProcess.stderr.on('data', (data) => {
+        testInfo.stderr += data.toString();
+      });
+
+      // Handle process completion
+      childProcess.on('close', (code, signal) => {
+        console.log(`Test ${jobId} completed with exit code: ${code}, signal: ${signal}`);
+        testInfo.exitCode = code;
+        testInfo.finished = true;
+
+        // Clear timeout if set
+        if (testInfo.timeoutId) {
+          clearTimeout(testInfo.timeoutId);
+        }
+
+        // Don't remove from map immediately - let polling endpoint handle cleanup
+      });
+
+      childProcess.on('error', (error) => {
+        console.error(`Test ${jobId} process error:`, error);
+        testInfo.exitCode = 1;
+        testInfo.finished = true;
+        testInfo.error = error.message;
+
+        // Clear timeout if set
+        if (testInfo.timeoutId) {
+          clearTimeout(testInfo.timeoutId);
+        }
+      });
+
+      // Return job ID immediately
+      res.json({
+        jobId,
+        message: 'Test started successfully',
+        timeout: timeoutMs > 0 ? timeoutMs : null
+      });
+
+    } catch (error) {
+      console.error('Error starting test:', error);
+      res.status(500).json({ error: `Failed to start test: ${error.message}` });
+    }
+  });
+
+  // API endpoint to poll test status and get partial results
+  app.get('/api/poll-test/:jobId', isAuthenticated, async (req, res) => {
+    try {
+      const { jobId } = req.params;
+      const testInfo = runningTests.get(jobId);
+
+      console.log(`🔍 Polling test ${jobId}:`, testInfo ? {
+        finished: testInfo.finished,
+        exitCode: testInfo.exitCode,
+        hasProcess: !!testInfo.process,
+        processKilled: testInfo.process?.killed
+      } : 'NOT_FOUND');
+
+      if (!testInfo) {
+        return res.status(404).json({ error: 'Test job not found' });
+      }
+
+      // Check if process is still running
+      const isRunning = !testInfo.finished && testInfo.process && !testInfo.process.killed;
+      console.log(`📊 Test ${jobId} status: running=${isRunning}, finished=${testInfo.finished}`);
+
+      // If test is finished, process final results and clean up
+      if (testInfo.finished) {
+        try {
+          // Parse the .rec file using WASM with content map (same as original logic)
+          console.log(`📖 Parsing .rec file with WASM: ${testInfo.absolutePath}`);
+          const fileMap = await createFileContentMap(testInfo.absolutePath, testInfo.testDir, req);
+          const relativeFilePath = path.relative(testInfo.testDir, testInfo.absolutePath);
+          const testStructure = await parseRecFileFromMapWasm(relativeFilePath, fileMap);
+
+          // Check if .rep file exists for validation (same as original logic)
+          const repFilePath = testInfo.absolutePath.replace('.rec', '.rep');
+          const repRelativePath = relativeFilePath.replace('.rec', '.rep');
+          let validationResults = null;
+
+          try {
+            await fs.access(repFilePath);
+            // .rep file exists, add it to file map and validate
+            const repContent = await fs.readFile(repFilePath, 'utf8');
+            fileMap[repRelativePath] = repContent;
+
+            console.log(`🔍 Running validation with WASM: ${repFilePath}`);
+
+            // Get patterns for validation (same as original logic)
+            try {
+              const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+              const patterns = await getMergedPatterns(userRepoPath, __dirname);
+
+              // Run validation with patterns
+              validationResults = await validateTestFromMapWasm(relativeFilePath, fileMap, patterns);
+
+              // ENRICH testStructure with actual outputs and error flags (same as original logic)
+              try {
+                console.log(`📋 Enriching testStructure with actual outputs from .rep file`);
+
+                // Parse .rep file to get actual outputs
+                const repStructure = await parseRecFileFromMapWasm(repRelativePath, fileMap);
+
+                // Extract only OUTPUT type blocks from .rep file
+                const repOutputs = repStructure.steps.filter(step => step.type === 'output');
+
+                // Track output index for sequential mapping
+                let outputIndex = 0;
+                let globalStepIndex = 0;
+
+                // Recursive function to traverse nested structure and assign outputs (same as original)
+                function enrichStepsRecursively(steps) {
+                  steps.forEach((step, index) => {
+                    const currentStepIndex = globalStepIndex;
+                    globalStepIndex++;
+
+                    // Check for validation errors on ANY step type
+                    const hasError = validationResults.errors &&
+                      validationResults.errors.some(error => error.step === currentStepIndex);
+                    step.error = hasError;
+
+                    // If this is an input step, set status based on error
+                    if (step.type === 'input') {
+                      step.status = hasError ? 'failed' : 'success';
+                    }
+
+                    // If this is an output step, assign next .rep output
+                    if (step.type === 'output') {
+                      if (repOutputs[outputIndex]) {
+                        step.actualOutput = repOutputs[outputIndex].content || '';
+                      }
+                      outputIndex++;
+                      step.status = step.error ? 'failed' : 'success';
+                    }
+
+                    // If this is a block step, process nested steps
+                    if (step.type === 'block') {
+                      if (step.steps && step.steps.length > 0) {
+                        enrichStepsRecursively(step.steps);
+                        const hasNestedError = step.steps.some(nestedStep => nestedStep.error);
+                        step.error = hasNestedError;
+                        step.status = hasNestedError ? 'failed' : 'success';
+                      }
+                    }
+
+                    // For comment steps, just set success status
+                    if (step.type === 'comment') {
+                      step.error = false;
+                      step.status = 'success';
+                    }
+                  });
+                }
+
+                // Start recursive enrichment
+                enrichStepsRecursively(testStructure.steps);
+
+              } catch (enrichError) {
+                console.error('Error enriching testStructure:', enrichError.message);
+              }
+
+            } catch (patternError) {
+              console.warn('Could not load patterns for validation:', patternError.message);
+              // Fall back to validation without patterns
+              validationResults = await validateTestFromMapWasm(relativeFilePath, fileMap);
+            }
+
+          } catch (repError) {
+            console.log(`ℹ️  No .rep file found for validation: ${repFilePath}`);
+          }
+
+          // Process test results for UI compatibility (same as original logic)
+          const results = await processTestResults(
+            testInfo.absolutePath,
+            testStructure,
+            testInfo.stdout,
+            testInfo.stderr,
+            testInfo.exitCode,
+            testInfo.error ? new Error(testInfo.error) : null
+          );
+
+          // Clean up
+          cleanupJob(jobId, testInfo.username);
+
+          // Determine overall status
+          const hasValidationErrors = validationResults && validationResults.errors && validationResults.errors.length > 0;
+          const hasProcessError = testInfo.exitCode !== 0;
+          const overallStatus = hasValidationErrors || hasProcessError ? 'failed' : 'completed';
+
+          // Return final results
+          return res.json({
+            running: false,
+            finished: true,
+            status: overallStatus,
+            success: !hasValidationErrors && !hasProcessError,
+            exitCode: testInfo.exitCode,
+            filePath: testInfo.filePath,
+            dockerImage: testInfo.dockerImage || 'default-image',
+            testStructure,
+            validationResults,
+            ...results
+          });
+
+        } catch (readError) {
+          console.error('Error reading test files:', readError);
+
+          // Clean up on error
+          cleanupJob(jobId, testInfo.username);
+
+          return res.status(500).json({
+            running: false,
+            finished: true,
+            status: 'failed',
+            error: `Failed to read test files: ${readError.message}`,
+            stderr: testInfo.stderr,
+            stdout: testInfo.stdout
+          });
+        }
+      }
+
+      // Process is still running - try to get partial results
+      try {
+        // Try to read partial .rep file
+        const repFilePath = testInfo.absolutePath.replace('.rec', '.rep');
+        let partialResults = null;
+
+        try {
+          // Check if .rep file exists and has content
+          const repStats = await fs.stat(repFilePath);
+          if (repStats.size > 0) {
+            // Read partial .rep file content
+            const partialRepContent = await fs.readFile(repFilePath, 'utf8');
+
+            // Create file map with partial .rep content
+            const fileMap = await createFileContentMap(testInfo.absolutePath, testInfo.testDir, req);
+            const relativeFilePath = path.relative(testInfo.testDir, testInfo.absolutePath);
+            const repRelativePath = relativeFilePath.replace('.rec', '.rep');
+            fileMap[repRelativePath] = partialRepContent;
+
+            // Parse with WASM (same pattern as original)
+            const testStructure = await parseRecFileFromMapWasm(relativeFilePath, fileMap);
+
+            // Parse partial .rep structure to get completed outputs
+            const repStructure = await parseRecFileFromMapWasm(repRelativePath, fileMap);
+            const repOutputs = repStructure.steps.filter(step => step.type === 'output');
+
+            // Mark steps as completed based on what's in partial .rep file
+            let outputIndex = 0;
+            let globalStepIndex = 0;
+
+            function markPartialProgress(steps) {
+              steps.forEach((step) => {
+                const currentStepIndex = globalStepIndex;
+                globalStepIndex++;
+
+                if (step.type === 'input') {
+                  // Mark as pending by default, will be updated if output exists
+                  step.status = 'pending';
+                }
+
+                if (step.type === 'output') {
+                  if (repOutputs[outputIndex]) {
+                    // This output exists in partial .rep file - mark as completed
+                    step.actualOutput = repOutputs[outputIndex].content || '';
+                    step.status = 'matched'; // Use existing status
+
+                    // Also mark the corresponding input as completed
+                    if (outputIndex < steps.length && steps[outputIndex * 2] && steps[outputIndex * 2].type === 'input') {
+                      steps[outputIndex * 2].status = 'matched';
+                    }
+                  } else {
+                    // This output doesn't exist yet - still pending
+                    step.status = 'pending';
+                  }
+                  outputIndex++;
+                }
+
+                if (step.type === 'block' && step.steps) {
+                  markPartialProgress(step.steps);
+                  // Block status based on nested steps
+                  const hasCompleted = step.steps.some(s => s.status === 'matched');
+                  const hasPending = step.steps.some(s => s.status === 'pending');
+                  step.status = hasCompleted ? (hasPending ? 'pending' : 'matched') : 'pending';
+                }
+
+                if (step.type === 'comment') {
+                  step.status = 'matched'; // Comments are always "completed"
+                }
+              });
+            }
+
+            markPartialProgress(testStructure.steps);
+
+            partialResults = {
+              testStructure,
+              partialOutputCount: repOutputs.length,
+              lastUpdate: Date.now()
+            };
+          }
+        } catch (repError) {
+          // .rep file doesn't exist yet or can't be read - that's fine for partial results
+          console.log(`No partial .rep file available yet: ${repFilePath}`);
+        }
+
+        // Return current status
+        res.json({
+          running: true,
+          finished: false,
+          exitCode: null,
+          startTime: testInfo.startTime,
+          duration: Date.now() - testInfo.startTime,
+          partialResults
+        });
+
+      } catch (error) {
+        console.error('Error getting partial results:', error);
+        res.json({
+          running: true,
+          finished: false,
+          exitCode: null,
+          error: `Error getting partial results: ${error.message}`
+        });
+      }
+
+    } catch (error) {
+      console.error('Error polling test:', error);
+      res.status(500).json({ error: `Failed to poll test: ${error.message}` });
+    }
+  });
 
   // API endpoint to run a test
   app.post('/api/run-test', isAuthenticated, async (req, res) => {
@@ -248,6 +753,41 @@ export function setupTestRoutes(app, isAuthenticated, dependencies) {
     } catch (error) {
       console.error('Error validating test:', error);
       res.status(500).json({ error: 'Failed to validate test' });
+    }
+  });
+
+  // API endpoint to stop a running test
+  app.post('/api/stop-test/:jobId', isAuthenticated, async (req, res) => {
+    try {
+      const { jobId } = req.params;
+      const testInfo = runningTests.get(jobId);
+
+      if (!testInfo) {
+        return res.status(404).json({ error: 'Test job not found' });
+      }
+
+      const username = getUsername(req, getAuthConfig);
+
+      // Security check - only allow stopping own tests (or in dev mode)
+      const authConfig = getAuthConfig();
+      if (!authConfig.skipAuth && testInfo.username !== username) {
+        return res.status(403).json({ error: 'Access denied - can only stop your own tests' });
+      }
+
+      const stopped = stopRunningTest(jobId);
+
+      if (stopped) {
+        res.json({
+          success: true,
+          message: 'Test stopped successfully',
+          jobId
+        });
+      } else {
+        res.status(500).json({ error: 'Failed to stop test' });
+      }
+    } catch (error) {
+      console.error('Error stopping test:', error);
+      res.status(500).json({ error: `Failed to stop test: ${error.message}` });
     }
   });
 }
