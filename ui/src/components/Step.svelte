@@ -3,6 +3,7 @@
   import { EditorView } from '@codemirror/view';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
   import OutputCodeMirror from './OutputCodeMirror.svelte';
+  import { filesStore } from '../stores/filesStore';
   import { 
     ScrollSyncManager, 
     getStatusIcon, 
@@ -17,6 +18,9 @@
   export let displayNumber: number;
   export let wasmLoaded: boolean = false;
   export let patternMatcher: any = null;
+
+  // Check if current file has a running test
+  $: isCurrentFileRunning = $filesStore.currentFile ? $filesStore.runningTests.has($filesStore.currentFile.path) : false;
 
   // Debug log to see command structure
   $: console.log('Step command debug:', { 
@@ -330,11 +334,40 @@
         <span class="command-status pending-status">
           {@html getStatusIcon('pending')}
           <span>Pending</span>
+          {#if isCurrentFileRunning}
+            <svg class="status-spinner" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="31.416" stroke-dashoffset="31.416">
+                <animate attributeName="stroke-dasharray" dur="2s" values="0 31.416;15.708 15.708;0 31.416" repeatCount="indefinite"/>
+                <animate attributeName="stroke-dashoffset" dur="2s" values="0;-15.708;-31.416" repeatCount="indefinite"/>
+              </circle>
+            </svg>
+          {/if}
+        </span>
+      {:else if command.status === 'pending'}
+        <span class="command-status pending-status">
+          {@html getStatusIcon('pending')}
+          <span>Pending</span>
+          {#if isCurrentFileRunning}
+            <svg class="status-spinner" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="31.416" stroke-dashoffset="31.416">
+                <animate attributeName="stroke-dasharray" dur="2s" values="0 31.416;15.708 15.708;0 31.416" repeatCount="indefinite"/>
+                <animate attributeName="stroke-dashoffset" dur="2s" values="0;-15.708;-31.416" repeatCount="indefinite"/>
+              </circle>
+            </svg>
+          {/if}
         </span>
       {:else if command.status === 'matched'}
         <span class="command-status matched-status">
           {@html getStatusIcon('matched')}
           <span>Matched</span>
+          {#if isCurrentFileRunning}
+            <svg class="status-spinner" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="31.416" stroke-dashoffset="31.416">
+                <animate attributeName="stroke-dasharray" dur="2s" values="0 31.416;15.708 15.708;0 31.416" repeatCount="indefinite"/>
+                <animate attributeName="stroke-dashoffset" dur="2s" values="0;-15.708;-31.416" repeatCount="indefinite"/>
+              </circle>
+            </svg>
+          {/if}
         </span>
       {:else if command.status === 'success'}
         <span class="command-status success-status">
@@ -350,11 +383,27 @@
         <span class="command-status {command.status}-status">
           {@html getStatusIcon(command.status)}
           <span>{command.status.charAt(0).toUpperCase() + command.status.slice(1)}</span>
+          {#if isCurrentFileRunning && (command.status === 'pending' || command.status === 'matched')}
+            <svg class="status-spinner" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="31.416" stroke-dashoffset="31.416">
+                <animate attributeName="stroke-dasharray" dur="2s" values="0 31.416;15.708 15.708;0 31.416" repeatCount="indefinite"/>
+                <animate attributeName="stroke-dashoffset" dur="2s" values="0;-15.708;-31.416" repeatCount="indefinite"/>
+              </circle>
+            </svg>
+          {/if}
         </span>
       {:else if command.status}
         <span class="command-status {command.status}-status">
           {@html getStatusIcon(command.status)}
           <span>{command.status.charAt(0).toUpperCase() + command.status.slice(1)}</span>
+          {#if isCurrentFileRunning && (command.status === 'pending' || command.status === 'matched')}
+            <svg class="status-spinner" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="31.416" stroke-dashoffset="31.416">
+                <animate attributeName="stroke-dasharray" dur="2s" values="0 31.416;15.708 15.708;0 31.416" repeatCount="indefinite"/>
+                <animate attributeName="stroke-dashoffset" dur="2s" values="0;-15.708;-31.416" repeatCount="indefinite"/>
+              </circle>
+            </svg>
+          {/if}
         </span>
       {/if}
       {#if command.blockSource && command.isBlockCommand}
@@ -1312,6 +1361,24 @@
     font-style: italic;
   }
 
+  /* Pending status animation */
+  @keyframes pendingGlow {
+    0%, 100% { 
+      background-color: var(--color-bg-pending, #e2e8f0);
+      box-shadow: 0 0 0 rgba(59, 130, 246, 0);
+    }
+    50% { 
+      background-color: #dbeafe;
+      box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
+    }
+  }
+
+  .status-pending {
+    animation: pendingGlow 2s ease-in-out infinite;
+    border-radius: 4px;
+    padding: 2px 6px;
+  }
+
   /* Dark mode styles */
   @media (prefers-color-scheme: dark) {
     .actual-output-content {
@@ -1353,5 +1420,16 @@
     .no-output-message {
       color: #9ca3af;
     }
+  }
+
+  .status-spinner {
+    width: 12px;
+    height: 12px;
+    margin-left: 6px;
+    opacity: 0.8;
+  }
+
+  .status-spinner circle {
+    stroke: currentColor;
   }
 </style>

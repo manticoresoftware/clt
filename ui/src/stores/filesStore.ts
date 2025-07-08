@@ -53,7 +53,7 @@ const defaultState: FilesState = {
   configDirectory: '',
   dockerImage: 'ghcr.io/manticoresoftware/manticoresearch:test-kit-latest',
   saving: false,
-  running: false
+  runningTests: new Map()
 };
 
 // Helper function to parse commands from the content of a .rec file
@@ -496,88 +496,348 @@ function createFilesStore() {
 
   const runTest = async (filePath: string, dockerImage: string) => {
     try {
-      const response = await fetch(`${API_URL}/api/run-test`, {
+      // Check if this file is already running a test
+      const state = getState();
+      if (state.runningTests.has(filePath)) {
+        throw new Error('Test is already running for this file');
+      }
+
+      console.log('🚀 Starting test:', { filePath, dockerImage });
+      // Start the test (non-blocking)
+      const startResponse = await fetch(`${API_URL}/api/start-test`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        credentials: 'include', // Add credentials for cookie passing
+        credentials: 'include',
         body: JSON.stringify({
           filePath,
           dockerImage
         })
       });
 
+      if (!startResponse.ok) {
+        const errorData = await startResponse.json();
+        throw new Error(errorData.error || `Failed to start test: ${startResponse.statusText}`);
+      }
+
+      const { jobId, timeout } = await startResponse.json();
+      console.log(`Test started with job ID: ${jobId}${timeout ? `, timeout: ${timeout}ms` : ''}`);
+
+      // Immediately update UI state to show running and reset test status
+      update(state => {
+        if (!state.currentFile) return state;
+        
+        // Reset test status to pending and clear old results
+        const resetFile = {
+          ...state.currentFile,
+          testStructure: state.currentFile.testStructure ? {
+            ...state.currentFile.testStructure,
+            steps: state.currentFile.testStructure.steps.map(step => ({
+              ...step,
+              status: 'pending',
+              actualOutput: '',
+              error: false
+            }))
+          } : null
+        };
+
+        return {
+          ...state,
+          currentFile: resetFile,
+          runningTests: new Map(state.runningTests).set(filePath, {
+            jobId,
+            filePath,
+            dockerImage,
+            cancelled: false // Add cancellation flag
+          })
+        };
+      });
+
+      // Poll for results until completion
+      let pollCount = 0;
+      const maxPolls = timeout ? Math.ceil(timeout / 1000) + 10 : 3600; // Max 1 hour if no timeout
+      
+      while (pollCount < maxPolls) {
+        try {
+          // Check if test was cancelled
+          const currentState = getState();
+          const runningTest = currentState.runningTests.get(filePath);
+          if (!runningTest || runningTest.cancelled) {
+            console.log('🛑 Test was cancelled, stopping polling');
+            return { cancelled: true, filePath, dockerImage };
+          }
+
+          console.log(`📊 Polling test ${jobId}, attempt ${pollCount + 1}/${maxPolls}`);
+          
+          const pollResponse = await fetch(`${API_URL}/api/poll-test/${jobId}`, {
+            method: 'GET',
+            credentials: 'include'
+          });
+
+          if (!pollResponse.ok) {
+            console.error(`❌ Poll failed: ${pollResponse.status} ${pollResponse.statusText}`);
+            throw new Error(`Failed to poll test: ${pollResponse.statusText}`);
+          }
+
+          const status = await pollResponse.json();
+          console.log(`📋 Poll result:`, { 
+            running: status.running, 
+            finished: status.finished, 
+            exitCode: status.exitCode,
+            hasPartialResults: !!status.partialResults,
+            hasTestStructure: !!status.testStructure
+          });
+          
+          // Update UI with partial results if available
+          if (status.partialResults?.testStructure) {
+            console.log(`📋 Updating UI with partial results (${status.partialResults.partialOutputCount || 0} outputs completed)`);
+            
+            update(state => {
+              if (!state.currentFile?.testStructure) return state;
+
+              // Process partial results using same logic as original implementation
+              function processStepsRecursively(steps) {
+                return steps.map(step => {
+                  const processedStep = {
+                    ...step,
+                    actualOutput: step.actualOutput || '',
+                    status: step.status || 'pending',
+                    error: step.error || false
+                  };
+                  
+                  // Process nested steps if they exist
+                  if (step.steps && step.steps.length > 0) {
+                    processedStep.steps = processStepsRecursively(step.steps);
+                  }
+                  
+                  return processedStep;
+                });
+              }
+              
+              // Update the testStructure with partial progress
+              const enrichedSteps = processStepsRecursively(status.partialResults.testStructure.steps);
+
+              return {
+                ...state,
+                currentFile: {
+                  ...state.currentFile,
+                  testStructure: {
+                    ...state.currentFile.testStructure,
+                    steps: enrichedSteps
+                  }
+                }
+              };
+            });
+          }
+
+          // Check if test is finished
+          if (!status.running && status.finished) {
+            console.log(`Test completed with exit code: ${status.exitCode}`);
+
+            // Process final results using same logic as original implementation
+            if (status.testStructure) {
+              console.log('🔍 Processing final enriched testStructure with actual outputs');
+
+              update(state => {
+                if (!state.currentFile?.testStructure) return state;
+
+                // Recursive function to process nested steps (same as original)
+                function processStepsRecursively(steps) {
+                  return steps.map(step => {
+                    const processedStep = {
+                      ...step,
+                      actualOutput: step.actualOutput || '',
+                      status: step.status || 'success',
+                      error: step.error || false
+                    };
+                    
+                    // Process nested steps if they exist
+                    if (step.steps && step.steps.length > 0) {
+                      processedStep.steps = processStepsRecursively(step.steps);
+                    }
+                    
+                    return processedStep;
+                  });
+                }
+                
+                // Update the testStructure directly with enriched data (backend already enhanced)
+                const enrichedSteps = processStepsRecursively(status.testStructure.steps);
+
+                console.log(`📋 Updated ${enrichedSteps.length} steps with final enriched data`);
+
+                return {
+                  ...state,
+                  running: false,
+                  runningTests: new Map([...state.runningTests].filter(([path]) => path !== filePath)),
+                  currentFile: {
+                    ...state.currentFile,
+                    testStructure: {
+                      ...state.currentFile.testStructure,
+                      steps: enrichedSteps
+                    },
+                    status: status.success ? 'success' : 'failed'
+                  }
+                };
+              });
+            } else {
+              // No validation results - just update running status
+              update(state => ({
+                ...state,
+                running: false,
+                runningTests: new Map([...state.runningTests].filter(([path]) => path !== filePath)),
+                currentFile: state.currentFile ? {
+                  ...state.currentFile,
+                  status: status.success ? 'success' : 'failed'
+                } : null
+              }));
+            }
+
+            // Return final results
+            return {
+              ...status,
+              filePath,
+              dockerImage: dockerImage || 'default-image'
+            };
+          }
+
+          // Still running - wait before next poll
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          pollCount++;
+
+        } catch (pollError) {
+          console.error('Error during polling:', pollError);
+          // Wait a bit longer on poll errors, then retry
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          pollCount++;
+        }
+      }
+
+      // If we reach here, polling timed out
+      throw new Error('Test polling timed out - test may still be running');
+
+    } catch (error) {
+      console.error('❌ Error running test:', error);
+      
+      // Make sure to clean up running state on error
+      update(state => ({
+        ...state,
+        runningTests: new Map([...state.runningTests].filter(([path]) => path !== filePath))
+      }));
+      
+      throw error;
+    }
+  };
+  const stopTest = async (filePath: string) => {
+    try {
+      const state = getState();
+      console.log('🛑 Stopping test for:', filePath);
+      console.log('🔍 Current running tests:', Array.from(state.runningTests.keys()));
+      
+      const runningTest = state.runningTests.get(filePath);
+      
+      if (!runningTest) {
+        console.error('❌ No test found for path:', filePath);
+        console.error('Available paths:', Array.from(state.runningTests.keys()));
+        throw new Error('No test running for this file');
+      }
+
+      console.log('✅ Found running test:', runningTest);
+
+      const response = await fetch(`${API_URL}/api/stop-test/${runningTest.jobId}`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+
       if (!response.ok) {
-        throw new Error(`Failed to run test: ${response.statusText}`);
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Failed to stop test: ${response.statusText}`);
       }
 
       const result = await response.json();
+      console.log('Test stopped successfully:', result);
 
-      console.log('Run test completed successfully');
+      // Mark test as cancelled and reset step statuses to pending
+      update(state => {
+        const newState = {
+          ...state,
+          runningTests: new Map(state.runningTests)
+        };
 
-      // Process enhanced testStructure (preferred method)
-      if (result.testStructure) {
-        console.log('🔍 Processing enriched testStructure with actual outputs');
+        // Mark the test as cancelled instead of removing it
+        const runningTest = newState.runningTests.get(filePath);
+        if (runningTest) {
+          newState.runningTests.set(filePath, {
+            ...runningTest,
+            cancelled: true
+          });
+        }
 
-        update(state => {
-          if (!state.currentFile?.testStructure) return state;
-
-          // Recursive function to process nested steps
-          function processStepsRecursively(steps) {
-            return steps.map(step => {
-              const processedStep = {
-                ...step,
-                actualOutput: step.actualOutput || '', // From .rep file
-                status: step.status || 'success', // Backend already set status
-                error: step.error || false // Backend already set error flag
-              };
-              
-              // Process nested steps if they exist
-              if (step.steps && step.steps.length > 0) {
-                processedStep.steps = processStepsRecursively(step.steps);
-              }
-              
-              return processedStep;
-            });
-          }
-          
-          // Update the testStructure directly with enriched data (backend already enhanced)
-          const enrichedSteps = processStepsRecursively(result.testStructure.steps);
-
-          console.log(`📋 Updated ${enrichedSteps.length} steps with enriched data`);
-
-          return {
-            ...state,
-            running: false,
-            currentFile: {
-              ...state.currentFile,
-              testStructure: {
-                ...state.currentFile.testStructure,
-                steps: enrichedSteps
-              },
-              status: result.success ? 'success' : 'failed'
-            }
+        // Reset current file's step statuses to pending if this is the current file
+        if (state.currentFile && state.currentFile.path === filePath) {
+          const resetFile = {
+            ...state.currentFile,
+            status: 'pending'
           };
-        });
-      }
-      else {
-        // No validation results - just update running status
+
+          // Reset all step statuses to pending in the file structure
+          if (resetFile.structure && resetFile.structure.steps) {
+            const resetSteps = (steps) => {
+              return steps.map(step => ({
+                ...step,
+                status: 'pending',
+                error: false,
+                actualOutput: '', // Clear actual output when resetting
+                ...(step.children ? { children: resetSteps(step.children) } : {})
+              }));
+            };
+
+            resetFile.structure = {
+              ...resetFile.structure,
+              steps: resetSteps(resetFile.structure.steps)
+            };
+          }
+
+          newState.currentFile = resetFile;
+        }
+
+        return newState;
+      });
+
+      // Clean up the cancelled test after a short delay to allow polling to detect cancellation
+      setTimeout(() => {
         update(state => ({
           ...state,
-          running: false,
-          currentFile: state.currentFile ? {
-            ...state.currentFile,
-            status: result.success ? 'success' : 'failed'
-          } : null
+          runningTests: new Map([...state.runningTests].filter(([path]) => path !== filePath))
         }));
-      }
+      }, 1000);
 
       return result;
     } catch (error) {
-      console.error('Error running test:', error);
+      console.error('Error stopping test:', error);
       throw error;
     }
+  };
+
+  // Helper to check if current file has a running test
+  const isCurrentFileRunning = () => {
+    const state = getState();
+    return state.currentFile ? state.runningTests.has(state.currentFile.path) : false;
+  };
+
+  // Helper to get running test info for current file
+  const getCurrentFileTestInfo = () => {
+    const state = getState();
+    return state.currentFile ? state.runningTests.get(state.currentFile.path) : null;
+  };
+
+  // Stop test for current file (wrapper around stopTest)
+  const stopCurrentTest = async () => {
+    const state = getState();
+    if (!state.currentFile) {
+      throw new Error('No file selected');
+    }
+    return await stopTest(state.currentFile.path);
   };
 
   // Debounce function for autosave
@@ -640,9 +900,7 @@ function createFilesStore() {
 
   const runCurrentTest = async () => {
     const state = getState();
-    if (!state.currentFile || state.running) return;
-
-    update(state => ({ ...state, running: true }));
+    if (!state.currentFile || state.runningTests.has(state.currentFile.path)) return;
 
     try {
       const result = await runTest(state.currentFile.path, state.dockerImage);
@@ -678,7 +936,6 @@ function createFilesStore() {
 
           return {
             ...state,
-            running: false,
             currentFile: {
               ...state.currentFile,
               testStructure: {
@@ -692,7 +949,6 @@ function createFilesStore() {
           // Fallback - just update overall status
           return {
             ...state,
-            running: false,
             currentFile: {
               ...state.currentFile,
               status: result.success ? 'success' : 'failed'
@@ -702,8 +958,21 @@ function createFilesStore() {
       });
     } catch (error) {
       console.error('Failed to run test:', error);
-      // Make sure we clear the running flag even if there's an error
-      update(state => ({ ...state, running: false }));
+      
+      // Clean up running state on error
+      update(state => {
+        if (!state.currentFile) return state;
+        
+        const newRunningTests = new Map(state.runningTests);
+        newRunningTests.delete(state.currentFile.path);
+        
+        return {
+          ...state,
+          runningTests: newRunningTests
+        };
+      });
+      
+      throw error; // Re-throw to allow UI error handling
     }
   };
 
@@ -1110,8 +1379,6 @@ function createFilesStore() {
         }
       }, 0);
     },
-    runTest: runCurrentTest,
-
     // Add validation function
     validateTest: async (filePath: string) => {
       try {
@@ -1159,7 +1426,15 @@ function createFilesStore() {
         ...state,
         currentFile: null
       }));
-    }
+    },
+
+    // New methods for improved test execution
+    runTest,
+    stopTest,
+    stopCurrentTest,
+    runCurrentTest,
+    isCurrentFileRunning,
+    getCurrentFileTestInfo
   };
 
   // Set the self-reference to allow calling other methods
