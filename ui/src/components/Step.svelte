@@ -101,11 +101,14 @@
     try {
       // Get value from CodeMirror dispatched event
       const newValue = e.detail?.target?.value || '';
-
-      // Use a timeout to avoid reactive update cycles
-      setTimeout(() => {
-        dispatch('updateCommand', { index, newValue });
-      }, 0);
+      
+      // Only dispatch if the value actually changed to prevent unnecessary updates
+      if (newValue !== command.command) {
+        // Use a timeout to avoid reactive update cycles
+        setTimeout(() => {
+          dispatch('updateCommand', { index, newValue });
+        }, 0);
+      }
     } catch (err) {
       console.error('Error updating command:', err);
     }
