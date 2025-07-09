@@ -18,6 +18,11 @@
   let container;
   let isDarkMode = false;
   let themeCompartment = new Compartment();
+  
+  // Variables to manage editor state and prevent update loops
+  let isInternalUpdate = false;
+  let isUserTyping = false;
+  let lastUserValue = '';
 
   // Detect user's theme preference
   function detectThemePreference() {
