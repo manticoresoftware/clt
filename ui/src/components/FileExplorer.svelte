@@ -31,19 +31,19 @@
   } {
     const params = new URLSearchParams(window.location.search);
     const hash = window.location.hash;
-    
+
     let filePath: string | undefined;
-    
+
     // Check for hash-based file path (legacy support)
     if (hash && hash.startsWith('#file-')) {
       filePath = decodeURIComponent(hash.substring(6));
     }
-    
+
     // Check for query parameter file path (preferred)
     if (params.has('file')) {
       filePath = params.get('file') || undefined;
     }
-    
+
     return {
       filePath,
       testPath: params.get('test_path') || undefined,
@@ -111,6 +111,16 @@
         preservedExpandedFolders.clear();
       }
       fileTree = $filesStore.fileTree;
+
+      // Handle URL parameters when file tree is loaded
+      if (fileTree.length > 0) {
+        const urlParams = parseUrlParams();
+        if (urlParams.filePath || urlParams.testPath) {
+          const targetPath = urlParams.filePath || urlParams.testPath;
+          console.log('🌳 File tree loaded, expanding to:', targetPath);
+          expandToFile(targetPath);
+        }
+      }
     }
   }
 
@@ -178,7 +188,7 @@
     if (selectedFolder) {
       return selectedFolder;
     }
-    
+
     // Priority 2: If a file is selected, use its parent directory
     const selectedFile = $filesStore.currentFile;
     if (selectedFile) {
@@ -193,16 +203,16 @@
         }
         return null;
       }
-      
+
       const selectedNode = findNodeByPath(fileTree, selectedFile.path);
-      
+
       if (selectedNode && !selectedNode.isDirectory) {
         // Selected a file - create in same directory as the file
         const parentPath = selectedNode.path.substring(0, selectedNode.path.lastIndexOf('/'));
         return parentPath;
       }
     }
-    
+
     // Priority 3: Root level (empty string)
     return '';
   }
@@ -212,33 +222,33 @@
     console.log('Clearing selection...');
     console.log('Before clear - selectedFolder:', selectedFolder);
     console.log('Before clear - currentFile:', $filesStore.currentFile?.path);
-    
+
     selectedFolder = null;
-    
+
     // Clear file selection by clearing the URL hash and updating the store
     if ($filesStore.currentFile) {
       // Clear the URL to deselect the file
       window.history.pushState({}, '', window.location.pathname);
-      
+
       // Clear the current file from the store
       filesStore.clearCurrentFile();
     }
-    
+
     console.log('After clear - selectedFolder:', selectedFolder);
   }
 
   // Delete selected item with confirmation
   function deleteSelectedItem() {
     const itemToDelete = selectedFolder || $filesStore.currentFile?.path;
-    
+
     if (!itemToDelete) return;
-    
+
     const itemName = itemToDelete.split('/').pop();
     const isFolder = selectedFolder !== null;
     const itemType = isFolder ? 'folder' : 'file';
-    
+
     const confirmed = confirm(`Are you sure you want to delete the ${itemType} "${itemName}"?\n\nThis action cannot be undone.`);
-    
+
     if (confirmed) {
       filesStore.deleteFile(itemToDelete)
         .then(success => {
@@ -266,7 +276,7 @@
     newItemName = '';
     newItemParentPath = getCreationContext();
     console.log('New file context:', newItemParentPath);
-    
+
     // Focus input after DOM update
     setTimeout(() => {
       if (newItemInputElement) {
@@ -287,7 +297,7 @@
     newItemName = '';
     newItemParentPath = getCreationContext();
     console.log('New folder context:', newItemParentPath);
-    
+
     // Focus input after DOM update
     setTimeout(() => {
       if (newItemInputElement) {
@@ -314,13 +324,13 @@
     }
 
     let finalName = newItemName.trim();
-    
+
     if (newItemType === 'file') {
       // Add .rec extension if none is provided
       if (!finalName.endsWith('.rec') && !finalName.endsWith('.recb')) {
         finalName += '.rec';
       }
-      
+
       const path = newItemParentPath ? `${newItemParentPath}/${finalName}` : finalName;
       filesStore.createNewFile(path);
       updateUrlWithFilePath(path);
@@ -335,10 +345,10 @@
   // Check if input should be shown at a specific location
   function shouldShowInputAt(nodePath: string): boolean {
     if (!isCreatingNew) return false;
-    
+
     // Show at root level if no parent path
     if (!newItemParentPath && nodePath === 'root') return true;
-    
+
     // Show inside the target directory
     return newItemParentPath === nodePath;
   }
@@ -378,7 +388,7 @@
       const target = event.target as Element;
       const inputContainer = newItemInputElement.closest('.new-item-input-container');
       const headerActions = document.querySelector('.header-actions');
-      
+
       // Don't cancel if clicking on input, header actions, or their children
       if (!inputContainer?.contains(target) && !headerActions?.contains(target)) {
         cancelNewItem();
@@ -465,7 +475,7 @@
   onMount(async () => {
     // Parse URL parameters
     const urlParams = parseUrlParams();
-    
+
     // If we have parameters that might affect git state, check for unstaged changes first
     const hasGitAffectingParams = urlParams.branch || urlParams.filePath;
     if (hasGitAffectingParams) {
@@ -476,23 +486,23 @@
         url.searchParams.delete('branch');
         url.searchParams.delete('file');
         window.history.replaceState({}, '', url.toString());
-        
+
         // Continue with normal initialization but skip git operations
         await filesStore.refreshFileTree();
-        
+
         // Start git status polling only if not already active
         if (!gitStatusStore.isPolling()) {
           gitStatusStore.startPolling(5000);
         }
-        
+
         // Start file tree polling
         const fileTreePollingInterval = setInterval(async () => {
           await filesStore.refreshFileTree();
         }, 10000);
-        
+
         window.addEventListener('popstate', handleUrlChange);
         document.addEventListener('click', handleDocumentClick);
-        
+
         return () => {
           clearInterval(fileTreePollingInterval);
         };
@@ -508,7 +518,7 @@
         window.history.replaceState({}, '', url.toString());
       }
     }
-    
+
     // Set failed tests for highlighting
     if (urlParams.failedTests) {
       failedTestPaths = new Set(urlParams.failedTests);
@@ -523,9 +533,9 @@
     if (urlParams.branch && urlParams.branch !== $branchStore.currentBranch) {
       try {
         await branchStore.checkoutAndPull(urlParams.branch);
-        
 
-        
+
+
       } catch (error) {
         console.error('Failed to switch branch:', error);
         alert(`Failed to switch to branch "${urlParams.branch}": ${error.message}`);
@@ -540,7 +550,7 @@
     if (!gitStatusStore.isPolling()) {
       gitStatusStore.startPolling(5000); // Poll every 5 seconds
     }
-    
+
     // Start file tree polling for new files
     const fileTreePollingInterval = setInterval(async () => {
       await filesStore.refreshFileTree();
@@ -564,7 +574,7 @@
 
     // Listen for URL parameter changes
     window.addEventListener('popstate', handleUrlChange);
-    
+
     // Listen for clicks to cancel new item creation
     document.addEventListener('click', handleDocumentClick);
 
@@ -703,7 +713,7 @@
   // Handle URL parameter changes
   async function handleUrlChange() {
     const urlParams = parseUrlParams();
-    
+
     // If we have parameters that might affect git state, check for unstaged changes first
     const hasGitAffectingParams = urlParams.branch || urlParams.filePath;
     if (hasGitAffectingParams) {
@@ -713,45 +723,99 @@
         return;
       }
     }
-    
-    if (urlParams.filePath) {
+
+    if (urlParams.filePath || urlParams.testPath) {
+      const targetPath = urlParams.filePath || urlParams.testPath;
+      console.log('🔍 URL params:', urlParams);
+      console.log('🎯 Target path:', targetPath);
+
       // Load the file if it's different from the current file
-      if (!$filesStore.currentFile || $filesStore.currentFile.path !== urlParams.filePath) {
-        fetchFileContent(urlParams.filePath);
+      if (!$filesStore.currentFile || $filesStore.currentFile.path !== targetPath) {
+        console.log('📂 Fetching file content for:', targetPath);
+        fetchFileContent(targetPath);
+      } else {
+        console.log('📂 File already loaded:', targetPath);
       }
+
+      // Expand folders and select the file in the tree
+      expandToFile(targetPath);
     } else {
       // Clear current file if no test_path parameter
       filesStore.clearCurrentFile();
     }
-    
+
     // Update failed tests highlighting
     if (urlParams.failedTests) {
       failedTestPaths = new Set(urlParams.failedTests);
     } else {
       failedTestPaths = new Set();
     }
-    
+
     // Update docker image if provided
     if (urlParams.dockerImage) {
       filesStore.setDockerImage(urlParams.dockerImage);
     }
-    
+
     // Handle branch switching if needed
     if (urlParams.branch && urlParams.branch !== $branchStore.currentBranch) {
       try {
         await branchStore.checkoutAndPull(urlParams.branch);
-        
+
         // Clear the branch parameter from URL after successful switch
         const url = new URL(window.location.href);
         url.searchParams.delete('branch');
         window.history.replaceState({}, '', url.toString());
-        
+
       } catch (error) {
         console.error('Failed to switch branch:', error);
         alert(`Failed to switch to branch "${urlParams.branch}": ${error.message}`);
       }
     }
   }
+  // Expand folders to show a specific file and select it
+  function expandToFile(filePath: string) {
+    if (!filePath || !fileTree || fileTree.length === 0) return;
+
+    // Split the path into parts
+    const pathParts = filePath.split('/');
+
+    // Build the folder paths that need to be expanded
+    const foldersToExpand = [];
+    let currentPath = '';
+
+    // For each part except the last (which is the file), build the folder path
+    for (let i = 0; i < pathParts.length - 1; i++) {
+      currentPath = currentPath ? `${currentPath}/${pathParts[i]}` : pathParts[i];
+      foldersToExpand.push(currentPath);
+    }
+
+    // Expand all necessary folders
+    foldersToExpand.forEach(folderPath => {
+      expandedFolders.add(folderPath);
+    });
+
+    // Force reactivity update
+    expandedFolders = expandedFolders;
+
+    console.log('Expanded folders for file:', filePath, 'Folders:', foldersToExpand);
+  }
+  // Handle initial URL parameters on mount
+  onMount(async () => {
+    // Add document click listener for new item creation
+    document.addEventListener('click', handleDocumentClick);
+
+    // Handle initial URL parameters
+    await handleUrlChange();
+
+    // Listen for URL changes (back/forward navigation)
+    window.addEventListener('popstate', handleUrlChange);
+  });
+
+  // Cleanup on destroy
+  onDestroy(() => {
+    document.removeEventListener('click', handleDocumentClick);
+    window.removeEventListener('popstate', handleUrlChange);
+  });
 
   // For development/testing purposes
   function useMockFileTree() {
@@ -816,69 +880,100 @@
     return false;
   }
 
+  // Check if file is currently running a test
+  function isFileRunning(filePath: string): boolean {
+    return $filesStore.runningTests.has(filePath);
+  }
+
+  // Check if directory contains running tests
+  function isDirWithRunningTests(dirPath: string): boolean {
+    // Check if any running test is within this directory
+    for (const runningTestPath of $filesStore.runningTests.keys()) {
+      if (runningTestPath.startsWith(dirPath + '/')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // Get git status for a file (reactive) with failed test highlighting
   function getFileGitStatus(filePath: string): string | null {
-    // Check if file is in failed tests first
+    // Check if file is running a test first (highest priority)
+    if (isFileRunning(filePath)) {
+      return 'R'; // Special status for running tests
+    }
+
+    // Check if file is in failed tests
     if (failedTestPaths.has(filePath)) {
       return 'F'; // Special status for failed tests
     }
-    
+
+    // Check if this is a directory containing running tests
+    if (isDirWithRunningTests(filePath)) {
+      return 'R'; // Mark directories with running tests
+    }
+
     // Check if this is a directory containing failed tests (same as isDirModified pattern)
     if (isDirWithFailedTests(filePath)) {
       return 'F'; // Mark directories with failed tests
     }
-    
+
     // Try exact match first
     const exactMatch = $gitStatusStore.modifiedFiles.find(file => file.path === filePath);
     if (exactMatch) {
       return exactMatch.status;
     }
-    
+
     // Git paths include testPath prefix (e.g., "test/clt-tests/buddy/file.rec")
     // File explorer paths are relative to testPath (e.g., "buddy/file.rec")
     // Strip the testPath prefix from git paths for comparison
     const testPath = $gitStatusStore.testPath || '';
     const testPathPrefix = testPath ? testPath + '/' : '';
-    
+
     const matchWithPrefix = $gitStatusStore.modifiedFiles.find(file => {
       // Remove testPath prefix from git path
-      const relativePath = file.path.startsWith(testPathPrefix) 
+      const relativePath = file.path.startsWith(testPathPrefix)
         ? file.path.substring(testPathPrefix.length)
         : file.path;
       return relativePath === filePath;
     });
-    
+
     return matchWithPrefix ? matchWithPrefix.status : null;
   }
 
   // Check if directory has changes (reactive)
   function isDirModified(dirPath: string): boolean {
+    // Check if directory has running tests first (highest priority)
+    if (isDirWithRunningTests(dirPath)) {
+      return true;
+    }
+
     // Git paths include testPath prefix, file explorer paths are relative to testPath
     const testPath = $gitStatusStore.testPath || '';
     const testPathPrefix = testPath ? testPath + '/' : '';
-    
+
     // Try exact match first (with testPath prefix added)
     const fullDirPath = testPathPrefix + dirPath;
     if ($gitStatusStore.modifiedDirs.includes(fullDirPath)) {
       return true;
     }
-    
+
     // Also try without prefix in case modifiedDirs already has relative paths
     if ($gitStatusStore.modifiedDirs.includes(dirPath)) {
       return true;
     }
-    
+
     // Check if any modified files are within this directory
     const hasModifiedFilesInDir = $gitStatusStore.modifiedFiles.some(file => {
       // Remove testPath prefix from git file path
-      const relativePath = file.path.startsWith(testPathPrefix) 
+      const relativePath = file.path.startsWith(testPathPrefix)
         ? file.path.substring(testPathPrefix.length)
         : file.path;
-      
+
       // Check if file is within this directory
       return relativePath.startsWith(dirPath + '/');
     });
-    
+
     return hasModifiedFilesInDir;
   }
 
@@ -905,7 +1000,7 @@
       case 'M': return 'git-modified';
       case 'A': return 'git-added';
       case 'D': return 'git-deleted';
-      case 'R': return 'git-renamed';
+      case 'R': return 'git-running'; // Running test
       case 'C': return 'git-copied';
       case 'U': return 'git-unmerged';
       case '??': return 'git-untracked';
@@ -1079,7 +1174,7 @@
       {#each fileTree as node}
         <div class="file-node">
           <div
-            class="tree-item {node.path === $filesStore.currentFile?.path ? 'selected' : ''} {selectedFolder === node.path ? 'folder-selected' : ''} {dropTarget === node ? 'drop-target' : ''} {getFileGitStatus(node.path) || isDirModified(node.path) ? 'has-git-status' : ''} {getGitStatusClass(getFileGitStatus(node.path)) || (isDirModified(node.path) ? 'git-modified' : '')}"
+            class="tree-item {node.path === $filesStore.currentFile?.path ? 'selected' : ''} {selectedFolder === node.path ? 'folder-selected' : ''} {dropTarget === node ? 'drop-target' : ''} {getFileGitStatus(node.path) || isDirModified(node.path) ? 'has-git-status' : ''} {getGitStatusClass(getFileGitStatus(node.path)) || (isDirModified(node.path) && !getFileGitStatus(node.path) ? 'git-modified' : '')}"
             role="button"
             tabindex="0"
             draggable={true}
@@ -1119,7 +1214,7 @@
               {/if}
             </div>
             <span class="tree-item-name">{node.name}</span>
-            
+
             <!-- Git status indicator -->
             {#if !node.isDirectory}
               {@const gitStatus = getFileGitStatus(node.path)}
@@ -1129,9 +1224,12 @@
                 </span>
               {/if}
             {:else if isDirModified(node.path)}
-              <span class="git-status-indicator git-modified">M</span>
+              {@const dirGitStatus = getFileGitStatus(node.path)}
+              <span class="git-status-indicator {getGitStatusClass(dirGitStatus || 'M')}">
+                {getGitStatusDisplay(dirGitStatus || 'M')}
+              </span>
             {/if}
-            
+
             {#if node.isDirectory}
               <div class="tree-item-arrow {expandedFolders.has(node.path) ? 'expanded' : ''}">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
@@ -1176,7 +1274,7 @@
                 <!-- Recursive File Node Template -->
                 <div class="file-node">
                   <div
-                    class="tree-item {childNode.path === $filesStore.currentFile?.path ? 'selected' : ''} {selectedFolder === childNode.path ? 'folder-selected' : ''} {dropTarget === childNode ? 'drop-target' : ''} {getFileGitStatus(childNode.path) || isDirModified(childNode.path) ? 'has-git-status' : ''} {getGitStatusClass(getFileGitStatus(childNode.path)) || (isDirModified(childNode.path) ? 'git-modified' : '')}"
+                     class="tree-item {childNode.path === $filesStore.currentFile?.path ? 'selected' : ''} {selectedFolder === childNode.path ? 'folder-selected' : ''} {dropTarget === childNode ? 'drop-target' : ''} {getFileGitStatus(childNode.path) || isDirModified(childNode.path) ? 'has-git-status' : ''} {getGitStatusClass(getFileGitStatus(childNode.path)) || (isDirModified(childNode.path) && !getFileGitStatus(childNode.path) ? 'git-modified' : '')}"
                     role="button"
                     tabindex="0"
                     draggable={true}
@@ -1207,7 +1305,7 @@
                       {/if}
                     </div>
                     <span class="tree-item-name">{childNode.name}</span>
-                    
+
                     <!-- Git status indicator -->
                     {#if !childNode.isDirectory}
                       {@const gitStatus = getFileGitStatus(childNode.path)}
@@ -1217,9 +1315,12 @@
                         </span>
                       {/if}
                     {:else if isDirModified(childNode.path)}
-                      <span class="git-status-indicator git-modified">M</span>
+                      {@const childDirGitStatus = getFileGitStatus(childNode.path)}
+                      <span class="git-status-indicator {getGitStatusClass(childDirGitStatus || 'M')}">
+                        {getGitStatusDisplay(childDirGitStatus || 'M')}
+                      </span>
                     {/if}
-                    
+
                     {#if childNode.isDirectory}
                       <div class="tree-item-arrow {expandedFolders.has(childNode.path) ? 'expanded' : ''}">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
@@ -1263,7 +1364,7 @@
                       {#each childNode.children as grandChildNode}
                         <div class="file-node">
                           <div
-                            class="tree-item {grandChildNode.path === $filesStore.currentFile?.path ? 'selected' : ''} {selectedFolder === grandChildNode.path ? 'folder-selected' : ''} {dropTarget === grandChildNode ? 'drop-target' : ''} {getFileGitStatus(grandChildNode.path) || isDirModified(grandChildNode.path) ? 'has-git-status' : ''} {getGitStatusClass(getFileGitStatus(grandChildNode.path)) || (isDirModified(grandChildNode.path) ? 'git-modified' : '')}"
+                             class="tree-item {grandChildNode.path === $filesStore.currentFile?.path ? 'selected' : ''} {selectedFolder === grandChildNode.path ? 'folder-selected' : ''} {dropTarget === grandChildNode ? 'drop-target' : ''} {getFileGitStatus(grandChildNode.path) || isDirModified(grandChildNode.path) ? 'has-git-status' : ''} {getGitStatusClass(getFileGitStatus(grandChildNode.path)) || (isDirModified(grandChildNode.path) && !getFileGitStatus(grandChildNode.path) ? 'git-modified' : '')}"
                             role="button"
                             tabindex="0"
                             draggable={true}
@@ -1294,7 +1395,7 @@
                               {/if}
                             </div>
                             <span class="tree-item-name">{grandChildNode.name}</span>
-                            
+
                             <!-- Git status indicator -->
                             {#if !grandChildNode.isDirectory}
                               {@const gitStatus = getFileGitStatus(grandChildNode.path)}
@@ -1304,9 +1405,12 @@
                                 </span>
                               {/if}
                             {:else if isDirModified(grandChildNode.path)}
-                              <span class="git-status-indicator git-modified">M</span>
+                              {@const grandChildDirGitStatus = getFileGitStatus(grandChildNode.path)}
+                              <span class="git-status-indicator {getGitStatusClass(grandChildDirGitStatus || 'M')}">
+                                {getGitStatusDisplay(grandChildDirGitStatus || 'M')}
+                              </span>
                             {/if}
-                            
+
                             {#if grandChildNode.isDirectory}
                               <div class="tree-item-arrow {expandedFolders.has(grandChildNode.path) ? 'expanded' : ''}">
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
@@ -1377,7 +1481,7 @@
           {/if}
         </button>
       </div>
-      
+
       <!-- Repository Sync Section -->
       {#if $repoSyncStore.error || !$repoSyncStore.isInitialized}
         <div class="sync-section">
@@ -1815,6 +1919,21 @@
     font-weight: bold;
   }
 
+  .git-running {
+    color: #3b82f6;
+    font-weight: bold;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
   /* Tree item layout adjustments for git status */
   .tree-item {
     display: flex;
@@ -1897,6 +2016,12 @@
   .tree-item.has-git-status.git-failed .tree-item-name {
     color: #dc2626;
     font-weight: bold;
+  }
+
+  .tree-item.has-git-status.git-running .tree-item-name {
+    color: #3b82f6;
+    font-weight: bold;
+    animation: pulse 2s infinite;
   }
 
   /* Selected items override git status colors */

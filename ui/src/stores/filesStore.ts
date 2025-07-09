@@ -45,6 +45,7 @@ interface FilesState {
   dockerImage: string;
   saving: boolean;
   running: boolean;
+  runningTests: Map<string, any>;
 }
 
 const defaultState: FilesState = {
@@ -53,6 +54,7 @@ const defaultState: FilesState = {
   configDirectory: '',
   dockerImage: 'ghcr.io/manticoresoftware/manticoresearch:test-kit-latest',
   saving: false,
+  running: false,
   runningTests: new Map()
 };
 
@@ -518,6 +520,13 @@ function createFilesStore() {
 
       if (!startResponse.ok) {
         const errorData = await startResponse.json();
+        
+        // Handle concurrent test limit with user-friendly message
+        if (startResponse.status === 429 && errorData.error && errorData.error.includes('Maximum concurrent tests reached')) {
+          alert('You have reached the maximum number of concurrent tests (3). Please wait for a test to complete before starting a new one.');
+          return; // Don't throw, just return gracefully
+        }
+        
         throw new Error(errorData.error || `Failed to start test: ${startResponse.statusText}`);
       }
 
