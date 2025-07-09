@@ -1091,7 +1091,14 @@ function createFilesStore() {
         const data = await response.json();
         // Use the file tree returned directly from the API
         if (data.fileTree) {
-          storeModule.setFileTree(data.fileTree);
+          // Only update if the tree structure actually changed
+          const currentState = getState();
+          const currentTreeString = JSON.stringify(currentState.fileTree);
+          const newTreeString = JSON.stringify(data.fileTree);
+          
+          if (currentTreeString !== newTreeString) {
+            storeModule.setFileTree(data.fileTree);
+          }
           return true;
         } else {
           storeModule.setFileTree([]);

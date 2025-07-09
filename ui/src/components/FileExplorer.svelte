@@ -1171,7 +1171,7 @@
       {/if}
 
       <!-- Render each file tree node recursively -->
-      {#each fileTree as node}
+      {#each fileTree as node (node.path)}
         <div class="file-node">
           <div
             class="tree-item {node.path === $filesStore.currentFile?.path ? 'selected' : ''} {selectedFolder === node.path ? 'folder-selected' : ''} {dropTarget === node ? 'drop-target' : ''} {getFileGitStatus(node.path) || isDirModified(node.path) ? 'has-git-status' : ''} {getGitStatusClass(getFileGitStatus(node.path)) || (isDirModified(node.path) && !getFileGitStatus(node.path) ? 'git-modified' : '')}"
