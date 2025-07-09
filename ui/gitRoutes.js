@@ -375,6 +375,18 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         const git = simpleGit(userRepo);
         await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
 
+        // Get current status to check for changes
+        const status = await git.status();
+        let stashMessage = '';
+
+        // Stash changes if needed
+        if (!status.isClean()) {
+          const timestamp = new Date().toISOString();
+          stashMessage = `Auto-stashed by CLT-UI for ${req.user.username} at ${timestamp}`;
+          await git.stash(['push', '-m', stashMessage]);
+          console.log(`Stashed current changes: ${stashMessage}`);
+        }
+
         // Fetch latest from remote
         await git.fetch(['--all']);
         console.log('Fetched latest updates from remote');
@@ -407,13 +419,14 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         }
 
         // Get current status to confirm
-        const status = await git.status();
-        const currentBranch = status.current;
+        const finalStatus = await git.status();
+        const currentBranch = finalStatus.current;
 
         return res.json({
           success: true,
           currentBranch: currentBranch,
-          message: `Successfully checked out and pulled branch: ${currentBranch}`
+          stashed: stashMessage || null,
+          message: `Successfully checked out and pulled branch: ${currentBranch}${stashMessage ? ' (changes stashed)' : ''}`
         });
       } catch (gitError) {
         console.error('Git operation error:', gitError);

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { filesStore, type TestStep as TestStepType, type TestStructure } from '../stores/filesStore';
+  import { filesStore, validateTestContent, type TestStep as TestStepType, type TestStructure } from '../stores/filesStore';
   import { gitStatusStore, checkoutFile } from '../stores/gitStatusStore';
   import { onMount, onDestroy } from 'svelte';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
@@ -69,6 +69,9 @@
     console.log('DEBUG: testStructure:', $filesStore.currentFile?.testStructure);
     console.log('DEBUG: converted commands:', commands);
   }
+
+  // Reactive validation state for Run button
+  $: isValidTest = $filesStore.currentFile && validateTestContent($filesStore.currentFile.testStructure);
 
   // Wrapper functions to pass testStructure and commands to extracted logic
   function handleUpdateCommand(commandIndex: number, newValue: string) {
@@ -245,14 +248,7 @@
 
   function addCommand(index: number, commandType: 'command' | 'block' | 'comment' = 'command') {
     if (!testStructure) {
-      // Fallback to legacy method
-      let defaultText = '';
-      if (commandType === 'block') {
-        defaultText = 'path/to/file';
-      } else if (commandType === 'comment') {
-        defaultText = 'Add your comment here';
-      }
-      filesStore.addCommand(index, defaultText, commandType);
+      filesStore.addCommand(index, '', commandType);
       return;
     }
 
@@ -311,7 +307,7 @@
     if (commandType === 'block') {
       newSteps = [{
         type: 'block',
-        args: ['path/to/file'],
+        args: [],
         content: null,
         steps: [],
         status: 'pending',
@@ -321,7 +317,7 @@
       newSteps = [{
         type: 'comment',
         args: [],
-        content: 'Add your comment here',
+        content: '',
         steps: null,
         status: 'pending'
       }];
@@ -671,7 +667,8 @@
           <button
             class="run-button"
             on:click={runTest}
-            disabled={!$filesStore.currentFile}
+            disabled={!$filesStore.currentFile || !isValidTest}
+            title={!isValidTest ? "Test contains empty commands or invalid content" : "Run test"}
           >
             Run Test
           </button>

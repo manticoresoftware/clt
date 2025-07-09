@@ -1514,5 +1514,41 @@ export function updateChildPaths(children: FileNode[], oldParentPath: string, ne
   });
 }
 
+/**
+ * Validates if a test structure has valid content for execution
+ * Checks for empty commands and ensures all required fields are present
+ */
+export function validateTestContent(testStructure: TestStructure | null | undefined): boolean {
+  if (!testStructure || !testStructure.steps || testStructure.steps.length === 0) {
+    return false;
+  }
+
+  function validateStep(step: TestStep): boolean {
+    // Check if content is empty or just whitespace for input steps
+    if (step.type === 'input') {
+      if (!step.content || step.content.trim() === '') {
+        return false;
+      }
+    }
+    
+    // For block steps, check if args[0] (block path) is present
+    if (step.type === 'block') {
+      if (!step.args || step.args.length === 0 || !step.args[0] || step.args[0].trim() === '') {
+        return false;
+      }
+      // Recursively validate nested steps in blocks
+      if (step.steps && step.steps.length > 0) {
+        return step.steps.every(validateStep);
+      }
+    }
+    
+    // Output and comment steps can have empty content (valid scenarios)
+    return true;
+  }
+
+  // All steps must be valid
+  return testStructure.steps.every(validateStep);
+}
+
 // Export types for use in components
 export type { TestStep, TestStructure, RecordingCommand, FileNode };
