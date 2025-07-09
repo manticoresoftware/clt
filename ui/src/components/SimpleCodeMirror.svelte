@@ -4,7 +4,7 @@
   import { EditorState, Compartment } from '@codemirror/state';
   import { oneDark } from '@codemirror/theme-one-dark';
   import { bbedit } from '@uiw/codemirror-theme-bbedit';
-  import { defaultKeymap } from '@codemirror/commands';
+  import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
   import { StreamLanguage } from '@codemirror/language';
   import { shell } from '@codemirror/legacy-modes/mode/shell';
 
@@ -39,7 +39,8 @@
         extensions: [
           StreamLanguage.define(shell), // Shell/bash syntax highlighting
           themeCompartment.of(getTheme()), // Theme based on user preference
-          keymap.of(defaultKeymap),
+          history(), // Enable undo/redo history
+          keymap.of([...historyKeymap, ...defaultKeymap]), // Include history keymaps (CMD+Z, CMD+Shift+Z)
           lineNumbers(), // Add line numbers
           EditorView.lineWrapping, // Enable line wrapping
           // Disable all autocomplete and suggestions
@@ -90,14 +91,35 @@
             if (update.docChanged) {
               const newValue = update.state.doc.toString();
               if (newValue !== value) {
+                // Set flag to prevent external update loop
+                isInternalUpdate = true;
+                isUserTyping = true;
+                lastUserValue = newValue;
                 value = newValue;
                 dispatch('input', { target: { value: newValue } });
+                // Reset flag after a short delay to allow parent to process
+                setTimeout(() => {
+                  isInternalUpdate = false;
+                  // Keep user typing flag for longer to prevent external updates
+                  setTimeout(() => {
+                    isUserTyping = false;
+                  }, 500);
+                }, 0);
               }
             }
           }),
           EditorView.domEventHandlers({
-            focus: () => dispatch('focus'),
-            blur: () => dispatch('blur')
+            focus: () => {
+              isUserTyping = true;
+              dispatch('focus');
+            },
+            blur: () => {
+              // Delay clearing typing flag to allow for quick refocus
+              setTimeout(() => {
+                isUserTyping = false;
+              }, 1000);
+              dispatch('blur');
+            }
           })
         ]
       });
@@ -115,7 +137,11 @@
 
   // Update editor when value changes externally
   function updateEditor() {
-    if (editorView && editorView.state.doc.toString() !== value) {
+    if (editorView && editorView.state.doc.toString() !== value && !isInternalUpdate && !isUserTyping) {
+      // Only update if:
+      // 1. Not in internal update cycle
+      // 2. User is not actively typing (preserves undo history)
+      // 3. The value actually changed
       editorView.dispatch({
         changes: {
           from: 0,
