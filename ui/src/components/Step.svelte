@@ -47,6 +47,7 @@
   let isUserEditing = false;
   let lastExternalValue = '';
   let isFocused = false;
+  let editingTimeout: number;
 
   // Initialize scroll sync manager
   const scrollSyncManager = new ScrollSyncManager();
@@ -67,10 +68,39 @@
     lastExternalValue = ''; // Force reset to ensure reactive statement triggers
   }
 
-  // Clean reactive statement for content updates
+  // Clean reactive statement for content updates - with better cursor preservation
   $: if (expectedOutputEl && command.expectedOutput !== lastExternalValue && !isUserEditing && !isFocused) {
+    // Store cursor position before update
+    const selection = window.getSelection();
+    const range = selection?.getRangeAt(0);
+    const cursorOffset = range?.startOffset || 0;
+    const cursorNode = range?.startContainer;
+    const wasInExpectedOutput = expectedOutputEl.contains(cursorNode);
+    
     expectedOutputEl.textContent = command.expectedOutput || '';
     lastExternalValue = command.expectedOutput || '';
+    
+    // Restore cursor position if it was in the expected output
+    if (wasInExpectedOutput && selection && cursorNode) {
+      setTimeout(() => {
+        try {
+          const newRange = document.createRange();
+          const maxOffset = expectedOutputEl.textContent?.length || 0;
+          const safeOffset = Math.min(cursorOffset, maxOffset);
+          
+          // Find the text node to place cursor in
+          const textNode = expectedOutputEl.firstChild || expectedOutputEl;
+          if (textNode.nodeType === Node.TEXT_NODE) {
+            newRange.setStart(textNode, safeOffset);
+            newRange.setEnd(textNode, safeOffset);
+            selection.removeAllRanges();
+            selection.addRange(newRange);
+          }
+        } catch (e) {
+          // Ignore cursor restoration errors
+        }
+      }, 0);
+    }
   }
 
   // Handle DOM initialization and ensure content is set when element becomes available
@@ -152,11 +182,11 @@
           syncScroll(true);
         }
         
-        // Reset editing flag after a longer delay to prevent premature collapse
+        // Reset editing flag after a longer delay to prevent premature reactive updates
         setTimeout(() => {
           isUserEditing = false;
-        }, 300);
-      }, 0);
+        }, 500); // Increased from 300ms to 500ms
+      }, 10); // Increased from 0ms to 10ms
     } catch (err) {
       console.error('Error updating expected output:', err);
       isUserEditing = false;
@@ -520,8 +550,22 @@
               on:blur={handleOutputBlur}
               on:focus={handleOutputFocus}
               on:click={handleContentClick}
-              on:keydown={() => { isUserEditing = true; }}
-              on:paste={() => { isUserEditing = true; }}
+              on:keydown={(e) => { 
+                isUserEditing = true; 
+                // Prevent reactive updates during typing
+                clearTimeout(editingTimeout);
+                editingTimeout = setTimeout(() => {
+                  isUserEditing = false;
+                }, 1000);
+              }}
+              on:paste={(e) => { 
+                isUserEditing = true; 
+                // Prevent reactive updates during pasting
+                clearTimeout(editingTimeout);
+                editingTimeout = setTimeout(() => {
+                  isUserEditing = false;
+                }, 1000);
+              }}
               use:initOutputScroll={true}
             >
               <!-- Content will be managed by reactive statement to prevent cursor jumping -->
