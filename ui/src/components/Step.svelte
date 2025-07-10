@@ -4,13 +4,13 @@
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
   import OutputCodeMirror from './OutputCodeMirror.svelte';
   import { filesStore } from '../stores/filesStore';
-  import { 
-    ScrollSyncManager, 
-    getStatusIcon, 
-    highlightDifferences, 
-    formatDuration, 
+  import {
+    ScrollSyncManager,
+    getStatusIcon,
+    highlightDifferences,
+    formatDuration,
     parseActualOutputContent,
-    getActualOutputContent 
+    getActualOutputContent
   } from './StepLogic.js';
 
   export let command: any;
@@ -23,12 +23,12 @@
   $: isCurrentFileRunning = $filesStore.currentFile ? $filesStore.runningTests.has($filesStore.currentFile.path) : false;
 
   // Debug log to see command structure
-  $: console.log('Step command debug:', { 
-    index, 
-    status: command.status, 
-    actualOutput: command.actualOutput, 
+  $: console.log('Step command debug:', {
+    index,
+    status: command.status,
+    actualOutput: command.actualOutput,
     actualOutputLength: command.actualOutput?.length,
-    initializing: command.initializing 
+    initializing: command.initializing
   });
 
   const dispatch = createEventDispatcher();
@@ -42,7 +42,7 @@
   // Output elements for scroll sync
   let expectedOutputEl: HTMLElement;
   let actualOutputEl: HTMLElement;
-  
+
   // Track if user is currently editing to prevent cursor jumping
   let isUserEditing = false;
   let lastExternalValue = '';
@@ -76,10 +76,10 @@
     const cursorOffset = range?.startOffset || 0;
     const cursorNode = range?.startContainer;
     const wasInExpectedOutput = expectedOutputEl.contains(cursorNode);
-    
+
     expectedOutputEl.textContent = command.expectedOutput || '';
     lastExternalValue = command.expectedOutput || '';
-    
+
     // Restore cursor position if it was in the expected output
     if (wasInExpectedOutput && selection && cursorNode) {
       setTimeout(() => {
@@ -87,7 +87,7 @@
           const newRange = document.createRange();
           const maxOffset = expectedOutputEl.textContent?.length || 0;
           const safeOffset = Math.min(cursorOffset, maxOffset);
-          
+
           // Find the text node to place cursor in
           const textNode = expectedOutputEl.firstChild || expectedOutputEl;
           if (textNode.nodeType === Node.TEXT_NODE) {
@@ -120,9 +120,9 @@
   // Output scroll action wrapper
   function initOutputScroll(node: HTMLElement, isExpected: boolean) {
     return scrollSyncManager.initOutputScroll(
-      node, 
-      isExpected, 
-      () => expectedOutputEl, 
+      node,
+      isExpected,
+      () => expectedOutputEl,
       () => actualOutputEl
     );
   }
@@ -131,14 +131,10 @@
     try {
       // Get value from CodeMirror dispatched event
       const newValue = e.detail?.target?.value || '';
-      
-      // Only dispatch if the value actually changed to prevent unnecessary updates
-      if (newValue !== command.command) {
-        // Use a timeout to avoid reactive update cycles
-        setTimeout(() => {
-          dispatch('updateCommand', { index, newValue });
-        }, 0);
-      }
+
+			setTimeout(() => {
+				dispatch('updateCommand', { index, newValue });
+			}, 0);
     } catch (err) {
       console.error('Error updating command:', err);
     }
@@ -158,7 +154,7 @@
 
       // Dispatch the update without direct mutation
       dispatch('updateExpectedOutput', { index, newValue });
-      
+
       // Restore cursor position after update
       setTimeout(() => {
         if (expectedOutputEl && selection && cursorNode && expectedOutputEl.contains(cursorNode)) {
@@ -176,12 +172,12 @@
             expectedOutputEl.focus();
           }
         }
-        
+
         // Also sync scroll position after content change
         if (!scrollSyncManager.isScrollSyncing) {
           syncScroll(true);
         }
-        
+
         // Reset editing flag after a longer delay to prevent premature reactive updates
         setTimeout(() => {
           isUserEditing = false;
@@ -245,7 +241,7 @@
     const actualContent = getActualOutputContent(command.actualOutput);
     if (actualContent) {
       dispatch('updateExpectedOutput', { index, newValue: actualContent });
-      
+
       // Add visual feedback
       const button = event.target as HTMLElement;
       button.style.transform = 'scale(0.9)';
@@ -265,7 +261,7 @@
         const activeElement = document.activeElement;
         const outputGrid = activeElement?.closest('.output-grid');
         const isStillInContentEditable = activeElement === expectedOutputEl;
-        
+
         // Only collapse if focus truly moved outside the output area
         if (!outputGrid && !isStillInContentEditable) {
           dispatch('toggleExpansion', { index, expanded: false });
@@ -287,15 +283,15 @@
         console.log('GLOBAL CLICK BLOCKED - user editing');
         return;
       }
-      
+
       // Don't collapse if user is actively editing
       if (command.isOutputExpanded && outputGridEl) {
         const target = event.target as HTMLElement;
         const isInsideOutputGrid = outputGridEl.contains(target);
         const isContentEditable = target === expectedOutputEl || expectedOutputEl.contains(target);
-        
+
         console.log('GLOBAL CLICK CHECK', { isInsideOutputGrid, isContentEditable, target: target.tagName });
-        
+
         // Don't collapse if clicking inside the output grid or contenteditable
         if (!isInsideOutputGrid && !isContentEditable) {
           console.log('GLOBAL CLICK COLLAPSING');
@@ -542,30 +538,16 @@
             {/if}
           </div>
           <div class="output-wrapper {command.isOutputExpanded ? 'expanded' : ''}" on:click={handleExpectedOutputClick}>
-            <div 
-              class="output-content" 
-              contenteditable="true" 
+            <div
+              class="output-content"
+              contenteditable="true"
               bind:this={expectedOutputEl}
               on:input={handleExpectedOutputInput}
               on:blur={handleOutputBlur}
               on:focus={handleOutputFocus}
               on:click={handleContentClick}
-              on:keydown={(e) => { 
-                isUserEditing = true; 
-                // Prevent reactive updates during typing
-                clearTimeout(editingTimeout);
-                editingTimeout = setTimeout(() => {
-                  isUserEditing = false;
-                }, 1000);
-              }}
-              on:paste={(e) => { 
-                isUserEditing = true; 
-                // Prevent reactive updates during pasting
-                clearTimeout(editingTimeout);
-                editingTimeout = setTimeout(() => {
-                  isUserEditing = false;
-                }, 1000);
-              }}
+              on:keydown={() => { isUserEditing = true; }}
+              on:paste={() => { isUserEditing = true; }}
               use:initOutputScroll={true}
             >
               <!-- Content will be managed by reactive statement to prevent cursor jumping -->
@@ -578,7 +560,7 @@
             <label for={`actual-output-${index}`}>Actual Output</label>
           </div>
           <div class="output-wrapper {command.isOutputExpanded ? 'expanded' : ''}" on:click={handleActualOutputClick}>
-            <div 
+            <div
               class="output-content"
               bind:this={actualOutputEl}
               on:blur={handleOutputBlur}
@@ -1410,11 +1392,11 @@
 
   /* Pending status animation */
   @keyframes pendingGlow {
-    0%, 100% { 
+    0%, 100% {
       background-color: var(--color-bg-pending, #e2e8f0);
       box-shadow: 0 0 0 rgba(59, 130, 246, 0);
     }
-    50% { 
+    50% {
       background-color: #dbeafe;
       box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
     }
