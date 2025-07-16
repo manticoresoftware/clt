@@ -356,11 +356,8 @@ export async function ensureGitRemoteWithToken(gitInstance, token, REPO_URL) {
     // Use the REPO_URL variable directly for consistent base URL
     const tokenUrl = REPO_URL.replace('https://', `https://x-access-token:${token}@`);
 
-    // Remove existing origin and add new one with token
-    await gitInstance.removeRemote('origin').catch(() => {
-      // Ignore error if remote doesn't exist
-    });
-    await gitInstance.addRemote('origin', tokenUrl);
+    // Update existing origin remote with token (works whether remote exists or not)
+    await gitInstance.remote(['set-url', 'origin', tokenUrl]);
     console.log('Git remote configured with authentication token');
   } catch (error) {
     console.warn('Error configuring git remote with token:', error.message);

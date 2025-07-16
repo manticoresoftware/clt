@@ -7,7 +7,9 @@ import {
   ensureGitRemoteWithToken,
   slugify
 } from './routes.js';
+import { ensureRepositoryCheckout } from './repositoryManager.js';
 import { getDefaultBranch, checkExistingPR, isPRBranch } from './helpers.js';
+import tokenManager from './tokenManager.js';
 
 // Setup Git routes
 export function setupGitRoutes(app, isAuthenticated, dependencies) {
@@ -290,50 +292,22 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       }
 
       try {
-        // Initialize simple-git with the user's repo path
-        const git = simpleGit(userRepo);
-        await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
-
-        // Get current status to check for changes
-        const status = await git.status();
-        let stashMessage = '';
-
-        // Stash changes if needed
-        if (!status.isClean()) {
-          const timestamp = new Date().toISOString();
-          stashMessage = `Auto-stashed by CLT-UI for ${req.user.username} at ${timestamp}`;
-          await git.stash(['push', '-m', stashMessage]);
-          console.log(`Stashed current changes: ${stashMessage}`);
-        }
-
-        // Fetch latest from remote
-        await git.fetch(['--all']);
-        console.log('Fetched latest updates from remote');
-
-        // Get the list of branches to check if the requested branch exists
-        const branches = await git.branch();
-        const branchExists = branches.all.includes(branch);
-
-        if (branchExists) {
-          // Local branch exists, checkout and reset to remote
-          await git.checkout(branch);
-          console.log(`Switched to branch: ${branch}`);
-
-          // Reset to origin's version of the branch
-          await git.reset(['--hard', `origin/${branch}`]);
-          console.log(`Reset to origin/${branch}`);
-        } else {
-          // Local branch doesn't exist, create tracking branch
-          await git.checkout(['-b', branch, `origin/${branch}`]);
-          console.log(`Created and checked out branch ${branch} tracking origin/${branch}`);
-        }
+        const result = await ensureRepositoryCheckout({
+          username: req.user.username,
+          userToken: req.user.token,
+          repoUrl: REPO_URL,
+          workdir: WORKDIR,
+          branch,
+          operation: 'reset',
+          forceReset: true
+        });
 
         return res.json({
           success: true,
-          branch,
-          repository: status.tracking,
-          stashed: status.isClean() ? null : stashMessage,
-          message: `Successfully reset to branch: ${branch}`
+          branch: result.branch,
+          repository: REPO_URL,
+          stashed: result.stashed,
+          message: result.message
         });
       } catch (gitError) {
         console.error('Git operation error:', gitError);
@@ -371,62 +345,20 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       }
 
       try {
-        // Initialize simple-git with the user's repo path
-        const git = simpleGit(userRepo);
-        await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
-
-        // Get current status to check for changes
-        const status = await git.status();
-        let stashMessage = '';
-
-        // Stash changes if needed
-        if (!status.isClean()) {
-          const timestamp = new Date().toISOString();
-          stashMessage = `Auto-stashed by CLT-UI for ${req.user.username} at ${timestamp}`;
-          await git.stash(['push', '-m', stashMessage]);
-          console.log(`Stashed current changes: ${stashMessage}`);
-        }
-
-        // Fetch latest from remote
-        await git.fetch(['--all']);
-        console.log('Fetched latest updates from remote');
-
-        // Get the list of branches to check if the requested branch exists
-        const branches = await git.branch();
-        const localBranchExists = branches.all.includes(branch);
-        const remoteBranchExists = branches.all.includes(`remotes/origin/${branch}`);
-
-        if (localBranchExists) {
-          // Local branch exists, checkout and pull
-          await git.checkout(branch);
-          console.log(`Switched to existing branch: ${branch}`);
-
-          try {
-            await git.pull('origin', branch);
-            console.log(`Pulled latest changes for branch: ${branch}`);
-          } catch (pullError) {
-            console.warn(`Warning: Could not pull latest changes for ${branch}:`, pullError.message);
-            // Continue anyway - the checkout was successful
-          }
-        } else if (remoteBranchExists) {
-          // Remote branch exists, create local tracking branch
-          await git.checkout(['-b', branch, `origin/${branch}`]);
-          console.log(`Created and checked out branch ${branch} tracking origin/${branch}`);
-        } else {
-          return res.status(400).json({
-            error: `Branch '${branch}' not found locally or on remote`
-          });
-        }
-
-        // Get current status to confirm
-        const finalStatus = await git.status();
-        const currentBranch = finalStatus.current;
+        const result = await ensureRepositoryCheckout({
+          username: req.user.username,
+          userToken: req.user.token,
+          repoUrl: REPO_URL,
+          workdir: WORKDIR,
+          branch,
+          operation: 'checkout'
+        });
 
         return res.json({
           success: true,
-          currentBranch: currentBranch,
-          stashed: stashMessage || null,
-          message: `Successfully checked out and pulled branch: ${currentBranch}${stashMessage ? ' (changes stashed)' : ''}`
+          currentBranch: result.branch,
+          stashed: result.stashed,
+          message: result.message
         });
       } catch (gitError) {
         console.error('Git operation error:', gitError);
