@@ -6,6 +6,7 @@ import { createReadStream } from 'fs';
 import session from 'express-session';
 import dotenv from 'dotenv';
 import simpleGit from 'simple-git';
+import { ensureRepositoryCheckout } from './repositoryManager.js';
 
 import {
   getPatternsWasm,
@@ -112,53 +113,15 @@ async function ensureUserRepo(username) {
 	if (!username) return null;
 
 	try {
-		const userDir = path.join(WORKDIR, username);
-		const userRepoExists = await fs.access(userDir).then(() => true).catch(() => false);
-
-		if (!userRepoExists) {
-			console.log(`Setting up repository for user ${username}`);
-			await fs.mkdir(userDir, { recursive: true });
-
-			// Get the user's token if available from session
-			const userToken = global.userTokens && global.userTokens[username];
-
-			// Clone the repository using simple-git
-			const git = simpleGit({ baseDir: WORKDIR });
-
-			// Use authentication if we have a token
-			if (userToken) {
-				// Create authenticated URL
-				let cloneUrl = REPO_URL;
-				if (REPO_URL.startsWith('https://')) {
-					cloneUrl = REPO_URL.replace('https://', `https://x-access-token:${userToken}@`);
-				}
-				console.log(`Cloning repository for user ${username} with authentication`);
-				await git.clone(cloneUrl, userDir);
-
-				// Initialize a new git instance in the user's repository directory
-				const userGit = simpleGit(userDir);
-
-				// Set local repository configuration for the specific repository
-				await userGit.addConfig('user.name', username, false, 'local');
-				await userGit.addConfig('user.email', `${username}@users.noreply.github.com`, false, 'local');
-				console.log(`Set local git config for ${username}`);
-			} else {
-				console.log('Missing user token, skipping git clone');
-			}
-
-			console.log(`Cloned repository for user ${username}`);
-		}
-
-		// Verify the repo is valid and the CLT tests folder exists
-		const testDir = path.join(userDir, 'test', 'clt-tests');
-		const testDirExists = await fs.access(testDir).then(() => true).catch(() => false);
-
-		if (!testDirExists) {
-			console.error(`CLT tests directory not found for user ${username}. Expected at: ${testDir}`);
-			return null;
-		}
-
-		return { userDir, testDir };
+		const userToken = global.userTokens && global.userTokens[username];
+		
+		return await ensureRepositoryCheckout({
+			username,
+			userToken,
+			repoUrl: REPO_URL,
+			workdir: WORKDIR,
+			operation: 'clone'
+		});
 	} catch (error) {
 		console.error(`Error setting up user repository: ${error}`);
 		return null;
