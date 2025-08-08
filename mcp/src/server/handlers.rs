@@ -339,7 +339,8 @@ impl ToolHandlers {
                             "ambiguous": "Old test structure matches multiple locations - make it more specific",
                             "file_not_found": "Test file doesn't exist - check the path"
                         },
-                        "matching_rules": "Steps must match exactly: type, args, content, and nested steps (if any)"
+                        "matching_rules": "Steps must match exactly: type, args, content, and nested steps (if any)",
+                        "suggestion": "Try using preview: true to see what matches were found"
                     }
                 });
 

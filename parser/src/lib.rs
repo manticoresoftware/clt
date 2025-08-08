@@ -514,18 +514,54 @@ fn find_and_replace_structure(
     }
 
     // Look for the sequence of old steps in current steps
-    let mut found_at = None;
+    let mut matches = Vec::new();
     for i in 0..=current_steps.len().saturating_sub(old_steps.len()) {
         if steps_match_sequence(&current_steps[i..i + old_steps.len()], old_steps) {
-            if found_at.is_some() {
-                return Err(anyhow::anyhow!("Ambiguous replacement: old test structure matches multiple locations in the file"));
-            }
-            found_at = Some(i);
+            matches.push(i);
         }
     }
 
-    let start_idx =
-        found_at.ok_or_else(|| anyhow::anyhow!("Old test structure not found in the current file"))?;
+    let start_idx = match matches.len() {
+        0 => {
+            // Show what we were looking for and what's actually in the file
+            let looking_for = format_steps_summary(old_steps);
+            let file_content = format_steps_summary(current_steps);
+            return Err(anyhow::anyhow!(
+                "Old test structure not found in the current file.\nLooking for: {}\nFile contains: {}",
+                looking_for, file_content
+            ));
+        }
+        1 => matches[0],
+        _ => {
+            // Multiple matches - give AI context to choose the right one
+            let mut match_details = Vec::new();
+            for (idx, &match_pos) in matches.iter().enumerate() {
+                let context_before = if match_pos > 0 {
+                    format_step_summary(&current_steps[match_pos - 1])
+                } else {
+                    "START OF FILE".to_string()
+                };
+                let context_after = if match_pos + old_steps.len() < current_steps.len() {
+                    format_step_summary(&current_steps[match_pos + old_steps.len()])
+                } else {
+                    "END OF FILE".to_string()
+                };
+                match_details.push(format!(
+                    "Match {} at steps {}-{}: before=[{}] after=[{}]",
+                    idx + 1,
+                    match_pos + 1,
+                    match_pos + old_steps.len(),
+                    context_before,
+                    context_after
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "Ambiguous replacement: old test structure matches {} locations in the file.\n{}\nTo fix: Make your old_structure more specific by including surrounding steps or unique content.",
+                matches.len(),
+                match_details.join("\n")
+            ));
+        }
+    };
 
     // Create new structure with replacement
     let mut new_steps = Vec::new();
@@ -569,11 +605,62 @@ fn steps_match_sequence(seq1: &[TestStep], seq2: &[TestStep]) -> bool {
     true
 }
 
+/// Format a single step for error messages
+fn format_step_summary(step: &TestStep) -> String {
+    match &step.content {
+        Some(content) => {
+            let truncated = if content.len() > 30 {
+                format!("{}...", &content[..27])
+            } else {
+                content.clone()
+            };
+            format!("{} '{}'", step.step_type, truncated)
+        }
+        None => step.step_type.clone(),
+    }
+}
+
+/// Format multiple steps for error messages
+fn format_steps_summary(steps: &[TestStep]) -> String {
+    if steps.is_empty() {
+        return "EMPTY".to_string();
+    }
+    if steps.len() == 1 {
+        return format_step_summary(&steps[0]);
+    }
+    if steps.len() <= 3 {
+        return steps
+            .iter()
+            .map(format_step_summary)
+            .collect::<Vec<_>>()
+            .join(", ");
+    }
+    format!(
+        "{}, {}, ... ({} total steps)",
+        format_step_summary(&steps[0]),
+        format_step_summary(&steps[1]),
+        steps.len()
+    )
+}
+
+/// Normalize content for comparison (trim whitespace, normalize line endings)
+fn normalize_content(content: &Option<String>) -> Option<String> {
+    content.as_ref().map(|s| {
+        s.trim()
+            .replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .lines()
+            .map(|line| line.trim())
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
+}
+
 /// Check if two test steps match exactly
 fn steps_match(step1: &TestStep, step2: &TestStep) -> bool {
     step1.step_type == step2.step_type
         && step1.args == step2.args
-        && step1.content == step2.content
+        && normalize_content(&step1.content) == normalize_content(&step2.content)
         && match (&step1.steps, &step2.steps) {
             (None, None) => true,
             (Some(s1), Some(s2)) => steps_match_sequence(s1, s2),
