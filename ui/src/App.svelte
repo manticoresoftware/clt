@@ -3,14 +3,38 @@
   import FileExplorer from './components/FileExplorer.svelte';
   import Editor from './components/Editor.svelte';
   import PullRequestModal from './components/PullRequestModal.svelte';
+  import FuzzySearch from './components/FuzzySearch.svelte';
   import { filesStore } from './stores/filesStore';
   import { authStore, fetchAuthState } from './stores/authStore';
   import { branchStore } from './stores/branchStore';
   import { repoSyncStore } from './stores/repoSyncStore';
   import { API_URL, AUTH_GITHUB_URL } from './config.js';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
 
   let isLoading = true;
+  let isFuzzySearchOpen = false;
+
+  // Global keyboard shortcut handler
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    // Cmd+K or Ctrl+K to open fuzzy search
+    if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
+      event.preventDefault();
+      isFuzzySearchOpen = true;
+    }
+  }
+
+  // Handle file selection from fuzzy search
+  function handleFileSelected(event: CustomEvent<{ filePath: string }>) {
+    const { filePath } = event.detail;
+    
+    // Update URL with selected file path
+    const url = new URL(window.location.href);
+    url.searchParams.set('file', filePath);
+    window.history.pushState({}, '', url.toString());
+    
+    // Trigger file loading by dispatching a popstate event
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }
 
   // Reactive statement to fetch branch info when repo becomes ready
   $: if ($authStore.isAuthenticated && $repoSyncStore.isInitialized && !$branchStore.currentBranch) {
@@ -19,6 +43,9 @@
 
   // Fetch authentication state when the app loads
   onMount(async () => {
+    // Add global keyboard event listener
+    document.addEventListener('keydown', handleGlobalKeydown);
+    
     try {
       await fetchAuthState();
       isLoading = false;
@@ -79,6 +106,7 @@
 
       return () => {
         clearInterval(authCheckInterval);
+        document.removeEventListener('keydown', handleGlobalKeydown);
       };
     } catch (err) {
       // Only log the error, don't set authError - let the store handle it
@@ -142,6 +170,14 @@
 
       <!-- Pull Request Modal -->
       <PullRequestModal />
+      
+      <!-- Fuzzy Search Modal -->
+      <FuzzySearch 
+        bind:isOpen={isFuzzySearchOpen} 
+        fileTree={$filesStore.fileTree} 
+        on:fileSelected={handleFileSelected}
+        on:close={() => isFuzzySearchOpen = false}
+      />
     {/if}
   {:else}
     <div class="login-required">
