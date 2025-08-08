@@ -5,6 +5,7 @@
   import { repoSyncStore } from '../stores/repoSyncStore';
   import { gitStatusStore, checkUnstagedChanges } from '../stores/gitStatusStore';
   import { API_URL } from '../config.js';
+  import BranchSelector from './BranchSelector.svelte';
 
   // Default to tests directory
   let currentDirectory = 'tests';
@@ -19,6 +20,13 @@
   // Update resetBranch when default branch is loaded
   $: if ($branchStore.defaultBranch) {
     resetBranch = $branchStore.defaultBranch;
+  }
+
+  // Handle branch selection from BranchSelector - auto-execute reset
+  async function handleBranchSelect(event: CustomEvent) {
+    resetBranch = event.detail.branch;
+    // Auto-execute the branch reset immediately
+    await handleResetToBranch();
   }
 
   // Parse URL parameters
@@ -545,6 +553,10 @@
     // Fetch the file tree from the backend
     preserveExpandedState();
     await filesStore.refreshFileTree();
+    
+    // Fetch current branch and all branches
+    await branchStore.fetchCurrentBranch();
+    await branchStore.fetchAllBranches();
 
     // Start git status polling only if not already active
     if (!gitStatusStore.isPolling()) {
@@ -1457,29 +1469,24 @@
         <div class="branch-error">{$branchStore.error}</div>
       {/if}
       <div class="branch-reset">
-        <input
-          type="text"
+        <BranchSelector
+          branches={$branchStore.allBranches}
           bind:value={resetBranch}
           placeholder="e.g., master, main, feature/xyz"
-          class="branch-input"
+          disabled={$branchStore.isResetting}
+          on:select={handleBranchSelect}
         />
-        <button
-          class="reset-button"
-          on:click={handleResetToBranch}
-          disabled={$branchStore.isResetting || !resetBranch}
-        >
-          {#if $branchStore.isResetting}
+        {#if $branchStore.isResetting}
+          <div class="reset-status">
             <span class="loading-indicator-small">
               <svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
             </span>
-            Resetting...
-          {:else}
-            OK
-          {/if}
-        </button>
+            Switching...
+          </div>
+        {/if}
       </div>
 
       <!-- Repository Sync Section -->
@@ -1706,18 +1713,8 @@
     margin-bottom: 4px;
   }
 
-  .branch-input {
-    flex: 1;
-    padding: 3px 6px;
-    border: 1px solid var(--color-border);
-    border-radius: 4px;
-    font-size: 12px;
-  }
-
   .reset-button {
     display: flex;
-    align-items: center;
-    justify-content: center;
     background-color: var(--color-bg-secondary);
     color: var(--color-text-primary);
     border: 1px solid var(--color-border);
@@ -1771,26 +1768,13 @@
     font-size: 12px;
   }
 
-  .reset-button {
+  .reset-status {
     display: flex;
     align-items: center;
     justify-content: center;
-    background-color: var(--color-bg-secondary);
-    color: var(--color-text-primary);
-    border: 1px solid var(--color-border);
-    border-radius: 4px;
-    padding: 2px 8px;
-    cursor: pointer;
+    color: var(--color-text-secondary);
     font-size: 12px;
-  }
-
-  .reset-button:not(:disabled):hover {
-    background-color: var(--color-bg-secondary-hover);
-  }
-
-  .reset-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+    padding: 2px 8px;
   }
 
   .loading-indicator-small {

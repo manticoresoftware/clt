@@ -5,6 +5,7 @@ import { filesStore } from './filesStore';
 interface BranchState {
   currentBranch: string;
   defaultBranch: string;
+  allBranches: string[];
   isResetting: boolean;
   isLoading: boolean;
   error: string | null;
@@ -15,6 +16,7 @@ interface BranchState {
 const initialState: BranchState = {
   currentBranch: 'unknown', // Will be updated from the server
   defaultBranch: 'master', // Default branch name
+  allBranches: [],
   isResetting: false,
   isLoading: false,
   error: null,
@@ -56,6 +58,36 @@ function createBranchStore() {
           error: error.message || 'An error occurred while getting current branch'
         }));
         console.error('Error fetching current branch:', error);
+      }
+    },
+    fetchAllBranches: async () => {
+      update(state => ({ ...state, isLoading: true, error: null }));
+      
+      try {
+        const response = await fetch(`${API_URL}/api/branches`, {
+          credentials: 'include'
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to get branches');
+        }
+        
+        update(state => ({
+          ...state,
+          isLoading: false,
+          allBranches: data.branches || []
+        }));
+        
+        return data;
+      } catch (error) {
+        update(state => ({
+          ...state,
+          isLoading: false,
+          error: error.message || 'An error occurred while getting branches'
+        }));
+        console.error('Error fetching branches:', error);
       }
     },
     resetToBranch: async (branch: string) => {
