@@ -143,6 +143,15 @@
     }
   }
 
+  // Handle click - mark as user interaction
+  function handleClick() {
+    if (isSelecting) return;
+    userInteracted = true;
+    if (searchQuery.trim() && searchResults.length > 0) {
+      showDropdown = true;
+    }
+  }
+
   // Handle blur with delay to allow clicks
   function handleBlur() {
     if (isSelecting) return; // Don't close if selecting

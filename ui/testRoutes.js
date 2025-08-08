@@ -65,7 +65,7 @@ function stopRunningTest(jobId) {
 
   try {
     console.log(`🛑 Stopping test ${jobId} for user ${testInfo.username}`);
-    
+
     if (testInfo.process && !testInfo.process.killed) {
       testInfo.process.kill('SIGTERM');
       // Force kill after 5 seconds if still running
@@ -76,17 +76,22 @@ function stopRunningTest(jobId) {
         }
       }, 5000);
     }
-    
+
     // Mark as stopped and finished
     testInfo.finished = true;
     testInfo.stopped = true;
     testInfo.exitCode = -1;
     testInfo.error = 'Test stopped by user';
-    
+
     // Fix: Clean up job to decrement counter
     cleanupJob(jobId, testInfo.username);
-    
+
     return true;
+  } catch (error) {
+    console.error('Error stopping test:', error);
+    return false;
+  }
+}
 
 // Setup Test routes
 export function setupTestRoutes(app, isAuthenticated, dependencies) {
@@ -818,12 +823,12 @@ export function setupTestRoutes(app, isAuthenticated, dependencies) {
 
       const { username } = req.params;
       const targetUser = username || getUsername(req, getAuthConfig);
-      
+
       const currentCount = userConcurrency.get(targetUser) || 0;
       const maxConcurrency = parseInt(process.env.RUN_TEST_CONCURRENCY_PER_USER) || 3;
       const runningTestsForUser = Array.from(runningTests.entries())
         .filter(([_, testInfo]) => testInfo.username === targetUser);
-      
+
       res.json({
         username: targetUser,
         currentCount,
@@ -854,10 +859,10 @@ export function setupTestRoutes(app, isAuthenticated, dependencies) {
 
       const { username } = req.params;
       const targetUser = username || getUsername(req, getAuthConfig);
-      
+
       const oldCount = userConcurrency.get(targetUser) || 0;
       userConcurrency.set(targetUser, 0);
-      
+
       // Also clean up any finished/stopped tests for this user
       const cleanedTests = [];
       for (const [jobId, testInfo] of runningTests.entries()) {
@@ -866,9 +871,9 @@ export function setupTestRoutes(app, isAuthenticated, dependencies) {
           cleanedTests.push(jobId);
         }
       }
-      
+
       console.log(`🔧 Reset concurrency for ${targetUser}: ${oldCount} -> 0, cleaned ${cleanedTests.length} tests`);
-      
+
       res.json({
         username: targetUser,
         oldCount,
@@ -878,11 +883,6 @@ export function setupTestRoutes(app, isAuthenticated, dependencies) {
       });
     } catch (error) {
       console.error('Error resetting concurrency:', error);
-      res.status(500).json({ error: `Failed to reset concurrency: ${error.message}` });
-    }
-  });
-}
-currency:', error);
       res.status(500).json({ error: `Failed to reset concurrency: ${error.message}` });
     }
   });
