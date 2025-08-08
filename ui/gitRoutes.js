@@ -269,6 +269,69 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
     }
   });
 
+  // API endpoint to get all branches
+  app.get('/api/branches', isAuthenticated, async (req, res) => {
+    try {
+      // Check if user is authenticated with GitHub
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      // Get the user's repo path
+      const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepo).then(() => true).catch(() => false);
+
+      if (!repoExists) {
+        return res.status(404).json({ error: 'Repository not found' });
+      }
+
+      try {
+        // Initialize simple-git with the user's repo path
+        const git = simpleGit({ baseDir: userRepo });
+
+        // Get all branches (local and remote)
+        const branchSummary = await git.branch(['-a']);
+        console.log('Branch summary:', branchSummary);
+
+        // Extract branch names, filtering out HEAD and remote tracking branches
+        const branches = branchSummary.all
+          .filter(branch => {
+            // Filter out HEAD pointer and remote tracking branches
+            return !branch.includes('HEAD') && 
+                   !branch.startsWith('remotes/origin/HEAD') &&
+                   branch !== 'HEAD';
+          })
+          .map(branch => {
+            // Clean up branch names - remove 'remotes/origin/' prefix for remote branches
+            if (branch.startsWith('remotes/origin/')) {
+              return branch.replace('remotes/origin/', '');
+            }
+            return branch;
+          })
+          // Remove duplicates (local and remote versions of same branch)
+          .filter((branch, index, array) => array.indexOf(branch) === index)
+          // Sort branches alphabetically
+          .sort();
+
+        console.log(`Found ${branches.length} branches:`, branches);
+
+        return res.json({
+          success: true,
+          branches: branches
+        });
+      } catch (gitError) {
+        console.error('Git operation error:', gitError);
+        return res.status(500).json({
+          error: 'Git operation failed',
+          details: gitError.message
+        });
+      }
+    } catch (error) {
+      console.error('Error getting branches:', error);
+      res.status(500).json({ error: `Failed to get branches: ${error.message}` });
+    }
+  });
+
   // API endpoint to reset and sync to a specific branch
   app.post('/api/reset-to-branch', isAuthenticated, async (req, res) => {
     try {
