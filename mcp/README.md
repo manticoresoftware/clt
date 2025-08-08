@@ -475,6 +475,11 @@ Replace specific test steps in an existing CLT test file.
 }
 ```
 
+**Enhanced Error Handling:**
+- **No match found**: Shows what was searched for vs what's in the file
+- **Multiple matches**: Lists all match locations with surrounding context
+- **Ambiguous replacement**: Provides specific suggestions to make the match unique
+
 ### 9. append_test
 
 Append new test steps to an existing CLT test file.
