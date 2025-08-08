@@ -64,25 +64,29 @@ function stopRunningTest(jobId) {
   if (!testInfo) return false;
 
   try {
+    console.log(`🛑 Stopping test ${jobId} for user ${testInfo.username}`);
+    
     if (testInfo.process && !testInfo.process.killed) {
       testInfo.process.kill('SIGTERM');
       // Force kill after 5 seconds if still running
       setTimeout(() => {
         if (testInfo.process && !testInfo.process.killed) {
+          console.log(`🔥 Force killing test ${jobId}`);
           testInfo.process.kill('SIGKILL');
         }
       }, 5000);
     }
+    
+    // Mark as stopped and finished
     testInfo.finished = true;
     testInfo.stopped = true;
     testInfo.exitCode = -1;
     testInfo.error = 'Test stopped by user';
+    
+    // Fix: Clean up job to decrement counter
+    cleanupJob(jobId, testInfo.username);
+    
     return true;
-  } catch (error) {
-    console.error('Error stopping test:', error);
-    return false;
-  }
-}
 
 // Setup Test routes
 export function setupTestRoutes(app, isAuthenticated, dependencies) {
@@ -265,6 +269,19 @@ export function setupTestRoutes(app, isAuthenticated, dependencies) {
 
       // If test is finished, process final results and clean up
       if (testInfo.finished) {
+        // DEFENSIVE FIX: Check if test was stopped but not cleaned up
+        if (testInfo.stopped && runningTests.has(jobId)) {
+          console.log(`🔍 Detected stopped test ${jobId} that wasn't cleaned up, cleaning now`);
+          cleanupJob(jobId, testInfo.username);
+          return res.json({
+            running: false,
+            finished: true,
+            status: 'stopped',
+            success: false,
+            exitCode: -1,
+            error: 'Test was stopped by user'
+          });
+        }
         try {
           // Parse the .rec file using WASM with content map (same as original logic)
           console.log(`📖 Parsing .rec file with WASM: ${testInfo.absolutePath}`);
@@ -788,6 +805,85 @@ export function setupTestRoutes(app, isAuthenticated, dependencies) {
     } catch (error) {
       console.error('Error stopping test:', error);
       res.status(500).json({ error: `Failed to stop test: ${error.message}` });
+    }
+  });
+
+  // DEBUG endpoint to check/reset user concurrency (dev mode only)
+  app.get('/api/debug/concurrency/:username?', isAuthenticated, async (req, res) => {
+    try {
+      const authConfig = getAuthConfig();
+      if (!authConfig.skipAuth) {
+        return res.status(403).json({ error: 'Debug endpoints only available in dev mode' });
+      }
+
+      const { username } = req.params;
+      const targetUser = username || getUsername(req, getAuthConfig);
+      
+      const currentCount = userConcurrency.get(targetUser) || 0;
+      const maxConcurrency = parseInt(process.env.RUN_TEST_CONCURRENCY_PER_USER) || 3;
+      const runningTestsForUser = Array.from(runningTests.entries())
+        .filter(([_, testInfo]) => testInfo.username === targetUser);
+      
+      res.json({
+        username: targetUser,
+        currentCount,
+        maxConcurrency,
+        canStartTest: currentCount < maxConcurrency,
+        runningTests: runningTestsForUser.map(([jobId, testInfo]) => ({
+          jobId,
+          filePath: testInfo.filePath,
+          startTime: testInfo.startTime,
+          finished: testInfo.finished,
+          stopped: testInfo.stopped
+        })),
+        allUserCounts: Object.fromEntries(userConcurrency)
+      });
+    } catch (error) {
+      console.error('Error getting concurrency debug info:', error);
+      res.status(500).json({ error: `Failed to get debug info: ${error.message}` });
+    }
+  });
+
+  // DEBUG endpoint to reset user concurrency (dev mode only)
+  app.post('/api/debug/reset-concurrency/:username?', isAuthenticated, async (req, res) => {
+    try {
+      const authConfig = getAuthConfig();
+      if (!authConfig.skipAuth) {
+        return res.status(403).json({ error: 'Debug endpoints only available in dev mode' });
+      }
+
+      const { username } = req.params;
+      const targetUser = username || getUsername(req, getAuthConfig);
+      
+      const oldCount = userConcurrency.get(targetUser) || 0;
+      userConcurrency.set(targetUser, 0);
+      
+      // Also clean up any finished/stopped tests for this user
+      const cleanedTests = [];
+      for (const [jobId, testInfo] of runningTests.entries()) {
+        if (testInfo.username === targetUser && (testInfo.finished || testInfo.stopped)) {
+          runningTests.delete(jobId);
+          cleanedTests.push(jobId);
+        }
+      }
+      
+      console.log(`🔧 Reset concurrency for ${targetUser}: ${oldCount} -> 0, cleaned ${cleanedTests.length} tests`);
+      
+      res.json({
+        username: targetUser,
+        oldCount,
+        newCount: 0,
+        cleanedTests,
+        message: `Reset concurrency counter for ${targetUser}`
+      });
+    } catch (error) {
+      console.error('Error resetting concurrency:', error);
+      res.status(500).json({ error: `Failed to reset concurrency: ${error.message}` });
+    }
+  });
+}
+currency:', error);
+      res.status(500).json({ error: `Failed to reset concurrency: ${error.message}` });
     }
   });
 }
