@@ -384,45 +384,105 @@ export function updateSessionMetadata(session) {
  * @returns {Promise<Object>} Result of git operations
  */
 export async function autoCommitAndPush(userRepoPath, filePath, token = null) {
+  console.log('🚀 [AUTO-COMMIT] Starting auto-commit process');
+  console.log('🚀 [AUTO-COMMIT] Params:', { userRepoPath, filePath, hasToken: !!token });
+  
   try {
     const git = simpleGit(userRepoPath);
     
     // Check if we're in a git repository
+    console.log('🚀 [AUTO-COMMIT] Checking if directory is a git repository...');
     const isRepo = await git.checkIsRepo();
+    console.log('🚀 [AUTO-COMMIT] Is git repo:', isRepo);
     if (!isRepo) {
+      console.log('❌ [AUTO-COMMIT] Not a git repository, skipping');
       return { success: false, reason: 'Not a git repository' };
     }
 
     // Get current branch
+    console.log('🚀 [AUTO-COMMIT] Getting current branch...');
     const currentBranch = await git.revparse(['--abbrev-ref', 'HEAD']);
+    console.log('🚀 [AUTO-COMMIT] Current branch:', currentBranch);
     
     // Get default branch
+    console.log('🚀 [AUTO-COMMIT] Getting default branch...');
     const defaultBranch = await getDefaultBranch(git, userRepoPath);
+    console.log('🚀 [AUTO-COMMIT] Default branch:', defaultBranch);
     
     // Only commit and push if not on default branch
     if (currentBranch === defaultBranch) {
+      console.log('❌ [AUTO-COMMIT] On default branch, skipping auto-commit');
       return { success: false, reason: `On default branch (${defaultBranch}), skipping auto-commit` };
     }
+    
+    console.log('✅ [AUTO-COMMIT] On non-default branch, proceeding with auto-commit');
 
     // Check if there are any changes to commit
+    console.log('🚀 [AUTO-COMMIT] Checking git status...');
     const status = await git.status();
+    console.log('🚀 [AUTO-COMMIT] Git status:', {
+      files: status.files.length,
+      modified: status.modified,
+      created: status.created,
+      deleted: status.deleted,
+      staged: status.staged,
+      not_added: status.not_added
+    });
+    
     if (status.files.length === 0) {
+      console.log('❌ [AUTO-COMMIT] No changes to commit');
       return { success: false, reason: 'No changes to commit' };
     }
 
     // Get just the filename for the commit message
     const filename = path.basename(filePath);
     const commitMessage = `Updated ${filename} [skip ci]`;
+    console.log('🚀 [AUTO-COMMIT] Commit message:', commitMessage);
 
     // Add the specific file to staging
-    await git.add(filePath);
+    console.log('🚀 [AUTO-COMMIT] Adding file to staging:', filePath);
+    try {
+      await git.add(filePath);
+      console.log('✅ [AUTO-COMMIT] File added to staging');
+      
+      // Verify the file was actually staged
+      const statusAfterAdd = await git.status();
+      console.log('🚀 [AUTO-COMMIT] Status after git add:', {
+        staged: statusAfterAdd.staged,
+        files: statusAfterAdd.files.length
+      });
+      
+      if (statusAfterAdd.staged.length === 0) {
+        console.log('⚠️ [AUTO-COMMIT] No files were staged, checking if file exists...');
+        // Check if the file actually exists
+        const fs = await import('fs/promises');
+        const fullFilePath = path.join(userRepoPath, filePath);
+        try {
+          await fs.access(fullFilePath);
+          console.log('✅ [AUTO-COMMIT] File exists at:', fullFilePath);
+        } catch (fileError) {
+          console.log('❌ [AUTO-COMMIT] File does not exist at:', fullFilePath);
+          return { success: false, reason: `File does not exist: ${fullFilePath}` };
+        }
+      }
+    } catch (addError) {
+      console.error('❌ [AUTO-COMMIT] Failed to add file to staging:', addError);
+      return { success: false, error: `Failed to stage file: ${addError.message}` };
+    }
     
     // Commit the changes
+    console.log('🚀 [AUTO-COMMIT] Committing changes...');
     const commitResult = await git.commit(commitMessage);
+    console.log('✅ [AUTO-COMMIT] Commit successful:', {
+      commit: commitResult.commit,
+      summary: commitResult.summary
+    });
     
     // Try to push to origin
+    console.log('🚀 [AUTO-COMMIT] Pushing to origin...');
     try {
       await git.push('origin', currentBranch);
+      console.log('✅ [AUTO-COMMIT] Push successful');
       return {
         success: true,
         branch: currentBranch,
@@ -432,7 +492,8 @@ export async function autoCommitAndPush(userRepoPath, filePath, token = null) {
         pushed: true
       };
     } catch (pushError) {
-      console.warn('Failed to push changes:', pushError.message);
+      console.warn('⚠️ [AUTO-COMMIT] Failed to push changes:', pushError.message);
+      console.warn('⚠️ [AUTO-COMMIT] Push error details:', pushError);
       return {
         success: true,
         branch: currentBranch,
@@ -445,7 +506,8 @@ export async function autoCommitAndPush(userRepoPath, filePath, token = null) {
     }
 
   } catch (error) {
-    console.error('Auto-commit failed:', error);
+    console.error('❌ [AUTO-COMMIT] Auto-commit failed:', error);
+    console.error('❌ [AUTO-COMMIT] Error stack:', error.stack);
     return {
       success: false,
       error: error.message
