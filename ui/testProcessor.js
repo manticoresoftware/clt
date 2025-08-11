@@ -159,32 +159,61 @@ export async function processTestResults(absolutePath, testStructure, stdout, st
       }
     }
 
-    // Now propagate status to block declarations based on their contained commands only
-    for (const cmd of expandedCommands) {
-      if (cmd.isBlockCommand && cmd.parentBlock) {
-        // The key is the parent block's index/ID
-        const key = `${cmd.parentBlock.command}|${cmd.blockSource || ''}`;
-        const blockCommands = blockCommandMap.get(key) || [];
+    // Enhanced block status propagation - handle both legacy block commands and new nested block steps
+    function propagateBlockStatus(commands) {
+      for (const cmd of commands) {
+        // Handle legacy block commands (isBlockCommand)
+        if (cmd.isBlockCommand && cmd.parentBlock) {
+          const key = `${cmd.parentBlock.command}|${cmd.blockSource || ''}`;
+          const blockCommands = blockCommandMap.get(key) || [];
 
-        if (blockCommands.length > 0) {
-          // If any block command failed, mark the block as failed
-          const anyFailed = blockCommands.some(bc => bc.status === 'failed');
-          // If any command matched, consider the block matched
-          const anyMatched = blockCommands.some(bc => bc.status === 'matched');
+          if (blockCommands.length > 0) {
+            const anyFailed = blockCommands.some(bc => bc.status === 'failed');
+            const anyMatched = blockCommands.some(bc => bc.status === 'matched');
+            cmd.status = anyFailed ? 'failed' : (anyMatched ? 'matched' : 'pending');
 
-          // Set status based only on the block's commands, independent of test exit code
-          // If no failures and at least one passed, then the block passed
-          cmd.status = anyFailed ? 'failed' : (anyMatched ? 'matched' : 'pending');
+            console.log(`Block ${cmd.command} status: ${cmd.status} (anyFailed=${anyFailed}, anyMatched=${anyMatched}, command count=${blockCommands.length})`);
+            console.log('Block commands:', blockCommands.map(bc => ({ cmd: bc.command.substring(0, 30), status: bc.status })));
 
-          // Debug log for block status
-          console.log(`Block ${cmd.command} status: ${cmd.status} (anyFailed=${anyFailed}, anyMatched=${anyMatched}, command count=${blockCommands.length})`);
-          console.log('Block commands:', blockCommands.map(bc => ({ cmd: bc.command.substring(0, 30), status: bc.status })));
-
-          // Update overall success status only for real failures
-          if (anyFailed) allCommandsPassed = false;
+            if (anyFailed) allCommandsPassed = false;
+          }
+        }
+        
+        // Handle new nested block steps (block with internal steps)
+        if (cmd.type === 'block' && cmd.steps && cmd.steps.length > 0) {
+          // If test passed (exitCode === 0), mark all internal steps as matched
+          if (exitCode === 0) {
+            function markNestedStepsAsMatched(steps) {
+              steps.forEach(step => {
+                if (step.type === 'input' || step.type === 'output') {
+                  step.status = 'matched';
+                } else if (step.type === 'block' && step.steps) {
+                  markNestedStepsAsMatched(step.steps);
+                  step.status = 'matched';
+                } else if (step.type === 'comment') {
+                  step.status = 'matched';
+                }
+              });
+            }
+            markNestedStepsAsMatched(cmd.steps);
+            cmd.status = 'matched';
+          } else {
+            // Test failed - propagate actual status from nested steps
+            const hasFailedStep = cmd.steps.some(s => s.status === 'failed');
+            const hasMatchedStep = cmd.steps.some(s => s.status === 'matched');
+            const hasPendingStep = cmd.steps.some(s => s.status === 'pending');
+            
+            cmd.status = hasFailedStep ? 'failed' : (hasMatchedStep ? (hasPendingStep ? 'pending' : 'matched') : 'pending');
+            
+            if (hasFailedStep) allCommandsPassed = false;
+          }
+          
+          console.log(`Nested Block ${cmd.command || 'unnamed'} status: ${cmd.status} (exitCode=${exitCode}, steps=${cmd.steps.length})`);
         }
       }
     }
+    
+    propagateBlockStatus(expandedCommands);
 
     // Determine overall success - a test is successful if exitCode is 0,
     // regardless of individual command comparisons, which might only be different due to pattern variables

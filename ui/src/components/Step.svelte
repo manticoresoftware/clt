@@ -18,6 +18,7 @@
   export let displayNumber: number;
   export let wasmLoaded: boolean = false;
   export let patternMatcher: any = null;
+  export let isRunning: boolean = false;
 
   // Check if current file has a running test
   $: isCurrentFileRunning = $filesStore.currentFile ? $filesStore.runningTests.has($filesStore.currentFile.path) : false;
