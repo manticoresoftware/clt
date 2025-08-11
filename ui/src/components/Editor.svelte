@@ -803,6 +803,7 @@
   <GitChangesPanel 
     bind:visible={gitPanelVisible} 
     currentFilePath={$filesStore.currentFile?.path || null}
+    onClose={() => gitPanelVisible = false}
   />
 </div>
 

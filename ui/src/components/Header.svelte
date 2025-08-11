@@ -20,12 +20,14 @@
   // Smart button logic based on PR status - prioritize fresh data from gitStatus
   $: isOnPrBranch = gitStatus.isPrBranch || github.prStatus?.isPrBranch || false;
   $: existingPr = github.prStatus?.existingPr || null;
-  $: buttonText = isOnPrBranch && existingPr ? 'Commit' : 'Create PR';
-  $: buttonTitle = !hasGitChanges 
-    ? 'No changes to commit' 
-    : isOnPrBranch && existingPr
-      ? `Commit ${gitStatus.modifiedFiles.length} changes to existing PR`
-      : `Create PR with ${gitStatus.modifiedFiles.length} changed files`;
+  $: currentBranch = gitStatus.currentBranch || 'master';
+  $: repoUrl = gitStatus.repoUrl;
+  
+  // GitHub compare URL for creating PR (reuse existing repoUrl from gitStatus)
+  $: githubCompareUrl = repoUrl ? `${repoUrl}/compare/${currentBranch}?expand=1` : null;
+  
+  // Only show Create PR link when there's no existing PR, has changes, and we have repo URL
+  $: showCreatePrLink = !existingPr && hasGitChanges && githubCompareUrl;
 
   function updateDockerImage() {
     filesStore.setDockerImage(dockerImage);
@@ -113,31 +115,14 @@
         Ask AI
       </button>
       
-      <button
-        on:click={async () => {
-          if (hasGitChanges) {
-            // Fetch fresh PR status before showing modal
-            try {
-              await githubStore.fetchPrStatus();
-            } catch (error) {
-              console.error('Failed to fetch PR status:', error);
-            }
-            githubStore.showModal();
-          }
-        }}
-        disabled={!hasGitChanges}
-        class="create-pr-button {!hasGitChanges ? 'disabled' : ''} {isOnPrBranch && existingPr ? 'commit-mode' : 'pr-mode'}"
-        title={buttonTitle}
-      >
-
-        
-        {#if isOnPrBranch && existingPr}
-          <!-- Commit icon -->
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="4"></circle>
-            <path d="m1.05 12 10.5 10.5L23.95 12 13.45 1.5Z"></path>
-          </svg>
-        {:else}
+      <!-- Create PR Link - only show when no existing PR and has changes -->
+      {#if showCreatePrLink}
+        <a
+          href={githubCompareUrl}
+          target="_blank"
+          class="create-pr-button pr-mode"
+          title="Create PR with {gitStatus.modifiedFiles.length} changed files"
+        >
           <!-- Create PR icon -->
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="18" cy="18" r="3"></circle>
@@ -145,13 +130,10 @@
             <path d="M13 6h3a2 2 0 0 1 2 2v7"></path>
             <line x1="6" y1="9" x2="6" y2="21"></line>
           </svg>
-        {/if}
-        
-        {buttonText}
-        {#if hasGitChanges}
+          Create PR
           <span class="change-count">({gitStatus.modifiedFiles.length})</span>
-        {/if}
-      </button>
+        </a>
+      {/if}
       
       <!-- Show existing PR link if available -->
       {#if existingPr}
@@ -291,26 +273,12 @@
     cursor: pointer;
     font-size: 0.875rem;
     font-weight: 500;
-    margin-right: var(--spacing-md);
     transition: none;
+    text-decoration: none; /* For link styling */
   }
 
   .create-pr-button:hover:not(.disabled) {
     background-color: #0056b3;
-  }
-
-  .create-pr-button.disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    background-color: #6c757d !important;
-  }
-
-  .create-pr-button.commit-mode:not(.disabled) {
-    background-color: #28a745;
-  }
-
-  .create-pr-button.commit-mode:hover:not(.disabled) {
-    background-color: #218838;
   }
 
   .create-pr-button.pr-mode:not(.disabled) {
@@ -394,6 +362,7 @@
     text-decoration: none;
     font-size: 0.85em;
     margin-left: 8px;
+    margin-right: 12px;
     transition: all 0.2s ease;
   }
 
