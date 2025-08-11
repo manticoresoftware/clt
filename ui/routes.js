@@ -539,8 +539,17 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
             }
             
             // Attempt auto-commit and push if not on default branch
+            console.log('🚀 [SAVE-FILE] Attempting auto-commit and push...');
             const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
-            const gitResult = await autoCommitAndPush(userRepoPath, filePath, req.user?.token);
+            console.log('🚀 [SAVE-FILE] User repo path:', userRepoPath);
+            console.log('🚀 [SAVE-FILE] File path for commit:', filePath);
+            
+            // Calculate the correct git-relative path (test/clt-tests/filename.rec)
+            const gitRelativeFilePath = path.join('test', 'clt-tests', filePath);
+            console.log('🚀 [SAVE-FILE] Git-relative file path:', gitRelativeFilePath);
+            
+            const gitResult = await autoCommitAndPush(userRepoPath, gitRelativeFilePath, req.user?.token);
+            console.log('🚀 [SAVE-FILE] Auto-commit result:', gitResult);
             
             res.json({ 
               success: true,
@@ -565,8 +574,17 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
         console.log('✅ File saved via manual content');
         
         // Attempt auto-commit and push if not on default branch
+        console.log('🚀 [SAVE-FILE] Attempting auto-commit and push (manual path)...');
         const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
-        const gitResult = await autoCommitAndPush(userRepoPath, filePath, req.user?.token);
+        console.log('🚀 [SAVE-FILE] User repo path:', userRepoPath);
+        console.log('🚀 [SAVE-FILE] File path for commit:', filePath);
+        
+        // Calculate the correct git-relative path (test/clt-tests/filename.rec)
+        const gitRelativeFilePath = path.join('test', 'clt-tests', filePath);
+        console.log('🚀 [SAVE-FILE] Git-relative file path:', gitRelativeFilePath);
+        
+        const gitResult = await autoCommitAndPush(userRepoPath, gitRelativeFilePath, req.user?.token);
+        console.log('🚀 [SAVE-FILE] Auto-commit result (manual path):', gitResult);
         
         res.json({ 
           success: true,

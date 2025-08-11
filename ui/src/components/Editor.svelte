@@ -1,6 +1,6 @@
 <script lang="ts">
   import { filesStore, validateTestContent, type TestStep as TestStepType, type TestStructure } from '../stores/filesStore';
-  import { gitStatusStore, checkoutFile } from '../stores/gitStatusStore';
+  import { gitStatusStore } from '../stores/gitStatusStore';
   import { onMount, onDestroy } from 'svelte';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
   import Step from './Step.svelte';
@@ -466,26 +466,7 @@
     }
   }
 
-  async function handleCheckoutFile() {
-    if (!$filesStore.currentFile) return;
 
-    const currentFilePath = $filesStore.currentFile.path;
-    const testPath = $gitStatusStore.testPath || 'test/clt-tests';
-    const fullFilePath = `${testPath}/${currentFilePath}`;
-    const fileName = currentFilePath.split('/').pop() || currentFilePath;
-
-    // Show confirmation dialog
-    const confirmed = confirm(`This will discard all changes to "${fileName}". Are you sure?`);
-    if (!confirmed) return;
-
-    // Use the full path for checkout (the path that git knows about)
-    const success = await checkoutFile(fullFilePath);
-    if (success) {
-      // Reload the current file content after checkout
-      await filesStore.loadFile(currentFilePath); // Use the filesStore path for loading
-      console.log('File checked out and reloaded successfully');
-    }
-  }
 
   // Get git status for current file - make it reactive by accessing the store directly
   $: currentFileGitStatus = $filesStore.currentFile && $gitStatusStore.modifiedFiles
@@ -501,7 +482,6 @@
         return fileStatus?.status || null;
       })()
     : null;
-  $: isCurrentFileModified = currentFileGitStatus === 'M';
 
   function formatTime(date: Date): string {
     return date.toLocaleTimeString(undefined, {
@@ -658,16 +638,7 @@
         >
           Save
         </button>
-        {#if isCurrentFileModified}
-          <button
-            class="checkout-button"
-            on:click={handleCheckoutFile}
-            disabled={!$filesStore.currentFile}
-            title="Discard changes to this file"
-          >
-            Discard changes
-          </button>
-        {/if}
+
         {#if isCurrentFileRunning}
           <button
             class="stop-button"
