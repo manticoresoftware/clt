@@ -13,6 +13,7 @@ export interface GitStatusState {
   modifiedFiles: GitFileStatus[];
   modifiedDirs: string[];
   testPath: string;
+  repoUrl: string | null;
   isLoading: boolean;
   error: string | null;
   lastUpdated: number | null;
@@ -26,6 +27,7 @@ const initialState: GitStatusState = {
   modifiedFiles: [],
   modifiedDirs: [],
   testPath: 'test/clt-tests',
+  repoUrl: null,
   isLoading: false,
   error: null,
   lastUpdated: null,
@@ -90,6 +92,7 @@ function createGitStatusStore() {
         let currentBranch = 'main';
         let isPrBranch = false;
         let existingPr = null;
+        let repoUrl = null;
         
         // Handle different response formats
         if (data.success !== undefined) {
@@ -100,6 +103,7 @@ function createGitStatusStore() {
           currentBranch = data.currentBranch || 'main';
           isPrBranch = data.isPrBranch || false;
           existingPr = data.existingPr || null; // Extract existingPr data
+          repoUrl = data.repoUrl || null; // Extract repository URL
         } else if (data.files) {
           // Format from /api/git-status endpoint that returns { hasUnstagedChanges, files: { modified, not_added, ... } }
           hasChanges = data.hasUnstagedChanges || !data.isClean;
@@ -142,6 +146,7 @@ function createGitStatusStore() {
           modifiedFiles,
           modifiedDirs,
           testPath: 'test/clt-tests',
+          repoUrl,
           lastUpdated: Date.now(),
           error: null
         }));

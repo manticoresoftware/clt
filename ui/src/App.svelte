@@ -2,7 +2,7 @@
   import Header from './components/Header.svelte';
   import FileExplorer from './components/FileExplorer.svelte';
   import Editor from './components/Editor.svelte';
-  import PullRequestModal from './components/PullRequestModal.svelte';
+
   import FuzzySearch from './components/FuzzySearch.svelte';
   import { filesStore } from './stores/filesStore';
   import { authStore, fetchAuthState } from './stores/authStore';
@@ -169,7 +169,7 @@
       </div>
 
       <!-- Pull Request Modal -->
-      <PullRequestModal />
+
       
       <!-- Fuzzy Search Modal -->
       <FuzzySearch 

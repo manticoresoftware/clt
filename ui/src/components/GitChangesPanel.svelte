@@ -5,6 +5,7 @@
 
   export let visible = false;
   export let currentFilePath: string | null = null;
+  export let onClose: () => void = () => {};
 
   let gitData: any = null;
   let loading = false;
@@ -137,6 +138,16 @@
           <path d="M21 3v5h-5"/>
           <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
           <path d="M3 21v-5h5"/>
+        </svg>
+      </button>
+      <button
+        class="header-action-button close-button"
+        on:click={onClose}
+        title="Close git panel"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
         </svg>
       </button>
     </div>
@@ -408,6 +419,11 @@
   .header-action-button svg {
     width: 16px;
     height: 16px;
+  }
+
+  .close-button:hover {
+    background-color: var(--color-bg-danger, #fee2e2) !important;
+    color: var(--color-text-danger, #dc2626) !important;
   }
 
   .git-panel-content {

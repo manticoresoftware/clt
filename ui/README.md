@@ -220,7 +220,6 @@ npm run test
    GET  /api/git-status        # Repository status
    GET  /api/current-branch    # Branch information
    POST /api/reset-to-branch   # Branch reset operations
-   POST /api/create-pr         # Pull request creation
    ```
 
 5. **Authentication System**

@@ -106,6 +106,33 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         // Check if there are any changes to commit in the test directory
         const hasChanges = modifiedFiles.length > 0;
 
+        // Extract repository URL from git remotes
+        let repoUrl = null;
+        try {
+          const remotes = await git.getRemotes(true);
+          console.log('Git remotes found:', remotes);
+          
+          const originRemote = remotes.find(remote => remote.name === 'origin');
+          if (originRemote && originRemote.refs && originRemote.refs.fetch) {
+            let fetchUrl = originRemote.refs.fetch;
+            
+            // Convert SSH format to HTTPS for GitHub URLs
+            if (fetchUrl.startsWith('git@github.com:')) {
+              fetchUrl = fetchUrl.replace('git@github.com:', 'https://github.com/');
+            }
+            
+            // Remove .git suffix if present
+            if (fetchUrl.endsWith('.git')) {
+              fetchUrl = fetchUrl.slice(0, -4);
+            }
+            
+            repoUrl = fetchUrl;
+            console.log('Processed repo URL:', repoUrl);
+          }
+        } catch (error) {
+          console.warn('Failed to get repository URL:', error.message);
+        }
+
         return res.json({
           success: true,
           currentBranch,
@@ -114,7 +141,8 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
           hasChanges,
           modifiedFiles,
           modifiedDirs: Array.from(modifiedDirs),
-          testPath: relativeTestPath
+          testPath: relativeTestPath,
+          repoUrl: repoUrl
         });
       } catch (gitError) {
         console.error('Git operation error:', gitError);
@@ -442,308 +470,6 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
     } catch (error) {
       console.error('Error in checkout-and-pull:', error);
       res.status(500).json({ error: `Failed to checkout and pull branch: ${error.message}` });
-    }
-  });
-
-  app.post('/api/create-pr', isAuthenticated, async (req, res) => {
-    const { title, description } = req.body;
-    if (!title) return res.status(400).json({ error: 'PR title is required' });
-
-    const username = req.user.username;
-    const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
-
-    // slugify title for branch name
-    const branchName = `clt-ui-${slugify(title)}`;
-
-    const git = simpleGit({ baseDir: userRepo });
-    await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
-
-    try {
-      // First check if we're already on a branch with an existing PR
-      const currentStatus = await git.status();
-      const currentBranch = currentStatus.current;
-      const defaultBranch = await getDefaultBranch(git, userRepo);
-
-      // Check for existing PR on current branch
-      if (currentBranch && currentBranch !== defaultBranch) {
-        const { exec } = await import('child_process');
-        const execPromise = (cmd) => new Promise((resolve, reject) => {
-          exec(cmd, { cwd: userRepo, env: { ...process.env, GH_TOKEN: req.user.token } },
-            (err, stdout, stderr) => {
-              if (err) reject(stderr || err);
-              else resolve(stdout.trim());
-            }
-          );
-        });
-
-        try {
-          const prListCmd = `gh pr list --state open --base ${currentBranch} --json url,title,number`;
-          const prListOutput = await execPromise(prListCmd);
-
-          if (prListOutput && prListOutput.trim() && prListOutput.trim() !== '[]') {
-            const prs = JSON.parse(prListOutput);
-            if (Array.isArray(prs) && prs.length > 0) {
-              // We're on a branch with existing PR - just commit to it
-              console.log('Already on PR branch, committing to existing PR:', prs[0]);
-
-              await git.add('.');
-              const commit = await git.commit(title);
-              await git.push('origin', currentBranch);
-
-              return res.json({
-                success: true,
-                branch: currentBranch,
-                commit: commit.commit,
-                pr: prs[0].url,
-                message: `Committed to existing PR: ${prs[0].title}`
-              });
-            }
-          }
-        } catch (error) {
-          console.log('Error checking for existing PR on current branch:', error.message);
-          // Continue with normal flow if PR check fails
-        }
-      }
-
-      // fetch all
-      await git.fetch(['--all']);
-
-      // list local + remote branches
-      const local  = await git.branchLocal();
-      const remote = await git.branch(['-r']);
-      const existsLocally = local.all.includes(branchName);
-      const existsRemote  = remote.all.includes(`origin/${branchName}`);
-      const branchExists  = existsLocally || existsRemote;
-
-      const { exec } = await import('child_process');
-
-      // helper to run gh commands
-      const execPromise = (cmd) => new Promise((resolve, reject) => {
-        exec(cmd, { cwd: userRepo, env: { ...process.env, GH_TOKEN: req.user.token } },
-          (err, stdout, stderr) => {
-            if (err) {
-              reject(stderr || err);
-            } else {
-              resolve(stdout.trim());
-            }
-          }
-        );
-      });
-
-
-/**
- * Helper to execute GitHub CLI commands with token validation and retry
- */
-async function executeGitHubCommand(args, userRepo, username, retryCount = 0) {
-  const MAX_RETRIES = 1;
-  
-  try {
-    // Get valid token
-    const validToken = await tokenManager.getValidToken(username);
-    if (!validToken) {
-      throw new Error('No valid GitHub token available');
-    }
-
-    const { spawn } = await import('child_process');
-    
-    return new Promise((resolve, reject) => {
-      console.log(`[GitHubCommand] Running gh command with args:`, args);
-      const gh = spawn('gh', args, {
-        cwd: userRepo,
-        env: { ...process.env, GH_TOKEN: validToken },
-        stdio: ['pipe', 'pipe', 'pipe']
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      gh.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      gh.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      gh.on('close', async (code) => {
-        if (code === 0) {
-          resolve(stdout.trim());
-        } else {
-          console.error(`[GitHubCommand] Command failed with code ${code}: ${stderr}`);
-          
-          // Check if it's an authentication error
-          if ((code === 1 || code === 4) && stderr.includes('authentication') && retryCount < MAX_RETRIES) {
-            console.log(`[GitHubCommand] Authentication error, invalidating token and retrying...`);
-            
-            // Remove invalid token
-            tokenManager.removeTokens(username);
-            
-            // Retry once
-            try {
-              const result = await executeGitHubCommand(args, userRepo, username, retryCount + 1);
-              resolve(result);
-            } catch (retryError) {
-              reject(new Error(`GitHub command failed after retry: ${retryError.message}`));
-            }
-          } else {
-            reject(new Error(stderr || `GitHub command failed with code ${code}`));
-          }
-        }
-      });
-
-      gh.on('error', (error) => {
-        console.error('[GitHubCommand] Command error:', error);
-        reject(error);
-      });
-    });
-  } catch (error) {
-    if (retryCount < MAX_RETRIES && error.message.includes('token')) {
-      console.log(`[GitHubCommand] Token error, retrying...`);
-      return executeGitHubCommand(args, userRepo, username, retryCount + 1);
-    }
-    throw error;
-  }
-}
-
-      if (branchExists) {
-        // check if there's an OPEN PR for that head using safe spawn
-        const prArgs = ['pr', 'list', '--state', 'open', '--head', branchName, '--json', 'url'];
-        const prList = await executeGitHubCommand(prArgs, userRepo, username).catch(() => '');
-
-        if (prList && prList.trim() && prList.trim() !== '[]') {
-          // PROPERLY check if we have actual PRs
-          let actualPrs = [];
-          try {
-            actualPrs = JSON.parse(prList);
-          } catch (e) {
-            console.log('Failed to parse PR list:', e);
-            actualPrs = [];
-          }
-
-          if (Array.isArray(actualPrs) && actualPrs.length > 0) {
-            // Branch AND PR both exist → just commit & push to existing PR
-            console.log('Found existing PR, committing to existing branch');
-            await git.checkout(branchName);
-            await git.add('.');
-            const commit = await git.commit(title);
-            await git.push('origin', branchName);
-
-            return res.json({
-              success: true,
-              branch: branchName,
-              commit: commit.commit,
-              pr: actualPrs[0]?.url,
-              message: 'Committed and pushed to existing PR branch.'
-            });
-          }
-        }
-
-        // If we get here, branch exists but NO PR → checkout existing branch and create PR
-        console.log('Branch exists but no PR found, checking out existing branch to create PR');
-
-        // Check current status before checkout
-        const preCheckoutStatus = await git.status();
-        if (!preCheckoutStatus.isClean()) {
-          // Stash changes before checkout to avoid conflicts
-          const timestamp = new Date().toISOString();
-          const stashMessage = `Auto-stash before checkout to ${branchName} at ${timestamp}`;
-          await git.stash(['push', '-m', stashMessage]);
-          console.log(`Stashed changes: ${stashMessage}`);
-        }
-
-        await git.checkout(branchName);
-
-        // If we stashed changes, pop them back
-        if (!preCheckoutStatus.isClean()) {
-          try {
-            await git.stash(['pop']);
-            console.log('Restored stashed changes');
-          } catch (stashError) {
-            console.warn('Could not restore stashed changes:', stashError.message);
-            // Continue anyway - the stash is still available
-          }
-        }
-
-        // Check for changes after checkout and stash restore
-        const postCheckoutStatus = await git.status();
-        if (!postCheckoutStatus.isClean()) {
-          await git.add('.');
-          const commit = await git.commit(title);
-          await git.push('origin', branchName);
-          console.log('Committed to existing branch, now creating PR');
-        } else {
-          console.log('No new changes to commit on existing branch');
-        }
-      } else {
-        // branch does not exist → create it, commit & push, open PR
-        console.log('Branch does not exist, creating new branch');
-        await git.checkoutLocalBranch(branchName);
-        await git.add('.');
-
-        try {
-          const commit = await git.commit(title);
-          await git.push('origin', branchName, ['--set-upstream']);
-          console.log('Successfully created branch and pushed changes');
-        } catch (commitError) {
-          console.error('Failed to commit changes:', commitError);
-          return res.status(400).json({
-            error: 'Failed to commit changes. This might happen if there are no changes to commit or if there are conflicts.'
-          });
-        }
-      }
-
-      // At this point, we have a branch with committed changes, now create the PR
-      // Get the commit info for response
-      const commitInfo = await git.log({ maxCount: 1 });
-      const latestCommit = commitInfo.latest;
-
-      // Get the current status to determine base branch
-      const status = await git.status();
-      const finalBranch = status.current;
-
-      // Determine base branch using cached helper
-      const baseBranch = await getDefaultBranch(git, userRepo);
-
-      // Build gh pr create arguments safely (no shell injection possible)
-      const prArgs = [
-        'pr', 'create',
-        '--title', title,
-        '--head', branchName,
-        '--base', baseBranch
-      ];
-
-      if (description && description.trim()) {
-        prArgs.push('--body', description);
-      } else {
-        return res.status(400).json({ error: 'Description is required for PR creation' });
-      }
-
-      console.log('Creating PR with args:', prArgs);
-      const prOutput = await executeGitHubCommand(prArgs, userRepo, username);
-      console.log('PR creation output:', prOutput);
-
-      const prUrlMatch = prOutput.match(/https:\/\/github\.com\/[^\s]+/);
-      const prUrl = prUrlMatch?.[0] || null;
-
-      if (!prUrl) {
-        // PR creation failed - don't return success
-        console.error('PR creation failed - no URL found in output:', prOutput);
-        return res.status(500).json({
-          error: 'Pull request creation failed. No PR URL returned by GitHub CLI. Check your permissions and try again.'
-        });
-      }
-
-      return res.json({
-        success: true,
-        branch: branchName,
-        commit: latestCommit?.hash || 'unknown',
-        pr: prUrl,
-        message: 'Pull request created successfully.'
-      });
-    }
-    catch (err) {
-      console.error('create-pr error:', err);
-      return res.status(500).json({ error: err.toString() });
     }
   });
 
