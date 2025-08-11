@@ -941,4 +941,130 @@ async function executeGitHubCommand(args, userRepo, username, retryCount = 0) {
       res.status(500).json({ error: 'Failed to checkout file' });
     }
   });
+
+  // API endpoint to get git history and diff for a specific file
+  app.get('/api/file-git-history', isAuthenticated, async (req, res) => {
+    try {
+      const { filePath } = req.query;
+
+      if (!filePath) {
+        return res.status(400).json({ error: 'File path is required' });
+      }
+
+      // Check if user is authenticated with GitHub
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      // Get the user's repo path
+      const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepo).then(() => true).catch(() => false);
+
+      if (!repoExists) {
+        return res.status(404).json({ error: 'Repository not found' });
+      }
+
+      // Initialize simple-git with the user's repo path
+      const git = simpleGit({ baseDir: userRepo });
+
+      // Check if we're in a git repository
+      const isRepo = await git.checkIsRepo();
+      if (!isRepo) {
+        return res.status(400).json({ error: 'Not a git repository' });
+      }
+
+      // Get current branch and default branch
+      const currentBranch = await git.revparse(['--abbrev-ref', 'HEAD']);
+      const defaultBranch = await getDefaultBranch(git, userRepo);
+
+      // Get the test directory relative path for the file
+      const testDir = getUserTestPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const absoluteFilePath = path.join(testDir, filePath);
+      const relativeToRepo = path.relative(userRepo, absoluteFilePath);
+
+      // Check if file exists
+      const fileExists = await fs.access(absoluteFilePath).then(() => true).catch(() => false);
+      if (!fileExists) {
+        return res.status(404).json({ error: 'File not found' });
+      }
+
+      try {
+        // Get file history (last 10 commits)
+        const logOptions = {
+          file: relativeToRepo,
+          maxCount: 10,
+          format: {
+            hash: '%H',
+            date: '%ai',
+            message: '%s',
+            author_name: '%an',
+            author_email: '%ae'
+          }
+        };
+        
+        const history = await git.log(logOptions);
+
+        // Get repository remote URL for GitHub links
+        let repoUrl = null;
+        try {
+          const remotes = await git.getRemotes(true);
+          console.log('Git remotes found:', remotes);
+          const origin = remotes.find(remote => remote.name === 'origin');
+          if (origin && origin.refs && origin.refs.fetch) {
+            let fetchUrl = origin.refs.fetch;
+            console.log('Original fetch URL:', fetchUrl);
+            // Convert SSH URL to HTTPS if needed
+            if (fetchUrl.startsWith('git@github.com:')) {
+              fetchUrl = fetchUrl.replace('git@github.com:', 'https://github.com/').replace('.git', '');
+            } else if (fetchUrl.endsWith('.git')) {
+              fetchUrl = fetchUrl.replace('.git', '');
+            }
+            repoUrl = fetchUrl;
+            console.log('Processed repo URL:', repoUrl);
+          }
+        } catch (remoteError) {
+          console.warn('Could not get repository URL:', remoteError.message);
+        }
+
+        // Get diff against default branch (if not on default branch)
+        let diff = null;
+        if (currentBranch !== defaultBranch) {
+          try {
+            diff = await git.diff([`${defaultBranch}..HEAD`, '--', relativeToRepo]);
+          } catch (diffError) {
+            console.warn('Could not get diff against default branch:', diffError.message);
+            diff = null;
+          }
+        }
+
+        // Get current file status
+        const status = await git.status([relativeToRepo]);
+        const fileStatus = status.files.find(f => f.path === relativeToRepo);
+
+        res.json({
+          success: true,
+          filePath: filePath,
+          relativeToRepo: relativeToRepo,
+          currentBranch: currentBranch,
+          defaultBranch: defaultBranch,
+          history: history.all,
+          diff: diff,
+          status: fileStatus || null,
+          isOnDefaultBranch: currentBranch === defaultBranch,
+          repoUrl: repoUrl
+        });
+
+      } catch (gitError) {
+        console.error('Git operation failed:', gitError);
+        res.status(500).json({ 
+          error: 'Git operation failed',
+          details: gitError.message 
+        });
+      }
+
+    } catch (error) {
+      console.error('Error in file-git-history endpoint:', error);
+      res.status(500).json({ error: 'Failed to get file git history' });
+    }
+  });
 }
