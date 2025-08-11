@@ -7,6 +7,7 @@ import {
   generateRecFileToMapWasm,
   validateTestFromMapWasm
 } from './wasmNodeWrapper.js';
+import { autoCommitAndPush } from './helpers.js';
 
 // Helper functions that were in server.js
 export function getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig) {
@@ -525,10 +526,16 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
             // Write the generated content to disk
             await fs.writeFile(absolutePath, generatedContent, 'utf8');
             console.log('✅ File saved via WASM generation');
+            
+            // Attempt auto-commit and push if not on default branch
+            const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+            const gitResult = await autoCommitAndPush(userRepoPath, filePath, req.user?.token);
+            
             res.json({ 
               success: true,
               method: 'wasm',
-              generatedContent: generatedContent
+              generatedContent: generatedContent,
+              git: gitResult
             });
             return;
           } else {
@@ -544,9 +551,15 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
       if (content !== undefined) {
         await fs.writeFile(absolutePath, content, 'utf8');
         console.log('✅ File saved via manual content');
+        
+        // Attempt auto-commit and push if not on default branch
+        const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+        const gitResult = await autoCommitAndPush(userRepoPath, filePath, req.user?.token);
+        
         res.json({ 
           success: true,
-          method: 'manual'
+          method: 'manual',
+          git: gitResult
         });
       } else {
         return res.status(400).json({ error: 'File path and content (or structuredData) are required' });

@@ -4,6 +4,7 @@
   import { onMount, onDestroy } from 'svelte';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
   import Step from './Step.svelte';
+  import GitChangesPanel from './GitChangesPanel.svelte';
   import {
     initWasm,
     wasmLoadedStore,
@@ -23,6 +24,7 @@
 
   let commands: any[] = [];
   let autoSaveEnabled = true;
+  let gitPanelVisible = false;
 
   // Reactive statement to check if current file is running
   $: isCurrentFileRunning = $filesStore.currentFile ? $filesStore.runningTests.has($filesStore.currentFile.path) : false;
@@ -565,8 +567,9 @@
 </script>
 
 <div class="editor">
-  <!-- Header -->
-  <div class="editor-header">
+  <div class="editor-main" class:with-git-panel={gitPanelVisible}>
+    <!-- Header -->
+    <div class="editor-header">
     <div class="file-info">
       {#if $filesStore.currentFile}
         <span class="file-path">{$filesStore.currentFile.path}</span>
@@ -638,6 +641,16 @@
         </label>
       </div>
       <div class="action-buttons">
+        <button
+          class="git-panel-toggle"
+          on:click={() => gitPanelVisible = !gitPanelVisible}
+          class:active={gitPanelVisible}
+          title="Toggle Git Changes Panel"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
+          </svg>
+        </button>
         <button
           class="save-button"
           on:click={saveFile}
@@ -784,6 +797,13 @@
       </div>
     {/if}
   </div>
+  </div>
+
+  <!-- Git Changes Panel -->
+  <GitChangesPanel 
+    bind:visible={gitPanelVisible} 
+    currentFilePath={$filesStore.currentFile?.path || null}
+  />
 </div>
 
 <style>
@@ -817,6 +837,38 @@
   .action-buttons {
     display: flex;
     gap: 8px;
+    align-items: center;
+  }
+
+  .git-panel-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: none;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    transition: all 0.2s ease;
+  }
+
+  .git-panel-toggle:hover {
+    background-color: var(--color-bg-secondary);
+    color: var(--color-text-primary);
+    border-color: var(--color-bg-accent);
+  }
+
+  .git-panel-toggle.active {
+    background-color: var(--color-bg-accent);
+    color: white;
+    border-color: var(--color-bg-accent);
+  }
+
+  .git-panel-toggle svg {
+    width: 16px;
+    height: 16px;
   }
 
   .save-button, .run-button, .checkout-button {
@@ -1444,8 +1496,21 @@
 
   .editor {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     height: 100%;
+    position: relative;
+  }
+
+  .editor-main {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    transition: margin-right 0.3s ease;
+  }
+
+  .editor-main.with-git-panel {
+    margin-right: 400px;
   }
 
   .editor-header {

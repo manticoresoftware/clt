@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { writeFileSync, appendFileSync, existsSync, readdirSync, statSync, readFileSync } from 'fs';
+import simpleGit from 'simple-git';
 
 // Cache for default branch detection per repository
 const defaultBranchCache = new Map();
@@ -372,5 +373,82 @@ export function updateSessionMetadata(session) {
     writeFileSync(metaFile, JSON.stringify(sessionData, null, 2));
   } catch (error) {
     console.error('Failed to update session metadata:', error);
+  }
+}
+
+/**
+ * Auto-commit and push changes when not on default branch
+ * @param {string} userRepoPath - Path to user repository
+ * @param {string} filePath - Relative path of the saved file
+ * @param {string} token - User's GitHub token (if available)
+ * @returns {Promise<Object>} Result of git operations
+ */
+export async function autoCommitAndPush(userRepoPath, filePath, token = null) {
+  try {
+    const git = simpleGit(userRepoPath);
+    
+    // Check if we're in a git repository
+    const isRepo = await git.checkIsRepo();
+    if (!isRepo) {
+      return { success: false, reason: 'Not a git repository' };
+    }
+
+    // Get current branch
+    const currentBranch = await git.revparse(['--abbrev-ref', 'HEAD']);
+    
+    // Get default branch
+    const defaultBranch = await getDefaultBranch(git, userRepoPath);
+    
+    // Only commit and push if not on default branch
+    if (currentBranch === defaultBranch) {
+      return { success: false, reason: `On default branch (${defaultBranch}), skipping auto-commit` };
+    }
+
+    // Check if there are any changes to commit
+    const status = await git.status();
+    if (status.files.length === 0) {
+      return { success: false, reason: 'No changes to commit' };
+    }
+
+    // Get just the filename for the commit message
+    const filename = path.basename(filePath);
+    const commitMessage = `Updated ${filename} [skip ci]`;
+
+    // Add the specific file to staging
+    await git.add(filePath);
+    
+    // Commit the changes
+    const commitResult = await git.commit(commitMessage);
+    
+    // Try to push to origin
+    try {
+      await git.push('origin', currentBranch);
+      return {
+        success: true,
+        branch: currentBranch,
+        defaultBranch: defaultBranch,
+        commitHash: commitResult.commit,
+        commitMessage: commitMessage,
+        pushed: true
+      };
+    } catch (pushError) {
+      console.warn('Failed to push changes:', pushError.message);
+      return {
+        success: true,
+        branch: currentBranch,
+        defaultBranch: defaultBranch,
+        commitHash: commitResult.commit,
+        commitMessage: commitMessage,
+        pushed: false,
+        pushError: pushError.message
+      };
+    }
+
+  } catch (error) {
+    console.error('Auto-commit failed:', error);
+    return {
+      success: false,
+      error: error.message
+    };
   }
 }
