@@ -186,3 +186,32 @@ npm run preview # Preview build
 - File operations restricted to user's test directory
 - GitHub tokens stored securely and cleaned up
 - Session isolation per authenticated user
+## Block System & Internal Steps
+
+**Critical Fix Applied**: Block internal steps now persist correctly after save/run cycles.
+
+### Block Architecture
+- **Block references**: `––– block: path –––` in .rec files reference reusable .recb files
+- **Internal steps**: UI allows adding steps directly inside block references
+- **Path resolution**: Block paths are resolved relative to the containing test file directory
+- **File generation**: Blocks with internal steps automatically generate/update corresponding .recb files
+
+### Technical Implementation
+- **TestStep structure**: Contains optional `steps: Option<Vec<TestStep>>` field for nested steps
+- **Save flow**: UI → Backend (`/api/save-file`) → WASM → Parser → File system
+- **Key functions**:
+  - `write_test_file_to_map()` in `parser/src/lib.rs` - generates file map for main + block files
+  - `convert_structure_to_rec()` - converts TestStructure to .rec format
+  - Backend saves ALL files in generated file map (not just main file)
+
+### Path Resolution Examples
+- Test file: `test/clt-tests/buddy/test.rec`
+- Block reference: `../base/auth.recb`
+- Resolved path: `test/clt-tests/base/auth.recb`
+
+### WASM Build Process
+```bash
+cd wasm
+wasm-pack build --target web --out-dir pkg
+cp -r wasm/pkg ui/
+```
