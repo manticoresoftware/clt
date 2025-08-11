@@ -176,6 +176,8 @@ When using the CLT UI, you can add steps directly inside block references. These
 - **Path resolution**: Block paths like `../base/block.recb` are resolved relative to the test file directory
 - **Automatic file creation**: `.recb` files are created/updated automatically when blocks contain internal steps
 - **Backward compatibility**: Existing block references without internal steps continue to work as before
+- **Status propagation**: Block internal steps now properly inherit status from test execution results
+- **UI feedback**: Interface provides visual feedback during test runs with opacity effects
 
 ## Custom Output Checkers
 

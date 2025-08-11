@@ -497,10 +497,32 @@ export function setupTestRoutes(app, isAuthenticated, dependencies) {
 
                 if (step.type === 'block' && step.steps) {
                   markPartialProgress(step.steps);
-                  // Block status based on nested steps
-                  const hasCompleted = step.steps.some(s => s.status === 'matched');
-                  const hasPending = step.steps.some(s => s.status === 'pending');
-                  step.status = hasCompleted ? (hasPending ? 'pending' : 'matched') : 'pending';
+                  
+                  // Enhanced block status logic: if test completed successfully (exitCode 0),
+                  // mark all internal steps as matched, otherwise use existing logic
+                  if (testInfo.exitCode === 0) {
+                    // Test passed - mark all internal steps as matched
+                    function markBlockStepsAsMatched(steps) {
+                      steps.forEach(s => {
+                        if (s.type === 'input' || s.type === 'output') {
+                          s.status = 'matched';
+                        } else if (s.type === 'block' && s.steps) {
+                          markBlockStepsAsMatched(s.steps);
+                          s.status = 'matched';
+                        } else if (s.type === 'comment') {
+                          s.status = 'matched';
+                        }
+                      });
+                    }
+                    markBlockStepsAsMatched(step.steps);
+                    step.status = 'matched';
+                  } else {
+                    // Test failed or still running - use existing logic
+                    const hasCompleted = step.steps.some(s => s.status === 'matched');
+                    const hasPending = step.steps.some(s => s.status === 'pending');
+                    const hasFailed = step.steps.some(s => s.status === 'failed');
+                    step.status = hasFailed ? 'failed' : (hasCompleted ? (hasPending ? 'pending' : 'matched') : 'pending');
+                  }
                 }
 
                 if (step.type === 'comment') {

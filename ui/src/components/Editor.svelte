@@ -691,7 +691,7 @@
   </div>
 
   <!-- Editor content -->
-  <div class="editor-content">
+  <div class="editor-content" class:running={isCurrentFileRunning}>
     {#if !$filesStore.currentFile}
       <div class="editor-empty">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
@@ -726,6 +726,7 @@
               {displayNumber}
               {wasmLoaded}
               {patternMatcher}
+              isRunning={isCurrentFileRunning}
               on:updateCommand={(e) => handleUpdateCommand(e.detail.index, e.detail.newValue)}
               on:updateExpectedOutput={(e) => handleUpdateExpectedOutput(e.detail.index, e.detail.newValue)}
               on:toggleExpansion={(e) => handleToggleExpansion(e.detail)}
@@ -800,8 +801,8 @@
   </div>
 
   <!-- Git Changes Panel -->
-  <GitChangesPanel 
-    bind:visible={gitPanelVisible} 
+  <GitChangesPanel
+    bind:visible={gitPanelVisible}
     currentFilePath={$filesStore.currentFile?.path || null}
     onClose={() => gitPanelVisible = false}
   />
@@ -1527,6 +1528,12 @@
     flex: 1;
     padding: 16px;
     overflow-y: auto;
+    transition: opacity 0.3s ease;
+  }
+
+  .editor-content.running {
+    opacity: 0.6;
+    pointer-events: none;
   }
 
   .editor-empty {
