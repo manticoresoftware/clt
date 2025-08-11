@@ -289,6 +289,15 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         // Initialize simple-git with the user's repo path
         const git = simpleGit({ baseDir: userRepo });
 
+        // Fetch latest remote branches to ensure we have up-to-date branch list
+        try {
+          await git.fetch();
+          console.log('Successfully fetched remote branches');
+        } catch (fetchError) {
+          console.warn('Warning: Failed to fetch remote branches:', fetchError.message);
+          // Continue anyway - we'll work with what we have locally
+        }
+
         // Get all branches (local and remote)
         const branchSummary = await git.branch(['-a']);
         console.log('Branch summary:', branchSummary);
