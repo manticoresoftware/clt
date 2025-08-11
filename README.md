@@ -168,6 +168,15 @@ This will include the contents of the `login-sequence.recb` file located in the 
 
 The path is always relative to the location of the `.rec` file that's including the block. Blocks can be nested, allowing you to compose complex test scenarios from reusable components.
 
+### Block Internal Steps (UI Feature)
+
+When using the CLT UI, you can add steps directly inside block references. These internal steps are automatically saved to the corresponding `.recb` file:
+
+- **Block with internal steps**: Steps added inside a block in the UI are saved to the `.recb` file
+- **Path resolution**: Block paths like `../base/block.recb` are resolved relative to the test file directory
+- **Automatic file creation**: `.recb` files are created/updated automatically when blocks contain internal steps
+- **Backward compatibility**: Existing block references without internal steps continue to work as before
+
 ## Custom Output Checkers
 
 For advanced output validation beyond regex patterns, CLT supports custom checker programs. These are specified in the output statement:

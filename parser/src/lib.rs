@@ -1312,6 +1312,63 @@ pub fn write_test_file_to_map(
     let content = convert_structure_to_rec(test_structure)?;
     let mut file_map = HashMap::new();
     file_map.insert(test_file_path.to_string(), content);
+    
+    // Check for blocks with internal steps and generate .recb files for them
+    for step in &test_structure.steps {
+        if step.step_type == "block" && step.steps.is_some() {
+            if let Some(nested_steps) = &step.steps {
+                if !nested_steps.is_empty() && !step.args.is_empty() {
+                    // Create a TestStructure for the block content
+                    let block_structure = TestStructure {
+                        description: None,
+                        steps: nested_steps.clone(),
+                    };
+                    
+                    // Generate the .recb file content
+                    let block_content = convert_structure_to_rec(&block_structure)?;
+                    
+                    // Resolve the .recb file path relative to the test file directory
+                    let block_path = &step.args[0];
+                    let block_file_name = if block_path.ends_with(".recb") {
+                        block_path.clone()
+                    } else {
+                        format!("{}.recb", block_path)
+                    };
+                    
+                    // Resolve relative path based on test file location and normalize it
+                    let test_file_dir = Path::new(test_file_path)
+                        .parent()
+                        .unwrap_or(Path::new(""));
+                    let resolved_block_path = test_file_dir.join(&block_file_name);
+                    
+                    // Normalize the path to resolve .. and . components
+                    let normalized_path = if let Ok(canonical) = resolved_block_path.canonicalize() {
+                        canonical.to_string_lossy().to_string()
+                    } else {
+                        // Fallback: manual normalization for non-existent paths
+                        let mut components = Vec::new();
+                        for component in resolved_block_path.components() {
+                            match component {
+                                std::path::Component::ParentDir => {
+                                    components.pop();
+                                }
+                                std::path::Component::CurDir => {
+                                    // Skip current directory
+                                }
+                                _ => {
+                                    components.push(component.as_os_str().to_string_lossy().to_string());
+                                }
+                            }
+                        }
+                        components.join("/")
+                    };
+                    
+                    file_map.insert(normalized_path, block_content);
+                }
+            }
+        }
+    }
+    
     Ok(file_map)
 }
 

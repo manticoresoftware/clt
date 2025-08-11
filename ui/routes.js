@@ -523,9 +523,20 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
           const generatedContent = generatedFileContentMap[relativeFilePath];
           
           if (generatedContent && generatedContent.length > 0) {
-            // Write the generated content to disk
-            await fs.writeFile(absolutePath, generatedContent, 'utf8');
-            console.log('✅ File saved via WASM generation');
+            // Write all generated files to disk (main file + any .recb files)
+            const savedFiles = [];
+            for (const [fileKey, fileContent] of Object.entries(generatedFileContentMap)) {
+              const targetPath = path.join(testDir, fileKey);
+              
+              // Ensure directory exists for the target file
+              const targetDir = path.dirname(targetPath);
+              await fs.mkdir(targetDir, { recursive: true });
+              
+              // Write the file
+              await fs.writeFile(targetPath, fileContent, 'utf8');
+              savedFiles.push(fileKey);
+              console.log(`✅ File saved via WASM: ${fileKey}`);
+            }
             
             // Attempt auto-commit and push if not on default branch
             const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
@@ -535,6 +546,7 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
               success: true,
               method: 'wasm',
               generatedContent: generatedContent,
+              savedFiles: savedFiles,
               git: gitResult
             });
             return;
