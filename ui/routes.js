@@ -314,16 +314,14 @@ export async function buildFileTree(dir, basePath = '', followSymlinks = true) {
         children
       });
     } else {
-      // For files, check if they match our extensions
-      if (entry.name.endsWith('.rec') || entry.name.endsWith('.recb')) {
-        tree.push({
-          name: entry.name,
-          path: relativePath,
-          isDirectory: false,
-          isSymlink: entry.isSymbolicLink(),
-          targetPath: entry.isSymbolicLink() ? targetPath : undefined
-        });
-      }
+      // Include all files (no filtering by extension)
+      tree.push({
+        name: entry.name,
+        path: relativePath,
+        isDirectory: false,
+        isSymlink: entry.isSymbolicLink(),
+        targetPath: entry.isSymbolicLink() ? targetPath : undefined
+      });
     }
   }
 

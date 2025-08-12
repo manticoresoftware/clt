@@ -7,7 +7,7 @@
   export let fileTree: FileNode[] = [];
 
   const dispatch = createEventDispatcher();
-  
+
   let searchInput: HTMLInputElement;
   let searchQuery = '';
   let searchResults: Array<{ item: string; score: number; positions: Set<number> }> = [];
@@ -16,21 +16,20 @@
   let allFilePaths: string[] = [];
 
   // Extract all file paths from the file tree
-  function extractFilePaths(nodes: FileNode[], basePath = ''): string[] {
+  function extractFilePaths(nodes: FileNode[]): string[] {
     const paths: string[] = [];
-    
+
     for (const node of nodes) {
-      const fullPath = basePath ? `${basePath}/${node.name}` : node.name;
-      
       if (!node.isDirectory) {
-        paths.push(fullPath);
+        // Use the node.path directly as it's already the correct relative path from backend
+        paths.push(node.path);
       }
-      
+
       if (node.children && node.children.length > 0) {
-        paths.push(...extractFilePaths(node.children, fullPath));
+        paths.push(...extractFilePaths(node.children));
       }
     }
-    
+
     return paths;
   }
 
@@ -108,15 +107,11 @@
   // Get file type icon based on extension
   function getFileIcon(filePath: string): string {
     const extension = filePath.split('.').pop()?.toLowerCase();
-    
+
     switch (extension) {
       case 'rec':
       case 'recb':
-        return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-          <polyline points="14,2 14,8 20,8"></polyline>
-          <circle cx="12" cy="13" r="2" fill="currentColor"></circle>
-        </svg>`;
+				return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="svelte-1uxufd3"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd" class="svelte-1uxufd3"></path></svg>`;
       case 'js':
       case 'ts':
         return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -195,7 +190,7 @@
           <kbd class="shortcut-hint">ESC</kbd>
         </div>
       </div>
-      
+
       <div class="search-results">
         {#if searchQuery.trim() && searchResults.length === 0}
           <div class="no-results">
@@ -225,7 +220,7 @@
           </div>
         {/if}
       </div>
-      
+
       <div class="search-footer">
         <div class="search-shortcuts">
           <span><kbd>↑↓</kbd> Navigate</span>

@@ -79,7 +79,7 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         for (const filePath of allChangedFiles) {
           console.log(`Checking file: ${filePath}`);
 
-          // Check if this file is in the test directory
+          // Only add to modifiedFiles if in test directory (for file explorer display)
           if (filePath.startsWith(relativeTestPath)) {
             // Determine the status code
             let statusCode = '';
@@ -103,8 +103,9 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
           }
         }
 
-        // Check if there are any changes to commit in the test directory
-        const hasChanges = modifiedFiles.length > 0;
+        // For PR creation: show button if we're not on default branch and no existing PR
+        // Don't check for changes - user should be able to create PR from any branch
+        const hasChanges = currentBranch !== defaultBranch;
 
         // Extract repository URL from git remotes
         let repoUrl = null;
@@ -138,8 +139,8 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
           currentBranch,
           isPrBranch,
           existingPr, // Add the existing PR data to the response
-          hasChanges,
-          modifiedFiles,
+          hasChanges, // True if not on default branch (can create PR)
+          modifiedFiles, // Files in test directory only (for file explorer)
           modifiedDirs: Array.from(modifiedDirs),
           testPath: relativeTestPath,
           repoUrl: repoUrl

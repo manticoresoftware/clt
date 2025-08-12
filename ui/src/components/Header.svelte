@@ -14,7 +14,7 @@
   // Subscribe to git status and GitHub store for smart button logic
   $: gitStatus = $gitStatusStore;
   $: github = $githubStore;
-  $: hasGitChanges = gitStatus.hasChanges;
+  $: hasGitChanges = gitStatus.hasChanges; // True if not on default branch
   $: gitStatusError = gitStatus.error;
   
   // Smart button logic based on PR status - prioritize fresh data from gitStatus
@@ -26,7 +26,7 @@
   // GitHub compare URL for creating PR (reuse existing repoUrl from gitStatus)
   $: githubCompareUrl = repoUrl ? `${repoUrl}/compare/${currentBranch}?expand=1` : null;
   
-  // Only show Create PR link when there's no existing PR, has changes, and we have repo URL
+  // Show Create PR link when: no existing PR AND not on default branch AND valid repo URL
   $: showCreatePrLink = !existingPr && hasGitChanges && githubCompareUrl;
 
   function updateDockerImage() {
@@ -120,8 +120,8 @@
         <a
           href={githubCompareUrl}
           target="_blank"
-          class="create-pr-button pr-mode"
-          title="Create PR with {gitStatus.modifiedFiles.length} changed files"
+          class="create-pr-button"
+          title="Create PR for branch {currentBranch}"
         >
           <!-- Create PR icon -->
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -131,7 +131,6 @@
             <line x1="6" y1="9" x2="6" y2="21"></line>
           </svg>
           Create PR
-          <span class="change-count">({gitStatus.modifiedFiles.length})</span>
         </a>
       {/if}
       
@@ -265,7 +264,7 @@
     display: flex;
     align-items: center;
     gap: var(--spacing-xs);
-    background-color: #007bff;
+    background-color: var(--color-bg-primary-action, #007bff);
     color: white;
     border: none;
     padding: var(--spacing-xs) var(--spacing-sm);
@@ -273,20 +272,17 @@
     cursor: pointer;
     font-size: 0.875rem;
     font-weight: 500;
-    transition: none;
-    text-decoration: none; /* For link styling */
+    margin-right: var(--spacing-md);
+    text-decoration: none;
+    transition: background-color var(--transition-fast);
+    box-sizing: border-box;
+    /* Ensure consistent height with interactive-button */
+    min-height: 32px;
+    line-height: 1.2;
   }
 
-  .create-pr-button:hover:not(.disabled) {
-    background-color: #0056b3;
-  }
-
-  .create-pr-button.pr-mode:not(.disabled) {
-    background-color: #007bff;
-  }
-
-  .create-pr-button.pr-mode:hover:not(.disabled) {
-    background-color: #0056b3;
+  .create-pr-button:hover {
+    background-color: var(--color-bg-primary-action-hover, #0056b3);
   }
 
   .interactive-button {
@@ -302,6 +298,11 @@
     font-size: 0.875rem;
     font-weight: 500;
     margin-right: var(--spacing-md);
+    transition: background-color var(--transition-fast);
+    box-sizing: border-box;
+    /* Ensure consistent height with create-pr-button */
+    min-height: 32px;
+    line-height: 1.2;
   }
 
   .interactive-button:hover {
