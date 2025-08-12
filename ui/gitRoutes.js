@@ -473,6 +473,85 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
     }
   });
 
+  // Create and checkout new branch endpoint
+  app.post('/api/create-branch', isAuthenticated, async (req, res) => {
+    try {
+      const { branch } = req.body;
+
+      if (!branch) {
+        return res.status(400).json({ error: 'Branch name is required' });
+      }
+
+      // Validate branch name (basic validation)
+      if (!/^[a-zA-Z0-9/_-]+$/.test(branch)) {
+        return res.status(400).json({ error: 'Invalid branch name. Use only letters, numbers, hyphens, underscores, and forward slashes.' });
+      }
+
+      // Check if user is authenticated with GitHub
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      // Get the user's repo path
+      const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepo).then(() => true).catch(() => false);
+
+      if (!repoExists) {
+        return res.status(404).json({ error: 'Repository not found' });
+      }
+
+      const git = simpleGit(userRepo);
+
+      try {
+        // Check if branch already exists locally
+        const branches = await git.branchLocal();
+        if (branches.all.includes(branch)) {
+          return res.status(400).json({ error: `Branch '${branch}' already exists locally` });
+        }
+
+        // Check if branch exists on remote
+        try {
+          await git.fetch();
+          const remoteBranches = await git.branch(['-r']);
+          const remoteBranchName = `origin/${branch}`;
+          
+          if (remoteBranches.all.includes(remoteBranchName)) {
+            // Branch exists on remote, checkout and track it
+            await git.checkoutBranch(branch, remoteBranchName);
+            return res.json({
+              success: true,
+              currentBranch: branch,
+              message: `Checked out existing remote branch '${branch}'`,
+              created: false
+            });
+          }
+        } catch (fetchError) {
+          console.log('Could not fetch remote branches, proceeding with local branch creation');
+        }
+
+        // Create new branch from current branch
+        await git.checkoutLocalBranch(branch);
+        
+        return res.json({
+          success: true,
+          currentBranch: branch,
+          message: `Created and checked out new branch '${branch}'`,
+          created: true
+        });
+
+      } catch (gitError) {
+        console.error('Git operation error:', gitError);
+        return res.status(500).json({
+          error: 'Git operation failed',
+          details: gitError.message || 'Unknown error during git operation'
+        });
+      }
+    } catch (error) {
+      console.error('Error in create-branch:', error);
+      res.status(500).json({ error: `Failed to create branch: ${error.message}` });
+    }
+  });
+
   // API endpoint to check PR status for current branch
   app.get('/api/pr-status', isAuthenticated, async (req, res) => {
     const username = req.user.username;

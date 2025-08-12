@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { filesStore } from '../stores/filesStore';
   import { API_URL } from '../config.js';
+  import DiffHighlighter from './DiffHighlighter.svelte';
 
   export let visible = false;
   export let currentFilePath: string | null = null;
@@ -267,7 +268,7 @@
         <div class="git-section">
           <div class="section-header">Changes vs {gitData.defaultBranch}</div>
           <div class="diff-container">
-            <pre class="diff-content">{gitData.diff}</pre>
+            <DiffHighlighter diffContent={gitData.diff} className="diff-content" />
           </div>
         </div>
       {/if}
@@ -567,21 +568,11 @@
   }
 
   .diff-container {
-    max-height: 200px;
-    overflow-y: auto;
+    max-height: 400px;
+    overflow: hidden;
     background-color: var(--color-bg-secondary);
     border: 1px solid var(--color-border);
     border-radius: 4px;
-  }
-
-  .diff-content {
-    margin: 0;
-    padding: 8px;
-    font-family: var(--font-family-mono);
-    font-size: 11px;
-    line-height: 1.4;
-    white-space: pre-wrap;
-    color: var(--color-text-primary);
   }
 
   .history-list {

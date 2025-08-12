@@ -29,6 +29,9 @@
   // Perform search when query changes - ONLY if user interacted and not selecting
   $: if (!isSelecting && userInteracted && fzf && searchQuery.trim()) {
     performSearch();
+  } else if (!isSelecting && userInteracted && searchQuery.trim()) {
+    // Show create new branch option when no existing branches match
+    showCreateNewBranchOption();
   } else if (!isSelecting && userInteracted) {
     clearResults();
   }
@@ -42,8 +45,28 @@
       score: result.score,
       positions: result.positions
     }));
+    
+    // If no results found, show create new branch option
+    if (searchResults.length === 0 && searchQuery.trim()) {
+      showCreateNewBranchOption();
+      return;
+    }
+    
     selectedIndex = 0;
     showDropdown = searchResults.length > 0;
+  }
+
+  function showCreateNewBranchOption() {
+    if (!searchQuery.trim()) return;
+    
+    // Create a special "create new branch" result
+    searchResults = [{
+      item: `CREATE: ${searchQuery.trim()}`,
+      score: 0,
+      positions: new Set()
+    }];
+    selectedIndex = 0;
+    showDropdown = true;
   }
 
   function clearResults() {
@@ -68,7 +91,19 @@
 
   // Handle keyboard navigation
   function handleKeydown(event: KeyboardEvent) {
-    if (!showDropdown) return;
+    if (!showDropdown) {
+      // Allow Enter to create new branch even without dropdown
+      if (event.key === 'Enter' && searchQuery.trim()) {
+        event.preventDefault();
+        const branchName = searchQuery.trim();
+        if (!branches.includes(branchName)) {
+          selectBranch(`CREATE: ${branchName}`);
+        } else {
+          selectBranch(branchName);
+        }
+      }
+      return;
+    }
 
     switch (event.key) {
       case 'Escape':
@@ -119,8 +154,15 @@
       inputElement.blur();
     }
     
-    // Dispatch selection with the branch
-    dispatch('select', { branch });
+    // Check if this is a create new branch action
+    if (branch.startsWith('CREATE: ')) {
+      const newBranchName = branch.replace('CREATE: ', '');
+      // Dispatch creation event with the new branch name
+      dispatch('create', { branch: newBranchName });
+    } else {
+      // Dispatch selection with existing branch
+      dispatch('select', { branch });
+    }
     
     // Keep selection flag active for longer
     setTimeout(() => {
@@ -178,6 +220,13 @@
 
   // Get branch icon
   function getBranchIcon(branch: string): string {
+    if (branch.startsWith('CREATE: ')) {
+      return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="16"></line>
+        <line x1="8" y1="12" x2="16" y2="12"></line>
+      </svg>`;
+    }
     if (branch.includes('main') || branch.includes('master')) {
       return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="6" cy="6" r="3"></circle>
@@ -192,6 +241,20 @@
       <path d="M18 9v6a3 3 0 0 1-3 3H9"></path>
       <path d="M6 9v6"></path>
     </svg>`;
+  }
+
+  // Format branch name for display
+  function formatBranchName(branch: string): string {
+    if (branch.startsWith('CREATE: ')) {
+      const branchName = branch.replace('CREATE: ', '');
+      return `Create branch: <strong>${branchName}</strong>`;
+    }
+    return branch;
+  }
+
+  // Check if this is a create branch option
+  function isCreateBranchOption(branch: string): boolean {
+    return branch.startsWith('CREATE: ');
   }
 </script>
 
@@ -216,16 +279,20 @@
     <div class="branch-dropdown">
       {#each searchResults as result, index}
         <button
-          class="branch-option {index === selectedIndex ? 'selected' : ''}"
+          class="branch-option {index === selectedIndex ? 'selected' : ''} {isCreateBranchOption(result.item) ? 'create-branch' : ''}"
           on:mousedown|preventDefault|stopPropagation={() => selectBranch(result.item)}
           on:click|preventDefault|stopPropagation={() => selectBranch(result.item)}
           on:mouseenter={() => selectedIndex = index}
         >
-          <div class="branch-icon">
+          <div class="branch-icon {isCreateBranchOption(result.item) ? 'create-icon' : ''}">
             {@html getBranchIcon(result.item)}
           </div>
           <div class="branch-name">
-            {@html highlightMatches(result.item, result.positions)}
+            {#if isCreateBranchOption(result.item)}
+              {@html formatBranchName(result.item)}
+            {:else}
+              {@html highlightMatches(result.item, result.positions)}
+            {/if}
           </div>
         </button>
       {/each}
@@ -304,6 +371,25 @@
 
   .branch-option.selected {
     background-color: var(--color-bg-selected);
+  }
+
+  .branch-option.create-branch {
+    border-left: 3px solid var(--color-bg-accent);
+    background-color: rgba(59, 130, 246, 0.1);
+  }
+
+  .branch-option.create-branch:hover,
+  .branch-option.create-branch.selected {
+    background-color: rgba(59, 130, 246, 0.2);
+  }
+
+  .branch-option.create-branch .branch-name {
+    color: var(--color-bg-accent);
+    font-weight: 500;
+  }
+
+  .create-icon {
+    color: var(--color-bg-accent) !important;
   }
 
   .branch-icon {
