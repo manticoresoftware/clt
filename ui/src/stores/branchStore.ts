@@ -170,6 +170,47 @@ function createBranchStore() {
         throw error;
       }
     },
+    createAndCheckoutBranch: async (branchName: string) => {
+      update(state => ({ ...state, isResetting: true, error: null, success: false, message: null }));
+      
+      try {
+        const response = await fetch(`${API_URL}/api/create-branch`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include',
+          body: JSON.stringify({ branch: branchName })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to create and checkout branch');
+        }
+        
+        update(state => ({
+          ...state,
+          isResetting: false,
+          success: true,
+          currentBranch: branchName,
+          message: data.message,
+          allBranches: [...state.allBranches, branchName] // Add new branch to list
+        }));
+        
+        // Refresh the file tree after successful checkout
+        await filesStore.refreshFileTree();
+        
+        return data;
+      } catch (error) {
+        update(state => ({
+          ...state,
+          isResetting: false,
+          error: error.message || 'An error occurred while creating branch'
+        }));
+        throw error;
+      }
+    },
     setCurrentBranch: (branch: string) => update(state => ({ ...state, currentBranch: branch })),
     reset: () => set(initialState)
   };

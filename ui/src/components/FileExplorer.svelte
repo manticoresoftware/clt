@@ -29,6 +29,31 @@
     await handleResetToBranch();
   }
 
+  // Handle branch creation from BranchSelector
+  async function handleBranchCreate(event: CustomEvent) {
+    const branchName = event.detail.branch;
+    
+    // Check for unstaged changes before proceeding
+    const canProceed = await checkUnstagedChanges();
+    if (!canProceed) {
+      return; // User cancelled
+    }
+
+    try {
+      await branchStore.createAndCheckoutBranch(branchName);
+      resetBranch = branchName;
+      
+      // Refresh the file tree after branch creation
+      await filesStore.refreshFileTree();
+      
+      // Show success message
+      console.log(`Successfully created and checked out branch: ${branchName}`);
+    } catch (error) {
+      console.error('Failed to create branch:', error);
+      // The error will be shown via the branchStore error state
+    }
+  }
+
   // Parse URL parameters
   function parseUrlParams(): {
     filePath?: string;
@@ -1475,6 +1500,7 @@
           placeholder="e.g., master, main, feature/xyz"
           disabled={$branchStore.isResetting}
           on:select={handleBranchSelect}
+          on:create={handleBranchCreate}
         />
         {#if $branchStore.isResetting}
           <div class="reset-status">
