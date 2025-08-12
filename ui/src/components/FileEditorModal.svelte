@@ -13,6 +13,7 @@
   let loading = false;
   let error: string | null = null;
   let saving = false;
+  let successMessage: string | null = null;
 
   // Load file content when modal opens
   $: if (visible && filePath) {
@@ -50,6 +51,7 @@
     
     saving = true;
     error = null;
+    successMessage = null;
     
     try {
       const response = await fetch(`${API_URL}/api/save-file`, {
@@ -68,8 +70,24 @@
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       
-      // Close modal on successful save
-      closeModal();
+      // Parse response to get git commit info
+      const result = await response.json();
+      console.log('File saved successfully:', result);
+      
+      // Log git commit result if available
+      if (result.git) {
+        console.log('Auto-commit result:', result.git);
+        if (result.git.success) {
+          successMessage = 'File saved and committed successfully!';
+        }
+      } else {
+        successMessage = 'File saved successfully!';
+      }
+      
+      // Show success message briefly before closing
+      setTimeout(() => {
+        closeModal();
+      }, 1500);
     } catch (err) {
       console.error('Failed to save file:', err);
       error = err instanceof Error ? err.message : 'Failed to save file';
@@ -124,6 +142,7 @@
     visible = false;
     fileContent = '';
     error = null;
+    successMessage = null;
     dispatch('close');
   }
 
@@ -201,6 +220,11 @@
             <button class="retry-button" on:click={loadFileContent}>
               Retry
             </button>
+          </div>
+        {:else if successMessage}
+          <div class="success-state">
+            <div class="success-icon">✅</div>
+            <div class="success-message">{successMessage}</div>
           </div>
         {:else}
           <div class="editor-container">
@@ -357,7 +381,7 @@
     flex: 1;
   }
 
-  .loading-state, .error-state {
+  .loading-state, .error-state, .success-state {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -378,15 +402,19 @@
     margin-bottom: 16px;
   }
 
-  .error-icon {
+  .error-icon, .success-icon {
     font-size: 48px;
     margin-bottom: 16px;
   }
 
-  .error-message {
+  .error-message, .success-message {
     margin-bottom: 16px;
     font-size: 14px;
     max-width: 400px;
+  }
+
+  .success-state {
+    color: var(--color-text-success, #10b981);
   }
 
   .retry-button {
