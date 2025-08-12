@@ -4,6 +4,7 @@
   import Editor from './components/Editor.svelte';
 
   import FuzzySearch from './components/FuzzySearch.svelte';
+  import FileEditorModal from './components/FileEditorModal.svelte';
   import { filesStore } from './stores/filesStore';
   import { authStore, fetchAuthState } from './stores/authStore';
   import { branchStore } from './stores/branchStore';
@@ -13,6 +14,11 @@
 
   let isLoading = true;
   let isFuzzySearchOpen = false;
+  
+  // Raw file editor modal state
+  let rawFileEditorVisible = false;
+  let rawFilePath: string | null = null;
+  let rawFileName = '';
 
   // Global keyboard shortcut handler
   function handleGlobalKeydown(event: KeyboardEvent) {
@@ -27,13 +33,34 @@
   function handleFileSelected(event: CustomEvent<{ filePath: string }>) {
     const { filePath } = event.detail;
     
-    // Update URL with selected file path
-    const url = new URL(window.location.href);
-    url.searchParams.set('file', filePath);
-    window.history.pushState({}, '', url.toString());
-    
-    // Trigger file loading by dispatching a popstate event
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    // Check if it's a test file (.rec or .recb)
+    if (filePath.endsWith('.rec') || filePath.endsWith('.recb')) {
+      // Update URL with selected file path
+      const url = new URL(window.location.href);
+      url.searchParams.set('file', filePath);
+      window.history.pushState({}, '', url.toString());
+      
+      // Trigger file loading by dispatching a popstate event
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    } else {
+      // For all other file types, open in RAW file editor
+      const fileName = filePath.split('/').pop() || filePath;
+      openRawFileEditor(filePath, fileName);
+    }
+  }
+
+  // Open RAW file editor modal
+  function openRawFileEditor(filePath: string, fileName: string) {
+    rawFilePath = filePath;
+    rawFileName = fileName;
+    rawFileEditorVisible = true;
+  }
+
+  // Close RAW file editor modal
+  function closeRawFileEditor() {
+    rawFileEditorVisible = false;
+    rawFilePath = null;
+    rawFileName = '';
   }
 
   // Reactive statement to fetch branch info when repo becomes ready
@@ -177,6 +204,14 @@
         fileTree={$filesStore.fileTree} 
         on:fileSelected={handleFileSelected}
         on:close={() => isFuzzySearchOpen = false}
+      />
+      
+      <!-- Raw File Editor Modal -->
+      <FileEditorModal
+        visible={rawFileEditorVisible}
+        filePath={rawFilePath}
+        fileName={rawFileName}
+        on:close={closeRawFileEditor}
       />
     {/if}
   {:else}
