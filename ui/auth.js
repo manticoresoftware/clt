@@ -1,6 +1,7 @@
 import passport from 'passport';
 import { Strategy as GitHubStrategy } from 'passport-github2';
 import { getAuthConfig } from './config/auth.js';
+import tokenManager from './tokenManager.js';
 
 // Configure Passport with GitHub strategy
 export function setupPassport() {
@@ -30,7 +31,7 @@ export function setupPassport() {
   // Create a custom GitHub strategy that doesn't require email scope
   const githubStrategy = new GitHubStrategy(
     authConfig.github,
-    (accessToken, refreshToken, profile, done) => {
+    async (accessToken, refreshToken, profile, done) => {
       // Debug logging
       console.log('GitHub OAuth callback executed');
       console.log('Profile:', profile.username);
@@ -52,20 +53,39 @@ export function setupPassport() {
         authConfig.allowedUsers.length === 0 ||
         authConfig.allowedUsers.includes(username)
       ) {
-        // Store tokens in global storage (simple approach)
-        if (!global.userTokens) global.userTokens = {};
-        global.userTokens[username] = accessToken;
+        try {
+          // CRITICAL: Store tokens using tokenManager (updates git remote with new token)
+          console.log(`[AUTH] Storing fresh token for user ${username} via tokenManager`);
+          await tokenManager.storeTokens(username, accessToken, refreshToken);
+          console.log(`[AUTH] ✅ Token stored and git remote updated for user ${username}`);
 
-        // Store just the necessary user info
-        const user = {
-          id: profile.id,
-          username: profile.username,
-          displayName: profile.displayName || profile.username,
-          avatarUrl: profile.photos?.[0]?.value || '',
-					token: accessToken,
-        };
-        console.log('User authenticated successfully:', username);
-        return done(null, user);
+          // Store just the necessary user info
+          const user = {
+            id: profile.id,
+            username: profile.username,
+            displayName: profile.displayName || profile.username,
+            avatarUrl: profile.photos?.[0]?.value || '',
+            token: accessToken,
+          };
+          console.log('User authenticated successfully:', username);
+          return done(null, user);
+        } catch (error) {
+          console.error(`[AUTH] ❌ Failed to store token for user ${username}:`, error);
+          // Continue with authentication even if token storage fails
+          // Store tokens in global storage as fallback
+          if (!global.userTokens) global.userTokens = {};
+          global.userTokens[username] = accessToken;
+
+          const user = {
+            id: profile.id,
+            username: profile.username,
+            displayName: profile.displayName || profile.username,
+            avatarUrl: profile.photos?.[0]?.value || '',
+            token: accessToken,
+          };
+          console.log('User authenticated successfully (fallback token storage):', username);
+          return done(null, user);
+        }
       } else {
         // User not in the allowed list
         console.log('User not in allowed list:', username);

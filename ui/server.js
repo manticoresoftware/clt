@@ -56,11 +56,23 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 // Add helper to save tokens when users authenticate
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
 	if (req.user && req.user.username && req.user.token) {
-		// Store token for repository operations
-		if (!global.userTokens) global.userTokens = {};
-		global.userTokens[req.user.username] = req.user.token;
+		// Check if this is a new token or token update
+		const currentToken = global.userTokens?.[req.user.username];
+		if (currentToken !== req.user.token) {
+			console.log(`[SERVER] Detected token update for user ${req.user.username}, updating via tokenManager`);
+			try {
+				// Use tokenManager to properly store and update git remote
+				await tokenManager.storeTokens(req.user.username, req.user.token);
+				console.log(`[SERVER] ✅ Token updated for user ${req.user.username}`);
+			} catch (error) {
+				console.error(`[SERVER] ❌ Failed to update token for user ${req.user.username}:`, error);
+				// Fallback to global storage
+				if (!global.userTokens) global.userTokens = {};
+				global.userTokens[req.user.username] = req.user.token;
+			}
+		}
 	}
 	next();
 });
