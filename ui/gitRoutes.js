@@ -824,8 +824,11 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
             } else if (fetchUrl.endsWith('.git')) {
               fetchUrl = fetchUrl.replace('.git', '');
             }
-            repoUrl = fetchUrl;
-            console.log('Processed repo URL:', repoUrl);
+            
+            // SECURITY: Remove access tokens from URL before sending to frontend
+            const cleanRepoUrl = fetchUrl.replace(/https:\/\/[^@]+@/, 'https://');
+            repoUrl = cleanRepoUrl;
+            console.log('Processed repo URL (tokens removed):', repoUrl);
           }
         } catch (remoteError) {
           console.warn('Could not get repository URL:', remoteError.message);
