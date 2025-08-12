@@ -360,7 +360,8 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: auto; /* Allow scrolling */
+    min-height: 0; /* Important for flex child to shrink */
   }
 
   .editor-container {
@@ -368,17 +369,30 @@
     display: flex;
     flex-direction: column;
     padding: 16px;
-    overflow: hidden;
+    overflow: auto; /* Allow scrolling */
+    min-height: 0; /* Important for flex child to shrink */
   }
 
   .editor-container :global(.codemirror-wrapper) {
     flex: 1;
     display: flex;
     flex-direction: column;
+    min-height: 0; /* Important for flex child to shrink */
   }
 
   .editor-container :global(.codemirror-container) {
     flex: 1;
+    min-height: 0; /* Important for flex child to shrink */
+  }
+
+  /* Ensure CodeMirror editor can scroll properly */
+  .editor-container :global(.cm-editor) {
+    height: 100%;
+    overflow: auto;
+  }
+
+  .editor-container :global(.cm-scroller) {
+    overflow: auto;
   }
 
   .loading-state, .error-state, .success-state {
