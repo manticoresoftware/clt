@@ -5,6 +5,7 @@
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
   import Step from './Step.svelte';
   import GitChangesPanel from './GitChangesPanel.svelte';
+  import FileEditorModal from './FileEditorModal.svelte';
   import {
     initWasm,
     wasmLoadedStore,
@@ -25,6 +26,7 @@
   let commands: any[] = [];
   let autoSaveEnabled = true;
   let gitPanelVisible = false;
+  let showFileEditor = false;
 
   // Reactive statement to check if current file is running
   $: isCurrentFileRunning = $filesStore.currentFile ? $filesStore.runningTests.has($filesStore.currentFile.path) : false;
@@ -544,6 +546,16 @@
     }
     return ''; // Return empty string for unknown statuses
   }
+
+  function openFileEditor() {
+    if ($filesStore.currentFile) {
+      showFileEditor = true;
+    }
+  }
+
+  function closeFileEditor() {
+    showFileEditor = false;
+  }
 </script>
 
 <div class="editor">
@@ -621,6 +633,17 @@
         </label>
       </div>
       <div class="action-buttons">
+        <button
+          class="edit-file-button"
+          on:click={openFileEditor}
+          disabled={!$filesStore.currentFile}
+          title="Edit raw file content"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
         <button
           class="git-panel-toggle"
           on:click={() => gitPanelVisible = !gitPanelVisible}
@@ -776,6 +799,14 @@
     bind:visible={gitPanelVisible}
     currentFilePath={$filesStore.currentFile?.path || null}
     onClose={() => gitPanelVisible = false}
+  />
+
+  <!-- File Editor Modal -->
+  <FileEditorModal
+    bind:visible={showFileEditor}
+    filePath={$filesStore.currentFile?.path || null}
+    fileName={$filesStore.currentFile?.path ? $filesStore.currentFile.path.split('/').pop() : ''}
+    on:close={closeFileEditor}
   />
 </div>
 
@@ -1561,5 +1592,34 @@
   .no-commands p {
     margin: 0 0 20px 0;
     font-size: 14px;
+  }
+
+  .edit-file-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    transition: all 0.2s ease;
+  }
+
+  .edit-file-button:hover:not(:disabled) {
+    background-color: var(--color-bg-secondary);
+    color: var(--color-text-primary);
+  }
+
+  .edit-file-button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  .edit-file-button svg {
+    width: 16px;
+    height: 16px;
   }
 </style>
