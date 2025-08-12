@@ -6,6 +6,12 @@
   --color-bg-accent: #3b82f6;
   --color-bg-hover: #f0f5ff;
   --color-bg-selected: #ebf4ff;
+  
+  /* Button theme colors */
+  --color-bg-info: #0ea5e9;
+  --color-bg-info-hover: #0284c7;
+  --color-bg-primary-action: #007bff;
+  --color-bg-primary-action-hover: #0056b3;
 
   --color-text-primary: #1a202c;
   --color-text-secondary: #4a5568;

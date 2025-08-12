@@ -38,7 +38,7 @@
   // Handle branch creation from BranchSelector
   async function handleBranchCreate(event: CustomEvent) {
     const branchName = event.detail.branch;
-    
+
     // Check for unstaged changes before proceeding
     const canProceed = await checkUnstagedChanges();
     if (!canProceed) {
@@ -48,10 +48,10 @@
     try {
       await branchStore.createAndCheckoutBranch(branchName);
       resetBranch = branchName;
-      
+
       // Refresh the file tree after branch creation
       await filesStore.refreshFileTree();
-      
+
       // Show success message
       console.log(`Successfully created and checked out branch: ${branchName}`);
     } catch (error) {
@@ -216,11 +216,11 @@
   // Get file type icon based on extension
   function getFileTypeIcon(fileName: string): string {
     const extension = fileName.split('.').pop()?.toLowerCase();
-    
+
     switch (extension) {
       case 'rec':
       case 'recb':
-        return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm0 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V8zm0 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1v-2z" clip-rule="evenodd" /></svg>';
+				return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="svelte-1uxufd3"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd" class="svelte-1uxufd3"></path></svg>`;
       case 'js':
       case 'ts':
         return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>';
@@ -649,7 +649,7 @@
     // Fetch the file tree from the backend
     preserveExpandedState();
     await filesStore.refreshFileTree();
-    
+
     // Fetch current branch and all branches
     await branchStore.fetchCurrentBranch();
     await branchStore.fetchAllBranches();
@@ -822,15 +822,7 @@
   async function handleUrlChange() {
     const urlParams = parseUrlParams();
 
-    // If we have parameters that might affect git state, check for unstaged changes first
-    const hasGitAffectingParams = urlParams.branch || urlParams.filePath;
-    if (hasGitAffectingParams) {
-      const canProceed = await checkUnstagedChanges();
-      if (!canProceed) {
-        // User cancelled, stop processing
-        return;
-      }
-    }
+    // No need to check for unstaged changes since we always commit now
 
     if (urlParams.filePath || urlParams.testPath) {
       const targetPath = urlParams.filePath || urlParams.testPath;
