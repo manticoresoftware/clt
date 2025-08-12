@@ -1,6 +1,6 @@
 <script lang="ts">
   import { filesStore, validateTestContent, type TestStep as TestStepType, type TestStructure } from '../stores/filesStore';
-  import { gitStatusStore } from '../stores/gitStatusStore';
+  import { gitStatusStore, checkoutFile } from '../stores/gitStatusStore';
   import { onMount, onDestroy } from 'svelte';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
   import Step from './Step.svelte';
@@ -468,6 +468,41 @@
     }
   }
 
+  async function handleDiscardChanges() {
+    if (!$filesStore.currentFile) return;
+
+    const fileName = $filesStore.currentFile.path.split('/').pop() || $filesStore.currentFile.path;
+
+    // Show confirmation dialog
+    const confirmed = confirm(`This will discard all unsaved changes to "${fileName}". Are you sure?`);
+    if (!confirmed) return;
+
+    // Simply reload the file from backend to discard in-memory changes
+    await filesStore.loadFile($filesStore.currentFile.path);
+    console.log('File reloaded successfully, unsaved changes discarded');
+  }
+
+  async function handleCheckoutFile() {
+    if (!$filesStore.currentFile) return;
+
+    const currentFilePath = $filesStore.currentFile.path;
+    const testPath = $gitStatusStore.testPath || 'test/clt-tests';
+    const fullFilePath = `${testPath}/${currentFilePath}`;
+    const fileName = currentFilePath.split('/').pop() || currentFilePath;
+
+    // Show confirmation dialog
+    const confirmed = confirm(`This will discard all changes to "${fileName}" that are not committed. Are you sure?`);
+    if (!confirmed) return;
+
+    // Use the full path for checkout (the path that git knows about)
+    const success = await checkoutFile(fullFilePath);
+    if (success) {
+      // Reload the current file content after checkout
+      await filesStore.loadFile(currentFilePath); // Use the filesStore path for loading
+      console.log('File checked out and reloaded successfully');
+    }
+  }
+
 
 
   // Get git status for current file - make it reactive by accessing the store directly
@@ -484,6 +519,7 @@
         return fileStatus?.status || null;
       })()
     : null;
+  $: isCurrentFileModified = currentFileGitStatus === 'M';
 
   function formatTime(date: Date): string {
     return date.toLocaleTimeString(undefined, {
@@ -661,6 +697,16 @@
         >
           Save
         </button>
+        {#if $filesStore.currentFile && $filesStore.currentFile.dirty}
+          <button
+            class="checkout-button"
+            on:click={handleDiscardChanges}
+            disabled={!$filesStore.currentFile}
+            title="Discard unsaved changes"
+          >
+            Discard changes
+          </button>
+        {/if}
 
         {#if isCurrentFileRunning}
           <button
