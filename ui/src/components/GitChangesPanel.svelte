@@ -79,14 +79,23 @@
     }
   }
 
+  // SECURITY: Sanitize repository URLs to remove any access tokens
+  function sanitizeRepoUrl(url: string): string {
+    if (!url) return '';
+    // Remove tokens from URLs (defense-in-depth, backend should already handle this)
+    return url.replace(/https:\/\/[^@]+@/, 'https://');
+  }
+
   function getGitHubCommitUrl(repoUrl: string, commitHash: string): string {
     if (!repoUrl) return '';
-    return `${repoUrl}/commit/${commitHash}`;
+    const cleanUrl = sanitizeRepoUrl(repoUrl);
+    return `${cleanUrl}/commit/${commitHash}`;
   }
 
   function getGitHubFileUrl(repoUrl: string, commitHash: string, filePath: string): string {
     if (!repoUrl || !filePath) return '';
-    return `${repoUrl}/blob/${commitHash}/${filePath}`;
+    const cleanUrl = sanitizeRepoUrl(repoUrl);
+    return `${cleanUrl}/blob/${commitHash}/${filePath}`;
   }
 
   // Auto-refresh git data when files are saved
@@ -200,7 +209,7 @@
             <span class="branch-label">Current:</span>
             {#if gitData.repoUrl && !gitData.isOnDefaultBranch}
               <a 
-                href={`${gitData.repoUrl}/tree/${gitData.currentBranch}`} 
+                href={`${sanitizeRepoUrl(gitData.repoUrl)}/tree/${gitData.currentBranch}`} 
                 target="_blank" 
                 rel="noopener noreferrer"
                 class="branch-name current-branch branch-link"
@@ -216,7 +225,7 @@
             <span class="branch-label">Default:</span>
             {#if gitData.repoUrl}
               <a 
-                href={`${gitData.repoUrl}/tree/${gitData.defaultBranch}`} 
+                href={`${sanitizeRepoUrl(gitData.repoUrl)}/tree/${gitData.defaultBranch}`} 
                 target="_blank" 
                 rel="noopener noreferrer"
                 class="branch-name default-branch branch-link"
@@ -232,13 +241,13 @@
             <span class="branch-label">Repo:</span>
             {#if gitData.repoUrl}
               <a 
-                href={gitData.repoUrl} 
+                href={sanitizeRepoUrl(gitData.repoUrl)} 
                 target="_blank" 
                 rel="noopener noreferrer"
                 class="repo-url-link"
                 title="View repository on GitHub"
               >
-                {gitData.repoUrl.replace('https://github.com/', '')}
+                {sanitizeRepoUrl(gitData.repoUrl).replace('https://github.com/', '')}
               </a>
             {:else}
               <span class="repo-url-missing">Not detected</span>
@@ -249,7 +258,7 @@
               <span class="status-badge pr-branch">PR Branch</span>
               {#if gitData.repoUrl}
                 <a 
-                  href={`${gitData.repoUrl}/compare/${gitData.defaultBranch}...${gitData.currentBranch}`} 
+                  href={`${sanitizeRepoUrl(gitData.repoUrl)}/compare/${gitData.defaultBranch}...${gitData.currentBranch}`} 
                   target="_blank" 
                   rel="noopener noreferrer"
                   class="compare-link"
