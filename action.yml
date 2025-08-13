@@ -213,7 +213,7 @@ runs:
               encoded_test_path=$(url_encode "$key")
               encoded_branch=$(url_encode "$current_branch")
               edit_url="${{ inputs.ui_host }}/?test_path=$encoded_test_path&branch=$encoded_branch&$failed_tests_params"
-              echo "- [Edit $clean_path]($edit_url)" >> $GITHUB_STEP_SUMMARY
+              echo "- [Edit $key]($edit_url)" >> $GITHUB_STEP_SUMMARY
             done
             echo >> $GITHUB_STEP_SUMMARY
           fi
