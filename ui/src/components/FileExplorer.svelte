@@ -258,6 +258,24 @@
     }
   }
 
+  // Helper function to clean test paths - REMOVE test/clt-tests or tests/clt-tests prefix
+  function cleanTestPath(path: string): string {
+    if (!path) return path;
+    
+    // Remove tests/clt-tests/ prefix if present
+    if (path.startsWith('tests/clt-tests/')) {
+      return path.substring('tests/clt-tests/'.length);
+    }
+    
+    // Remove test/clt-tests/ prefix if present (common typo)
+    if (path.startsWith('test/clt-tests/')) {
+      return path.substring('test/clt-tests/'.length);
+    }
+    
+    // Path is already clean
+    return path;
+  }
+
   // Update URL with file path using query parameters
   function updateUrlWithFilePath(path: string) {
     const url = new URL(window.location.href);
@@ -267,6 +285,9 @@
 
   async function fetchFileContent(path: string) {
     try {
+      // Clean the path first - remove test/clt-tests or tests/clt-tests prefix
+      path = cleanTestPath(path);
+      
       // Use loadFile method from filesStore which now uses our new parsing function
       const success = await filesStore.loadFile(path);
 
@@ -623,9 +644,13 @@
       }
     }
 
-    // Set failed tests for highlighting
+    // Set failed tests for highlighting - clean paths first
     if (urlParams.failedTests) {
-      failedTestPaths = new Set(urlParams.failedTests);
+      // Clean each failed test path
+      const cleanedFailedTests = urlParams.failedTests.map((testPath: string) => cleanTestPath(testPath));
+      failedTestPaths = new Set(cleanedFailedTests);
+    } else {
+      failedTestPaths = new Set();
     }
 
     // Set docker image if provided
@@ -825,9 +850,13 @@
     // No need to check for unstaged changes since we always commit now
 
     if (urlParams.filePath || urlParams.testPath) {
-      const targetPath = urlParams.filePath || urlParams.testPath;
+      let targetPath = urlParams.filePath || urlParams.testPath;
       console.log('🔍 URL params:', urlParams);
-      console.log('🎯 Target path:', targetPath);
+      console.log('🎯 Original target path:', targetPath);
+      
+      // Clean the path - remove test/clt-tests or tests/clt-tests prefix
+      targetPath = cleanTestPath(targetPath);
+      console.log('✂️ Cleaned target path:', targetPath);
 
       // Load the file if it's different from the current file
       if (!$filesStore.currentFile || $filesStore.currentFile.path !== targetPath) {
@@ -844,9 +873,11 @@
       filesStore.clearCurrentFile();
     }
 
-    // Update failed tests highlighting
+    // Update failed tests highlighting - clean paths first
     if (urlParams.failedTests) {
-      failedTestPaths = new Set(urlParams.failedTests);
+      // Clean each failed test path
+      const cleanedFailedTests = urlParams.failedTests.map((testPath: string) => cleanTestPath(testPath));
+      failedTestPaths = new Set(cleanedFailedTests);
     } else {
       failedTestPaths = new Set();
     }
