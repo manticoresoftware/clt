@@ -277,6 +277,11 @@ function createGitStatusStore() {
       
       // If there are changes, prompt user
       const fileCount = currentState!.modifiedFiles.length;
+      
+      // Additional safety check: if fileCount is 0, don't show dialog
+      if (fileCount === 0) {
+        return true;
+      }
       const fileList = currentState!.modifiedFiles
         .slice(0, 5) // Show first 5 files
         .map(file => `  ${file.status} ${file.path}`)
