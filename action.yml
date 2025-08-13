@@ -56,6 +56,13 @@ inputs:
     required: false
     type: string
     default: 'always'
+  ui_host:
+    description: |-
+      UI host domain for generating edit links for failed tests.
+      When provided, failed tests will include edit links pointing to the UI.
+      Example: 'https://clt-ui.example.com'
+    required: false
+    type: string
 
 runs:
   using: "composite"
@@ -131,6 +138,52 @@ runs:
         end_time=$(date +%s)
         test_duration=$((end_time - start_time))
 
+        # URL encoding function for bash
+        url_encode() {
+          local string="${1}"
+          local strlen=${#string}
+          local encoded=""
+          local pos c o
+
+          for (( pos=0 ; pos<strlen ; pos++ )); do
+             c=${string:$pos:1}
+             case "$c" in
+                [-_.~a-zA-Z0-9] ) o="${c}" ;;
+                * )               printf -v o '%%%02x' "'$c"
+             esac
+             encoded+="${o}"
+          done
+          echo "${encoded}"
+        }
+
+        # Determine branch name to pass to UI (use GitHub context, avoid SHAs)
+        is_sha() { [[ "$1" =~ ^[0-9a-fA-F]{7,40}$ ]]; }
+        current_branch=""
+        if [ -n "${{ inputs.ref }}" ] && ! is_sha "${{ inputs.ref }}" ; then
+          current_branch="${{ inputs.ref }}"
+        elif [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ github.event_name }}" = "pull_request_review" ] || [ "${{ github.event_name }}" = "pull_request_target" ]; then
+          current_branch="${{ github.event.pull_request.head.ref }}"
+          if [ -z "$current_branch" ]; then current_branch="${{ github.head_ref }}"; fi
+        else
+          current_branch="${{ github.ref_name }}"
+        fi
+        if [ -z "$current_branch" ]; then current_branch="master"; fi
+
+        # Debug output for branch detection
+        echo "Detected branch: $current_branch (event: ${{ github.event_name }})"
+        # Build failed tests array for URL parameters
+        failed_tests_params=""
+        if [ ${#failed_tests[@]} -ne 0 ] && [ -n "${{ inputs.ui_host }}" ]; then
+          for key in "${!failed_tests[@]}"; do
+            encoded_test=$(url_encode "$key")
+            if [ -z "$failed_tests_params" ]; then
+              failed_tests_params="failed_tests[]=$encoded_test"
+            else
+              failed_tests_params="$failed_tests_params&failed_tests[]=$encoded_test"
+            fi
+          done
+        fi
+
         # Write summary
         if [ "$test_failed" -gt "0" ]; then
           test_emoji="❌"
@@ -151,7 +204,20 @@ runs:
         echo "👉 [Check Action Results]($job_url) for commit [$commit_sha]($commit_url)" >> $GITHUB_STEP_SUMMARY
 
         if [ ${#failed_tests[@]} -ne 0 ]; then
-          echo "Failed tests:" >> $GITHUB_STEP_SUMMARY
+          echo "### Failed tests:" >> $GITHUB_STEP_SUMMARY
+          # Edit links placed right under the header for proper rendering (outside details)
+          if [ -n "${{ inputs.ui_host }}" ]; then
+            echo >> $GITHUB_STEP_SUMMARY
+            echo "🔧 Edit failed tests in UI:" >> $GITHUB_STEP_SUMMARY
+            for key in "${!failed_tests[@]}"; do
+              encoded_test_path=$(url_encode "$key")
+              encoded_branch=$(url_encode "$current_branch")
+              edit_url="${{ inputs.ui_host }}/?test_path=$encoded_test_path&branch=$encoded_branch&$failed_tests_params"
+              echo "- [Edit $clean_path]($edit_url)" >> $GITHUB_STEP_SUMMARY
+            done
+            echo >> $GITHUB_STEP_SUMMARY
+          fi
+
           for key in "${!failed_tests[@]}"; do
             value="${failed_tests[$key]}"
             echo '<details>' >> $GITHUB_STEP_SUMMARY
@@ -164,6 +230,7 @@ runs:
             echo '</details>' >> $GITHUB_STEP_SUMMARY
           done
         fi
+
 
         should_comment="$should_exit"
         if [[ ${{ github.event_name }} == 'pull_request' ]]; then
