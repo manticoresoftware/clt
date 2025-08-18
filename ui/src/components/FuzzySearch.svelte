@@ -2,6 +2,7 @@
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { Fzf } from 'fzf';
   import type { FileNode } from '../stores/filesStore';
+  import { shouldIgnoreFile } from '../constants/fileFilters';
 
   export let isOpen = false;
   export let fileTree: FileNode[] = [];
@@ -15,14 +16,17 @@
   let fzf: Fzf<string>;
   let allFilePaths: string[] = [];
 
-  // Extract all file paths from the file tree
+  // Extract all file paths from the file tree, filtering out ignored extensions
   function extractFilePaths(nodes: FileNode[]): string[] {
     const paths: string[] = [];
 
     for (const node of nodes) {
       if (!node.isDirectory) {
-        // Use the node.path directly as it's already the correct relative path from backend
-        paths.push(node.path);
+        // Filter out ignored file extensions (.rep, .cmp)
+        if (!shouldIgnoreFile(node.path)) {
+          // Use the node.path directly as it's already the correct relative path from backend
+          paths.push(node.path);
+        }
       }
 
       if (node.children && node.children.length > 0) {

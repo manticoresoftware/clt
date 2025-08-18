@@ -7,6 +7,7 @@
   import { API_URL } from '../config.js';
   import BranchSelector from './BranchSelector.svelte';
   import FileEditorModal from './FileEditorModal.svelte';
+  import { shouldIgnoreFile } from '../constants/fileFilters';
 
   // Default to tests directory
   let currentDirectory = 'tests';
@@ -14,6 +15,30 @@
   let newFileName = '';
   let expandedFolders: Set<string> = new Set();
   let selectedFolder: string | null = null; // Track selected folder for creation context
+
+  // Filter function to recursively remove ignored files from file tree
+  function filterFileTree(nodes: FileNode[]): FileNode[] {
+    return nodes
+      .filter(node => {
+        // Always show directories
+        if (node.isDirectory) return true;
+        // Filter out ignored file extensions
+        return !shouldIgnoreFile(node.path);
+      })
+      .map(node => {
+        // If it's a directory with children, recursively filter children
+        if (node.isDirectory && node.children) {
+          return {
+            ...node,
+            children: filterFileTree(node.children)
+          };
+        }
+        return node;
+      });
+  }
+
+  // Create filtered file tree reactive statement
+  $: filteredFileTree = filterFileTree(fileTree);
 
   // RAW file editor modal state
   let rawFileEditorVisible = false;
@@ -1302,7 +1327,7 @@
       {/if}
 
       <!-- Render each file tree node recursively -->
-      {#each fileTree as node (node.path)}
+      {#each filteredFileTree as node (node.path)}
         <div class="file-node">
           <div
             class="tree-item {node.path === $filesStore.currentFile?.path ? 'selected' : ''} {selectedFolder === node.path ? 'folder-selected' : ''} {dropTarget === node ? 'drop-target' : ''} {getFileGitStatus(node.path) || isDirModified(node.path) ? 'has-git-status' : ''} {getGitStatusClass(getFileGitStatus(node.path)) || (isDirModified(node.path) && !getFileGitStatus(node.path) ? 'git-modified' : '')}"
