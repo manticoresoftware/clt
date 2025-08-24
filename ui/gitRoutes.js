@@ -876,4 +876,307 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
       res.status(500).json({ error: 'Failed to get file git history' });
     }
   });
+
+  // Helper function to analyze commit history for undo/redo state
+  async function analyzeCommitHistory(git) {
+    try {
+      // Get recent commits (last 50 should be enough for undo/redo analysis)
+      const log = await git.log({ maxCount: 50 });
+      const commits = log.all;
+
+      if (commits.length === 0) {
+        return { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 };
+      }
+
+      // Parse commit messages to build undo/redo state
+      const revertPattern = /^Revert "(.+)"$/;
+      const reapplyPattern = /^Reapply "(.+)"$/;
+      
+      let canUndo = false;
+      let canRedo = false;
+      let undoCount = 0;
+      let redoCount = 0;
+
+      // Track commit states: original -> reverted -> reapplied -> reverted again...
+      const commitStates = new Map(); // hash -> {original: message, state: 'active'|'reverted'}
+
+      for (let i = 0; i < commits.length; i++) {
+        const commit = commits[i];
+        const message = commit.message.trim();
+
+        if (revertPattern.test(message)) {
+          // This is a revert commit
+          const originalMessage = message.match(revertPattern)[1];
+          
+          // Find the original commit being reverted
+          for (let j = i + 1; j < commits.length; j++) {
+            const prevCommit = commits[j];
+            if (prevCommit.message.trim() === originalMessage) {
+              commitStates.set(prevCommit.hash, {
+                original: originalMessage,
+                state: 'reverted',
+                revertCommit: commit.hash
+              });
+              redoCount++;
+              break;
+            }
+          }
+        } else if (reapplyPattern.test(message)) {
+          // This is a reapply commit
+          const originalMessage = message.match(reapplyPattern)[1];
+          
+          // Find the original commit being reapplied
+          for (let j = i + 1; j < commits.length; j++) {
+            const prevCommit = commits[j];
+            if (prevCommit.message.trim() === originalMessage) {
+              commitStates.set(prevCommit.hash, {
+                original: originalMessage,
+                state: 'active'
+              });
+              undoCount++;
+              break;
+            }
+          }
+        } else {
+          // Regular commit - check if it's been reverted
+          if (!commitStates.has(commit.hash)) {
+            commitStates.set(commit.hash, {
+              original: message,
+              state: 'active'
+            });
+            undoCount++;
+          }
+        }
+      }
+
+      // Determine current state
+      canUndo = undoCount > 0;
+      canRedo = redoCount > 0;
+
+      return { canUndo, canRedo, undoCount, redoCount };
+    } catch (error) {
+      console.error('Error analyzing commit history:', error);
+      return { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 };
+    }
+  }
+
+  // API endpoint to get undo/redo state
+  app.get('/api/git-undo-redo-state', isAuthenticated, async (req, res) => {
+    try {
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepo).then(() => true).catch(() => false);
+
+      if (!repoExists) {
+        return res.status(404).json({ error: 'Repository not found' });
+      }
+
+      const git = simpleGit({ baseDir: userRepo });
+      const isRepo = await git.checkIsRepo();
+      
+      if (!isRepo) {
+        return res.json({ canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 });
+      }
+
+      const state = await analyzeCommitHistory(git);
+      res.json(state);
+
+    } catch (error) {
+      console.error('Error getting undo/redo state:', error);
+      res.status(500).json({ error: 'Failed to get undo/redo state' });
+    }
+  });
+
+  // API endpoint to undo (revert) last commit
+  app.post('/api/git-undo', isAuthenticated, async (req, res) => {
+    try {
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepo).then(() => true).catch(() => false);
+
+      if (!repoExists) {
+        return res.status(404).json({ error: 'Repository not found' });
+      }
+
+      const git = simpleGit({ baseDir: userRepo });
+      const isRepo = await git.checkIsRepo();
+      
+      if (!isRepo) {
+        return res.status(400).json({ error: 'Not a git repository' });
+      }
+
+      // Get current state to check if undo is possible
+      const currentState = await analyzeCommitHistory(git);
+      if (!currentState.canUndo) {
+        return res.status(400).json({ error: 'Nothing to undo' });
+      }
+
+      // Find the latest commit that can be undone
+      const log = await git.log({ maxCount: 50 });
+      const commits = log.all;
+
+      if (commits.length === 0) {
+        return res.status(400).json({ error: 'No commits found' });
+      }
+
+      // Find the first non-revert, non-reapply commit (latest undoable commit)
+      const revertPattern = /^Revert "(.+)"$/;
+      const reapplyPattern = /^Reapply "(.+)"$/;
+      
+      let targetCommit = null;
+      for (const commit of commits) {
+        const message = commit.message.trim();
+        if (!revertPattern.test(message) && !reapplyPattern.test(message)) {
+          targetCommit = commit;
+          break;
+        }
+      }
+
+      if (!targetCommit) {
+        return res.status(400).json({ error: 'No commit found to undo' });
+      }
+
+      console.log(`🔄 [GIT-UNDO] Reverting commit: ${targetCommit.hash} - "${targetCommit.message}"`);
+
+      // Perform git revert
+      await git.revert(targetCommit.hash, ['--no-edit']);
+
+      // Push the revert commit
+      console.log('🚀 [GIT-UNDO] Pushing revert commit...');
+      try {
+        const currentBranch = await git.revparse(['--abbrev-ref', 'HEAD']);
+        await git.push('origin', currentBranch);
+        console.log('✅ [GIT-UNDO] Revert commit pushed successfully');
+      } catch (pushError) {
+        console.error('❌ [GIT-UNDO] Failed to push revert commit:', pushError);
+        // Continue anyway - the revert was successful locally
+      }
+
+      // Get updated state
+      const newState = await analyzeCommitHistory(git);
+
+      res.json({
+        success: true,
+        revertedCommit: {
+          hash: targetCommit.hash,
+          message: targetCommit.message
+        },
+        ...newState
+      });
+
+    } catch (error) {
+      console.error('Error during git undo:', error);
+      
+      // Handle git conflicts or other git errors
+      if (error.message && error.message.includes('conflict')) {
+        res.status(409).json({ 
+          error: 'Git conflict occurred during undo. Please resolve conflicts manually.',
+          details: error.message 
+        });
+      } else {
+        res.status(500).json({ 
+          error: 'Failed to undo commit',
+          details: error.message 
+        });
+      }
+    }
+  });
+
+  // API endpoint to redo (revert the revert)
+  app.post('/api/git-redo', isAuthenticated, async (req, res) => {
+    try {
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepo).then(() => true).catch(() => false);
+
+      if (!repoExists) {
+        return res.status(404).json({ error: 'Repository not found' });
+      }
+
+      const git = simpleGit({ baseDir: userRepo });
+      const isRepo = await git.checkIsRepo();
+      
+      if (!isRepo) {
+        return res.status(400).json({ error: 'Not a git repository' });
+      }
+
+      // Get current state to check if redo is possible
+      const currentState = await analyzeCommitHistory(git);
+      if (!currentState.canRedo) {
+        return res.status(400).json({ error: 'Nothing to redo' });
+      }
+
+      // Find the latest revert commit that can be redone
+      const log = await git.log({ maxCount: 50 });
+      const commits = log.all;
+
+      const revertPattern = /^Revert "(.+)"$/;
+      
+      let targetRevertCommit = null;
+      for (const commit of commits) {
+        const message = commit.message.trim();
+        if (revertPattern.test(message)) {
+          targetRevertCommit = commit;
+          break;
+        }
+      }
+
+      if (!targetRevertCommit) {
+        return res.status(400).json({ error: 'No revert commit found to redo' });
+      }
+
+      console.log(`🔄 [GIT-REDO] Reverting revert commit: ${targetRevertCommit.hash} - "${targetRevertCommit.message}"`);
+
+      // Perform git revert on the revert commit (this reapplies the original)
+      await git.revert(targetRevertCommit.hash, ['--no-edit']);
+
+      // Push the reapply commit
+      console.log('🚀 [GIT-REDO] Pushing reapply commit...');
+      try {
+        const currentBranch = await git.revparse(['--abbrev-ref', 'HEAD']);
+        await git.push('origin', currentBranch);
+        console.log('✅ [GIT-REDO] Reapply commit pushed successfully');
+      } catch (pushError) {
+        console.error('❌ [GIT-REDO] Failed to push reapply commit:', pushError);
+        // Continue anyway - the reapply was successful locally
+      }
+
+      // Get updated state
+      const newState = await analyzeCommitHistory(git);
+
+      res.json({
+        success: true,
+        reappliedCommit: {
+          hash: targetRevertCommit.hash,
+          message: targetRevertCommit.message
+        },
+        ...newState
+      });
+
+    } catch (error) {
+      console.error('Error during git redo:', error);
+      
+      // Handle git conflicts or other git errors
+      if (error.message && error.message.includes('conflict')) {
+        res.status(409).json({ 
+          error: 'Git conflict occurred during redo. Please resolve conflicts manually.',
+          details: error.message 
+        });
+      } else {
+        res.status(500).json({ 
+          error: 'Failed to redo commit',
+          details: error.message 
+        });
+      }
+    }
+  });
 }

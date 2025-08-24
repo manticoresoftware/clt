@@ -2,6 +2,7 @@
   import { filesStore, validateTestContent, type TestStep as TestStepType, type TestStructure } from '../stores/filesStore';
   import { gitStatusStore, checkoutFile } from '../stores/gitStatusStore';
   import { onMount, onDestroy } from 'svelte';
+  import { API_URL } from '../config.js';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
   import Step from './Step.svelte';
   import GitChangesPanel from './GitChangesPanel.svelte';
@@ -27,6 +28,10 @@
   let autoSaveEnabled = true;
   let gitPanelVisible = false;
   let showFileEditor = false;
+  
+  // Undo/Redo state
+  let undoRedoState = { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 };
+  let isUndoRedoLoading = false;
 
   // Reactive statement to check if current file is running
   $: isCurrentFileRunning = $filesStore.currentFile ? $filesStore.runningTests.has($filesStore.currentFile.path) : false;
@@ -46,6 +51,11 @@
 
   // Define testStructure for template usage
   $: testStructure = $filesStore.currentFile?.testStructure;
+
+  // Refresh undo/redo state when current file changes
+  $: if ($filesStore.currentFile) {
+    fetchUndoRedoState();
+  }
 
   // Preserve expanded states when commands are recreated
   function preserveExpandedStates(newCommands: any[], oldCommands: any[]) {
@@ -236,6 +246,9 @@
     if (!gitStatusStore.isPolling()) {
       gitStatusStore.startPolling(5000); // Poll every 5 seconds
     }
+
+    // Fetch initial undo/redo state
+    fetchUndoRedoState();
   });
 
   onDestroy(() => {
@@ -482,6 +495,155 @@
     console.log('File reloaded successfully, unsaved changes discarded');
   }
 
+  // Fetch undo/redo state from backend
+  async function fetchUndoRedoState() {
+    try {
+      const response = await fetch(`${API_URL}/api/git-undo-redo-state`, {
+        credentials: 'include'
+      });
+      
+      if (response.ok) {
+        const state = await response.json();
+        undoRedoState = state;
+        console.log('🔄 Undo/redo state updated:', state);
+      } else if (response.status === 401) {
+        console.warn('⚠️ Not authenticated for git operations');
+        undoRedoState = { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 };
+      } else if (response.status === 404) {
+        console.warn('⚠️ Repository not found');
+        undoRedoState = { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 };
+      } else {
+        console.warn('⚠️ Failed to fetch undo/redo state:', response.statusText);
+        undoRedoState = { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 };
+      }
+    } catch (error) {
+      console.error('❌ Error fetching undo/redo state:', error);
+      undoRedoState = { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 };
+    }
+  }
+
+  // Handle undo operation
+  async function handleUndo() {
+    if (!undoRedoState.canUndo || isUndoRedoLoading) return;
+    
+    isUndoRedoLoading = true;
+    console.log('🔄 Starting undo operation...');
+    
+    try {
+      const response = await fetch(`${API_URL}/api/git-undo`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        
+        // Update undo/redo state from response
+        undoRedoState = {
+          canUndo: result.canUndo,
+          canRedo: result.canRedo,
+          undoCount: result.undoCount,
+          redoCount: result.redoCount
+        };
+        
+        // Reload current file content since git changed it
+        if ($filesStore.currentFile) {
+          try {
+            await filesStore.reloadCurrentFile();
+            console.log('✅ File content reloaded after undo');
+          } catch (reloadError) {
+            console.error('❌ Failed to reload file after undo:', reloadError);
+            // Continue anyway - the undo operation succeeded
+          }
+        }
+        
+        // Refresh git panel if visible
+        if (gitPanelVisible) {
+          // The GitChangesPanel will auto-refresh when it detects changes
+        }
+        
+        console.log('✅ Undo successful:', result.revertedCommit);
+      } else {
+        const error = await response.json();
+        console.error('❌ Undo failed:', error.error);
+        
+        if (response.status === 409) {
+          alert(`Undo failed due to conflicts: ${error.error}\n\nPlease resolve conflicts manually in your git repository.`);
+        } else if (response.status === 400) {
+          alert(`Cannot undo: ${error.error}`);
+        } else {
+          alert(`Undo failed: ${error.error}`);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Undo network error:', error);
+      alert('Undo operation failed due to network error. Please check your connection and try again.');
+    } finally {
+      isUndoRedoLoading = false;
+    }
+  }
+
+  // Handle redo operation
+  async function handleRedo() {
+    if (!undoRedoState.canRedo || isUndoRedoLoading) return;
+    
+    isUndoRedoLoading = true;
+    console.log('🔄 Starting redo operation...');
+    
+    try {
+      const response = await fetch(`${API_URL}/api/git-redo`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        
+        // Update undo/redo state from response
+        undoRedoState = {
+          canUndo: result.canUndo,
+          canRedo: result.canRedo,
+          undoCount: result.undoCount,
+          redoCount: result.redoCount
+        };
+        
+        // Reload current file content since git changed it
+        if ($filesStore.currentFile) {
+          try {
+            await filesStore.reloadCurrentFile();
+            console.log('✅ File content reloaded after redo');
+          } catch (reloadError) {
+            console.error('❌ Failed to reload file after redo:', reloadError);
+            // Continue anyway - the redo operation succeeded
+          }
+        }
+        
+        // Refresh git panel if visible
+        if (gitPanelVisible) {
+          // The GitChangesPanel will auto-refresh when it detects changes
+        }
+        
+        console.log('✅ Redo successful:', result.reappliedCommit);
+      } else {
+        const error = await response.json();
+        console.error('❌ Redo failed:', error.error);
+        
+        if (response.status === 409) {
+          alert(`Redo failed due to conflicts: ${error.error}\n\nPlease resolve conflicts manually in your git repository.`);
+        } else if (response.status === 400) {
+          alert(`Cannot redo: ${error.error}`);
+        } else {
+          alert(`Redo failed: ${error.error}`);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Redo network error:', error);
+      alert('Redo operation failed due to network error. Please check your connection and try again.');
+    } finally {
+      isUndoRedoLoading = false;
+    }
+  }
+
   async function handleCheckoutFile() {
     if (!$filesStore.currentFile) return;
 
@@ -689,6 +851,40 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
           </svg>
+        </button>
+        <button
+          class="undo-button"
+          on:click={handleUndo}
+          disabled={!undoRedoState.canUndo || isUndoRedoLoading}
+          title="Undo last commit"
+        >
+          {#if isUndoRedoLoading}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="loading-spinner">
+              <path d="M21 12a9 9 0 11-6.219-8.56"/>
+            </svg>
+          {:else}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 7v6h6"/>
+              <path d="m21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13"/>
+            </svg>
+          {/if}
+        </button>
+        <button
+          class="redo-button"
+          on:click={handleRedo}
+          disabled={!undoRedoState.canRedo || isUndoRedoLoading}
+          title="Redo last undone commit"
+        >
+          {#if isUndoRedoLoading}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="loading-spinner">
+              <path d="M21 12a9 9 0 11-6.219-8.56"/>
+            </svg>
+          {:else}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 7v6h-6"/>
+              <path d="m3 17a9 9 0 019-9 9 9 0 016 2.3l3-2.3"/>
+            </svg>
+          {/if}
         </button>
         <button
           class="save-button"
@@ -956,6 +1152,43 @@
   .run-button:not(:disabled):hover {
     color: var(--color-text-primary);
     background-color: var(--color-bg-accent-hover);
+  }
+
+  /* Undo/Redo button styles */
+  .undo-button, .redo-button {
+    padding: 8px;
+    background-color: var(--color-bg-secondary);
+    color: var(--color-text-primary);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .undo-button:disabled, .redo-button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .undo-button:not(:disabled):hover, .redo-button:not(:disabled):hover {
+    background-color: var(--color-bg-secondary-hover);
+  }
+
+  .undo-button svg, .redo-button svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .loading-spinner {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
 
   .stop-button {
