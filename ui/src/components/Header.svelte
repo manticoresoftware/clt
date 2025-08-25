@@ -66,6 +66,28 @@
   function openInteractiveSession() {
     interactiveSession?.openSession();
   }
+
+  // Handle CI trigger
+  async function handleTriggerCi() {
+    if (github.isCommitting) return;
+    
+    console.log('🚀 Triggering CI...');
+    
+    try {
+      const result = await githubStore.triggerCi();
+      console.log('✅ CI trigger result:', result);
+      
+      // Show success message
+      if (result.changed) {
+        alert(`✅ ${result.message}\n\nOriginal: ${result.originalMessage}\nNew: ${result.newMessage}`);
+      } else {
+        alert(`ℹ️ ${result.message}`);
+      }
+    } catch (error) {
+      console.error('❌ CI trigger failed:', error);
+      alert(`❌ Failed to trigger CI: ${error.message}`);
+    }
+  }
 </script>
 
 <div class="header">
@@ -149,6 +171,28 @@
           </svg>
           PR #{existingPr.number}
         </a>
+      {/if}
+      
+      <!-- CI Trigger Button - only show when on PR branch -->
+      {#if isOnPrBranch}
+        <button
+          class="ci-button"
+          on:click={handleTriggerCi}
+          disabled={github.isCommitting}
+          title="Trigger CI for this PR"
+        >
+          {#if github.isCommitting}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="loading-spinner">
+              <path d="M21 12a9 9 0 11-6.219-8.56"/>
+            </svg>
+          {:else}
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1"></path>
+            </svg>
+          {/if}
+          CI
+        </button>
       {/if}
       
       {#if gitStatusError}
@@ -371,5 +415,47 @@
     background: #e9ecef;
     color: #007bff;
     border-color: #007bff;
+  }
+
+  .ci-button {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    background-color: var(--color-accent, #28a745);
+    color: white;
+    border: none;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin-right: var(--spacing-md);
+    transition: background-color var(--transition-fast);
+    box-sizing: border-box;
+    min-height: 32px;
+    line-height: 1.2;
+  }
+
+  .ci-button:hover:not(:disabled) {
+    background-color: var(--color-accent-hover, #218838);
+  }
+
+  .ci-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .ci-button svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .ci-button .loading-spinner {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
   }
 </style>

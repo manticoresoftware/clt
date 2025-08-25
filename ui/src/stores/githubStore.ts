@@ -118,6 +118,44 @@ function createGithubStore() {
         throw error;
       }
     },
+
+    // Trigger CI by removing [skip ci] from last commit
+    triggerCi: async () => {
+      update(state => ({ ...state, isCommitting: true, error: null, success: false }));
+      
+      try {
+        const response = await fetch(`${API_URL}/api/trigger-ci`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          credentials: 'include'
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to trigger CI');
+        }
+        
+        update(state => ({
+          ...state,
+          isCommitting: false,
+          success: true,
+          message: data.message || 'CI triggered successfully'
+        }));
+        
+        return data;
+      } catch (error) {
+        update(state => ({
+          ...state,
+          isCommitting: false,
+          error: error.message || 'An error occurred while triggering CI'
+        }));
+        throw error;
+      }
+    },
+
     reset: () => set(initialState),
     
     // Update PR status from external source (called by gitStatusStore)

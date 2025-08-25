@@ -1,6 +1,7 @@
 <script lang="ts">
   import { filesStore, validateTestContent, type TestStep as TestStepType, type TestStructure } from '../stores/filesStore';
   import { gitStatusStore, checkoutFile } from '../stores/gitStatusStore';
+  import { githubStore } from '../stores/githubStore';
   import { onMount, onDestroy } from 'svelte';
   import { API_URL } from '../config.js';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
@@ -32,6 +33,7 @@
   // Undo/Redo state
   let undoRedoState = { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 };
   let isUndoRedoLoading = false;
+
 
   // Reactive statement to check if current file is running
   $: isCurrentFileRunning = $filesStore.currentFile ? $filesStore.runningTests.has($filesStore.currentFile.path) : false;
@@ -754,6 +756,7 @@
   function closeFileEditor() {
     showFileEditor = false;
   }
+
 </script>
 
 <div class="editor">
@@ -922,6 +925,7 @@
             Run Test
           </button>
         {/if}
+
       </div>
     </div>
   </div>
@@ -1901,4 +1905,5 @@
     width: 16px;
     height: 16px;
   }
+
 </style>
