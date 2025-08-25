@@ -688,6 +688,82 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
     }
   });
 
+  // API endpoint to trigger CI by removing [skip ci] from last commit
+  app.post('/api/trigger-ci', isAuthenticated, async (req, res) => {
+    try {
+      // Check if user is authenticated with GitHub
+      if (!req.user || !req.user.username) {
+        return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const repoExists = await fs.access(userRepo).then(() => true).catch(() => false);
+
+      if (!repoExists) {
+        return res.status(404).json({ error: 'Repository not found' });
+      }
+
+      const git = simpleGit({ baseDir: userRepo });
+      await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
+
+      // Get current branch and verify it's a PR branch
+      const status = await git.status();
+      const currentBranch = status.current;
+      const defaultBranch = await getDefaultBranch(git, userRepo);
+
+      // Check if current branch has an existing PR
+      const existingPr = await checkExistingPR(currentBranch, defaultBranch, userRepo, req.user.token);
+      const isPrBranch = isPRBranch(currentBranch, defaultBranch, existingPr);
+
+      if (!isPrBranch) {
+        return res.status(400).json({
+          error: 'Can only trigger CI for PR branches (branches with existing pull requests)'
+        });
+      }
+
+      // Get the last commit message
+      const log = await git.log({ maxCount: 1 });
+      if (!log.latest) {
+        return res.status(400).json({ error: 'No commits found' });
+      }
+
+      const lastCommitMessage = log.latest.message;
+      
+      // Check if commit message contains [skip ci]
+      const skipCiPattern = /\[skip ci\]/gi;
+      if (!skipCiPattern.test(lastCommitMessage)) {
+        return res.json({
+          success: true,
+          message: 'No [skip ci] found in last commit - CI will run normally',
+          commitMessage: lastCommitMessage,
+          changed: false
+        });
+      }
+
+      // Remove [skip ci] from commit message
+      const newCommitMessage = lastCommitMessage.replace(skipCiPattern, '').trim();
+      
+      // Amend the last commit with new message
+      await git.commit(newCommitMessage, undefined, ['--amend']);
+      
+      // Force push with lease for safety
+      await git.push(['--force-with-lease', 'origin', currentBranch]);
+
+      res.json({
+        success: true,
+        message: 'Removed [skip ci] and force-pushed - CI will now run',
+        originalMessage: lastCommitMessage,
+        newMessage: newCommitMessage,
+        changed: true,
+        branch: currentBranch
+      });
+
+    } catch (error) {
+      console.error('Error triggering CI:', error);
+      res.status(500).json({ error: `Failed to trigger CI: ${error.message}` });
+    }
+  });
+
   // Checkout a single file to discard changes
   app.post('/api/checkout-file', isAuthenticated, async (req, res) => {
     try {
