@@ -180,7 +180,7 @@ function createBranchStore() {
             'Content-Type': 'application/json'
           },
           credentials: 'include',
-          body: JSON.stringify({ branch: branchName })
+          body: JSON.stringify({ branch: branchName, pushToRemote: true })
         });
         
         const data = await response.json();

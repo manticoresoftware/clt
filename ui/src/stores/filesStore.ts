@@ -867,12 +867,15 @@ function createFilesStore() {
       } : null
     }));
 
+    // For new file creation, always save regardless of auto-save setting
+    const isNewFileCreation = file.testStructure && file.testStructure.steps.length === 0;
+    
     // Check if auto-save is enabled
     const storedValue = localStorage.getItem('autoSaveEnabled');
     const autoSaveEnabled = storedValue === null ? true : storedValue === 'true';
 
-    // If auto-save is disabled and this isn't an explicit save request, don't proceed with save
-    if (!autoSaveEnabled && !shouldRunAfterSave) {
+    // If auto-save is disabled and this isn't an explicit save request or new file, don't proceed with save
+    if (!autoSaveEnabled && !shouldRunAfterSave && !isNewFileCreation) {
       return;
     }
 
@@ -1381,13 +1384,42 @@ function createFilesStore() {
         };
       });
 
-      // Now do the actual save operation
+      // Immediately save the empty file to disk using raw file API
       setTimeout(async () => {
         try {
-          // Save the file
-          await debouncedSave(newFile, false);
+          // Force immediate save to create physical file on disk with empty content
+          update(state => ({ ...state, saving: true }));
+          
+          const response = await fetch(`${API_URL}/api/save-file`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            credentials: 'include',
+            body: JSON.stringify({
+              path: newFile.path,
+              content: '' // Empty content for new file
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error(`Failed to save file: ${response.statusText}`);
+          }
+          
+          update(state => ({
+            ...state,
+            saving: false,
+            currentFile: state.currentFile ? {
+              ...state.currentFile,
+              dirty: false,
+              lastSaved: new Date()
+            } : null
+          }));
+          
+          console.log('✅ New empty file saved to disk:', newFile.path);
         } catch (err) {
           console.error('Error saving new file:', err);
+          update(state => ({ ...state, saving: false }));
           // If there's an error, refresh the file tree to restore correct state
           setTimeout(async () => {
             await storeModule.refreshFileTree();
