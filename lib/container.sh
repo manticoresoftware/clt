@@ -36,6 +36,11 @@ container_exec() {
 		return 1
 	fi
 
+	if [ ! -d "$PWD/.clt" ]; then
+		>&2 echo "Directory '.clt' does not exist in the current directory: $PWD"
+		return 1
+	fi
+
 	# Merge base of patterns
 	temp_file=$(mktemp)
 	cat "$PROJECT_DIR/.clt/patterns" > "$temp_file"
