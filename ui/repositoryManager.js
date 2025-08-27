@@ -116,6 +116,15 @@ export async function ensureRepositoryCheckout(options) {
       console.log('Fetched latest updates from remote');
       
       if (branch) {
+        // Ensure specific branch reference is up-to-date
+        try {
+          await git.fetch(['origin', branch]);
+          console.log(`Refreshed remote reference for branch: ${branch}`);
+        } catch (fetchError) {
+          console.log(`Note: Could not fetch specific branch '${branch}':`, fetchError.message);
+          // Continue anyway - the branch might not exist on remote yet
+        }
+        
         // Handle branch-specific operations
         const branches = await git.branch();
         const localBranchExists = branches.all.includes(branch);
@@ -126,8 +135,21 @@ export async function ensureRepositoryCheckout(options) {
             await git.checkout(branch);
             console.log(`Switched to branch: ${branch}`);
             if (forceReset) {
-              await git.reset(['--hard', `origin/${branch}`]);
-              console.log(`Reset to origin/${branch}`);
+              // Verify remote reference exists before attempting reset
+              try {
+                const remoteRefs = await git.raw(['ls-remote', '--heads', 'origin', branch]);
+                if (!remoteRefs.trim()) {
+                  console.log(`Warning: Remote branch 'origin/${branch}' not found, skipping reset`);
+                } else {
+                  // Ensure we have the latest remote reference locally
+                  await git.fetch(['origin', `${branch}:refs/remotes/origin/${branch}`]);
+                  await git.reset(['--hard', `origin/${branch}`]);
+                  console.log(`Reset to origin/${branch}`);
+                }
+              } catch (resetError) {
+                console.log(`Warning: Could not reset to origin/${branch}:`, resetError.message);
+                console.log('Continuing with local branch checkout only');
+              }
             }
           } else if (remoteBranchExists) {
             await git.checkout(['-b', branch, `origin/${branch}`]);
