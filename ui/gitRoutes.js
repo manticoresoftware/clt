@@ -533,6 +533,15 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         // Create new branch from current branch
         await git.checkoutLocalBranch(branch);
         
+        // Push the new branch with upstream tracking
+        try {
+          await git.push(['-u', 'origin', branch]);
+          console.log(`Successfully pushed new branch '${branch}' with upstream tracking`);
+        } catch (pushError) {
+          console.log(`Warning: Could not push new branch '${branch}' to remote:`, pushError.message);
+          // Continue anyway - the branch was created locally
+        }
+        
         return res.json({
           success: true,
           currentBranch: branch,
