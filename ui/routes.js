@@ -655,12 +655,30 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
       if (stats.isDirectory()) {
         // For directories, use recursive removal
         await fs.rm(absolutePath, { recursive: true });
+        console.log(`✅ Directory deleted: ${filePath}`);
       } else {
         // For individual files
         await fs.unlink(absolutePath);
+        console.log(`✅ File deleted: ${filePath}`);
       }
 
-      res.json({ success: true });
+      // Attempt auto-commit and push if not on default branch
+      console.log('🚀 [DELETE-FILE] Attempting auto-commit and push...');
+      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      console.log('🚀 [DELETE-FILE] User repo path:', userRepoPath);
+      console.log('🚀 [DELETE-FILE] File path for commit:', filePath);
+      
+      // Calculate the correct git-relative path (test/clt-tests/filename)
+      const gitRelativeFilePath = path.join('test', 'clt-tests', filePath);
+      console.log('🚀 [DELETE-FILE] Git-relative file path:', gitRelativeFilePath);
+      
+      const gitResult = await autoCommitAndPush(userRepoPath, gitRelativeFilePath, req.user?.token);
+      console.log('🚀 [DELETE-FILE] Auto-commit result:', gitResult);
+
+      res.json({ 
+        success: true,
+        git: gitResult
+      });
     } catch (error) {
       console.error('Error deleting file:', error);
       res.status(500).json({ error: 'Failed to delete file' });
