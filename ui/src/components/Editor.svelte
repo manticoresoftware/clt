@@ -1,6 +1,6 @@
 <script lang="ts">
   import { filesStore, validateTestContent, type TestStep as TestStepType, type TestStructure } from '../stores/filesStore';
-  import { gitStatusStore, checkoutFile } from '../stores/gitStatusStore';
+  import { gitStatusStore, checkoutFile, notifyGitOperation } from '../stores/gitStatusStore';
   import { githubStore } from '../stores/githubStore';
   import { onMount, onDestroy } from 'svelte';
   import { API_URL } from '../config.js';
@@ -569,6 +569,9 @@
           try {
             await filesStore.reloadCurrentFile();
             console.log('✅ File content reloaded after undo');
+            
+            // Notify about git operation to trigger UI refreshes
+            notifyGitOperation('undo');
           } catch (reloadError) {
             console.error('❌ Failed to reload file after undo:', reloadError);
             // Continue anyway - the undo operation succeeded
@@ -637,6 +640,9 @@
           try {
             await filesStore.reloadCurrentFile();
             console.log('✅ File content reloaded after redo');
+            
+            // Notify about git operation to trigger UI refreshes
+            notifyGitOperation('redo');
           } catch (reloadError) {
             console.error('❌ Failed to reload file after redo:', reloadError);
             // Continue anyway - the redo operation succeeded

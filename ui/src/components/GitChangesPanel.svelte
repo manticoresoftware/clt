@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { filesStore } from '../stores/filesStore';
+  import { gitOperationsStore } from '../stores/gitStatusStore';
   import { API_URL } from '../config.js';
   import DiffHighlighter from './DiffHighlighter.svelte';
 
@@ -16,6 +17,12 @@
 
   // Reactive statement to fetch git data when file changes
   $: if (visible && currentFilePath) {
+    fetchGitHistory();
+  }
+
+  // Reactive statement to refresh git history when git operations occur
+  $: if (visible && currentFilePath && $gitOperationsStore.lastOperation) {
+    console.log(`🔄 Git operation detected (${$gitOperationsStore.lastOperation}), refreshing git history...`);
     fetchGitHistory();
   }
 
