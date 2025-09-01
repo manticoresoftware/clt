@@ -962,94 +962,97 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
     }
   });
 
-  // Helper function to analyze commit history for undo/redo state
-  async function analyzeCommitHistory(git) {
+  // Helper function to analyze commit history for undo/redo state (file-specific)
+  // Helper function to analyze commit history for undo/redo state (file-specific)
+  async function analyzeCommitHistory(git, filePath = null) {
     try {
-      // Get recent commits (last 50 should be enough for undo/redo analysis)
-      const log = await git.log({ maxCount: 50 });
-      const commits = log.all;
+      const defaultBranch = await getDefaultBranch(git, git.baseDir);
+      const currentBranch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
 
-      if (commits.length === 0) {
+      // On default branch nothing to undo/redo
+      if (currentBranch === defaultBranch) {
         return { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 };
       }
 
-      // Parse commit messages to build undo/redo state
+      const relPath = filePath || null;
       const revertPattern = /^Revert "(.+)"$/;
-      const reapplyPattern = /^Reapply "(.+)"$/;
-      
+
+      // 1) canUndo via diff (file since default branch), with origin/<default> fallback
       let canUndo = false;
-      let canRedo = false;
-      let undoCount = 0;
-      let redoCount = 0;
-
-      // Track commit states: original -> reverted -> reapplied -> reverted again...
-      const commitStates = new Map(); // hash -> {original: message, state: 'active'|'reverted'}
-
-      for (let i = 0; i < commits.length; i++) {
-        const commit = commits[i];
-        const message = commit.message.trim();
-
-        if (revertPattern.test(message)) {
-          // This is a revert commit
-          const originalMessage = message.match(revertPattern)[1];
-          
-          // Find the original commit being reverted
-          for (let j = i + 1; j < commits.length; j++) {
-            const prevCommit = commits[j];
-            if (prevCommit.message.trim() === originalMessage) {
-              commitStates.set(prevCommit.hash, {
-                original: originalMessage,
-                state: 'reverted',
-                revertCommit: commit.hash
-              });
-              redoCount++;
+      if (relPath) {
+        const ranges = [
+          `${defaultBranch}..HEAD`,
+          `origin/${defaultBranch}..HEAD`,
+        ];
+        for (const range of ranges) {
+          try {
+            const diff = await git.diff([range, '--', relPath]);
+            if (diff && diff.trim().length > 0) {
+              canUndo = true;
               break;
             }
-          }
-        } else if (reapplyPattern.test(message)) {
-          // This is a reapply commit
-          const originalMessage = message.match(reapplyPattern)[1];
-          
-          // Find the original commit being reapplied
-          for (let j = i + 1; j < commits.length; j++) {
-            const prevCommit = commits[j];
-            if (prevCommit.message.trim() === originalMessage) {
-              commitStates.set(prevCommit.hash, {
-                original: originalMessage,
-                state: 'active'
-              });
-              undoCount++;
-              break;
-            }
-          }
-        } else {
-          // Regular commit - check if it's been reverted
-          if (!commitStates.has(commit.hash)) {
-            commitStates.set(commit.hash, {
-              original: message,
-              state: 'active'
-            });
-            undoCount++;
+          } catch (_) {
+            // Continue to next range
           }
         }
       }
 
-      // Determine current state
-      canUndo = undoCount > 0;
-      canRedo = redoCount > 0;
+      // 2) Count commits since default for this file to compute counts and canRedo
+      // Use raw git to avoid simple-git range/path ordering quirks that produced "master..HEAD..."
+      let undoCount = 0;
+      let redoCount = 0;
+      if (relPath) {
+        const buildArgs = (range) => [
+          'log',
+          '--pretty=format:%s',
+          '--max-count=100',
+          range,
+          '--follow',
+          '--',
+          relPath,
+        ];
+        let logOutput = '';
+        try {
+          logOutput = await git.raw(buildArgs(`${defaultBranch}..HEAD`));
+        } catch (e1) {
+          try {
+            logOutput = await git.raw(buildArgs(`origin/${defaultBranch}..HEAD`));
+          } catch (e2) {
+            console.error('[Undo/Redo] git log failed:', e2?.message || e2);
+          }
+        }
+        if (logOutput) {
+          const lines = logOutput.split('\n').map(s => s.trim()).filter(Boolean);
+          for (const msg of lines) {
+            if (revertPattern.test(msg)) {
+              redoCount++;
+            } else {
+              // regular and Reapply commits are considered undoable
+              undoCount++;
+            }
+          }
+        }
+      }
 
-      return { canUndo, canRedo, undoCount, redoCount };
+      if (!canUndo && undoCount > 0) canUndo = true;
+
+      return { canUndo, canRedo: redoCount > 0, undoCount, redoCount };
     } catch (error) {
       console.error('Error analyzing commit history:', error);
       return { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 };
     }
   }
 
-  // API endpoint to get undo/redo state
+  // API endpoint to get undo/redo state (file-specific)
   app.get('/api/git-undo-redo-state', isAuthenticated, async (req, res) => {
     try {
       if (!req.user || !req.user.username) {
         return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      const filePath = req.query.filePath;
+      if (!filePath) {
+        return res.json({ canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 });
       }
 
       const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
@@ -1066,7 +1069,9 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         return res.json({ canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 });
       }
 
-      const state = await analyzeCommitHistory(git);
+      // Normalize file path to repo-relative
+      const relPath = path.isAbsolute(filePath) ? path.relative(userRepo, filePath) : filePath;
+      const state = await analyzeCommitHistory(git, relPath);
       res.json(state);
 
     } catch (error) {
@@ -1096,43 +1101,71 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         return res.status(400).json({ error: 'Not a git repository' });
       }
 
-      // Get current state to check if undo is possible
-      const currentState = await analyzeCommitHistory(git);
+      const { filePath } = req.body || {};
+      if (!filePath) {
+        return res.status(400).json({ error: 'File path is required' });
+      }
+
+      const relPath = path.isAbsolute(filePath) ? path.relative(userRepo, filePath) : filePath;
+
+      // Block if local changes exist for this file
+      const status = await git.status([relPath]);
+      const hasLocalChanges = (status.files || []).some(f => f.path === relPath);
+      if (hasLocalChanges) {
+        return res.status(400).json({ error: 'File has local changes. Commit or stash them first.' });
+      }
+
+      // Check state for this file
+      const currentState = await analyzeCommitHistory(git, relPath);
       if (!currentState.canUndo) {
-        return res.status(400).json({ error: 'Nothing to undo' });
+        return res.status(400).json({ error: 'Nothing to undo for this file' });
       }
 
-      // Find the latest commit that can be undone
-      const log = await git.log({ maxCount: 50 });
-      const commits = log.all;
-
-      if (commits.length === 0) {
-        return res.status(400).json({ error: 'No commits found' });
+      // Find latest non-revert commit for this file since default branch
+      const defaultBranch = await getDefaultBranch(git, userRepo);
+      // Use raw git log to ensure correct ordering of range and path
+      const buildArgs = (range) => [
+        'log', '--pretty=format:%H%x1f%s', '--max-count=100', range, '--follow', '--', relPath,
+      ];
+      let logOutput = '';
+      try {
+        logOutput = await git.raw(buildArgs(`${defaultBranch}..HEAD`));
+      } catch (e1) {
+        try {
+          logOutput = await git.raw(buildArgs(`origin/${defaultBranch}..HEAD`));
+        } catch (e2) {
+          console.error('[GIT-UNDO] git log failed:', e2?.message || e2);
+        }
       }
+      const commits = [];
+      if (logOutput) {
+        for (const line of logOutput.split('\n')) {
+          if (!line) continue;
+          const [hash, subject] = line.split('\x1f');
+          if (hash) commits.push({ hash, message: subject || '' });
+        }
+      }
+      const revertPattern = /^Revert \"(.+)\"$/;
 
-      // Find the first non-revert, non-reapply commit (latest undoable commit)
-      const revertPattern = /^Revert "(.+)"$/;
-      const reapplyPattern = /^Reapply "(.+)"$/;
-      
       let targetCommit = null;
       for (const commit of commits) {
-        const message = commit.message.trim();
-        if (!revertPattern.test(message) && !reapplyPattern.test(message)) {
+        const message = (commit.message || '').trim();
+        if (!revertPattern.test(message)) {
           targetCommit = commit;
           break;
         }
       }
 
       if (!targetCommit) {
-        return res.status(400).json({ error: 'No commit found to undo' });
+        return res.status(400).json({ error: 'No commit found to undo for this file' });
       }
 
-      console.log(`🔄 [GIT-UNDO] Reverting commit: ${targetCommit.hash} - "${targetCommit.message}"`);
+      console.log(`🔄 [GIT-UNDO] Reverting commit: ${targetCommit.hash} - "${targetCommit.message}" for file: ${relPath}`);
 
       // Perform git revert
       await git.revert(targetCommit.hash, ['--no-edit']);
 
-      // Push the revert commit
+      // Push the revert commit (keep existing behavior)
       console.log('🚀 [GIT-UNDO] Pushing revert commit...');
       try {
         const currentBranch = await git.revparse(['--abbrev-ref', 'HEAD']);
@@ -1143,8 +1176,8 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         // Continue anyway - the revert was successful locally
       }
 
-      // Get updated state
-      const newState = await analyzeCommitHistory(git);
+      // Get updated state for this file
+      const newState = await analyzeCommitHistory(git, relPath);
 
       res.json({
         success: true,
@@ -1173,11 +1206,16 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
     }
   });
 
-  // API endpoint to redo (revert the revert)
+  // API endpoint to redo (revert the revert) (file-specific)
   app.post('/api/git-redo', isAuthenticated, async (req, res) => {
     try {
       if (!req.user || !req.user.username) {
         return res.status(401).json({ error: 'GitHub authentication required' });
+      }
+
+      const { filePath } = req.body;
+      if (!filePath) {
+        return res.status(400).json({ error: 'File path is required' });
       }
 
       const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
@@ -1194,35 +1232,76 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         return res.status(400).json({ error: 'Not a git repository' });
       }
 
-      // Get current state to check if redo is possible
-      const currentState = await analyzeCommitHistory(git);
+      // Normalize file path first
+      const relPath = path.isAbsolute(filePath) ? path.relative(userRepo, filePath) : filePath;
+
+      // Get current state to check if redo is possible for this file
+      const currentState = await analyzeCommitHistory(git, relPath);
       if (!currentState.canRedo) {
-        return res.status(400).json({ error: 'Nothing to redo' });
+        return res.status(400).json({ error: 'Nothing to redo for this file' });
       }
 
-      // Find the latest revert commit that can be redone
-      const log = await git.log({ maxCount: 50 });
-      const commits = log.all;
+      // Block if local changes exist for this file
+      const status = await git.status([relPath]);
+      const hasLocalChanges = (status.files || []).some(f => f.path === relPath);
+      if (hasLocalChanges) {
+        return res.status(400).json({ error: 'File has local changes. Commit or stash them first.' });
+      }
 
-      const revertPattern = /^Revert "(.+)"$/;
-      
+      const defaultBranch = await getDefaultBranch(git, userRepo);
+      // Use raw git log to avoid malformed range
+      const buildArgs = (range) => [
+        'log', '--pretty=format:%H%x1f%s', '--max-count=100', range, '--follow', '--', relPath,
+      ];
+      let logOutput = '';
+      try {
+        logOutput = await git.raw(buildArgs(`${defaultBranch}..HEAD`));
+      } catch (e1) {
+        try {
+          logOutput = await git.raw(buildArgs(`origin/${defaultBranch}..HEAD`));
+        } catch (e2) {
+          console.error('[GIT-REDO] git log failed:', e2?.message || e2);
+        }
+      }
+      const commits = [];
+      if (logOutput) {
+        for (const line of logOutput.split('\n')) {
+          if (!line) continue;
+          const [hash, subject] = line.split('\x1f');
+          if (hash) commits.push({ hash, message: subject || '' });
+        }
+      }
+      const revertPattern = /^Revert \"(.+)\"$/;
+
       let targetRevertCommit = null;
+      let originalMessage = null;
       for (const commit of commits) {
-        const message = commit.message.trim();
-        if (revertPattern.test(message)) {
+        const message = (commit.message || '').trim();
+        const m = message.match(revertPattern);
+        if (m) {
           targetRevertCommit = commit;
+          originalMessage = m[1];
           break;
         }
       }
 
       if (!targetRevertCommit) {
-        return res.status(400).json({ error: 'No revert commit found to redo' });
+        return res.status(400).json({ error: 'No revert commit found to redo for this file' });
       }
 
-      console.log(`🔄 [GIT-REDO] Reverting revert commit: ${targetRevertCommit.hash} - "${targetRevertCommit.message}"`);
+      console.log(`🔄 [GIT-REDO] Reverting revert commit: ${targetRevertCommit.hash} - "${targetRevertCommit.message}" for file: ${relPath}`);
 
       // Perform git revert on the revert commit (this reapplies the original)
       await git.revert(targetRevertCommit.hash, ['--no-edit']);
+
+      // Amend the message to Reapply "<original>"
+      if (originalMessage) {
+        try {
+          await git.raw(['commit', '--amend', '-m', `Reapply "${originalMessage}"`]);
+        } catch (amendErr) {
+          console.warn('Failed to amend commit message to Reapply:', amendErr.message);
+        }
+      }
 
       // Push the reapply commit
       console.log('🚀 [GIT-REDO] Pushing reapply commit...');
@@ -1235,10 +1314,10 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         // Continue anyway - the reapply was successful locally
       }
 
-      // Get updated state
-      const newState = await analyzeCommitHistory(git);
+      // Get updated state for this file
+      const newState = await analyzeCommitHistory(git, relPath);
 
-      res.json({
+      return res.json({
         success: true,
         reappliedCommit: {
           hash: targetRevertCommit.hash,
@@ -1246,22 +1325,22 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         },
         ...newState
       });
-
     } catch (error) {
       console.error('Error during git redo:', error);
       
       // Handle git conflicts or other git errors
       if (error.message && error.message.includes('conflict')) {
-        res.status(409).json({ 
+        return res.status(409).json({ 
           error: 'Git conflict occurred during redo. Please resolve conflicts manually.',
           details: error.message 
         });
       } else {
-        res.status(500).json({ 
+        return res.status(500).json({ 
           error: 'Failed to redo commit',
           details: error.message 
         });
       }
     }
   });
+
 }
