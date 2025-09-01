@@ -497,17 +497,26 @@
     console.log('File reloaded successfully, unsaved changes discarded');
   }
 
-  // Fetch undo/redo state from backend
+  // Fetch undo/redo state from backend (file-specific)
   async function fetchUndoRedoState() {
     try {
-      const response = await fetch(`${API_URL}/api/git-undo-redo-state`, {
+      // Only fetch state if a file is open
+      if (!$filesStore.currentFile) {
+        undoRedoState = { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 };
+        return;
+      }
+
+      const rel = $filesStore.currentFile.path;
+      const testPath = $gitStatusStore?.testPath || 'test/clt-tests';
+      const filePathToSend = rel.startsWith(testPath + '/') ? rel : `${testPath}/${rel}`;
+      const response = await fetch(`${API_URL}/api/git-undo-redo-state?filePath=${encodeURIComponent(filePathToSend)}`, {
         credentials: 'include'
       });
       
       if (response.ok) {
         const state = await response.json();
         undoRedoState = state;
-        console.log('🔄 Undo/redo state updated:', state);
+        console.log('🔄 Undo/redo state updated for file:', filePathToSend, state);
       } else if (response.status === 401) {
         console.warn('⚠️ Not authenticated for git operations');
         undoRedoState = { canUndo: false, canRedo: false, undoCount: 0, redoCount: 0 };
@@ -524,17 +533,24 @@
     }
   }
 
-  // Handle undo operation
+  // Handle undo operation (file-specific)
   async function handleUndo() {
-    if (!undoRedoState.canUndo || isUndoRedoLoading) return;
+    if (!undoRedoState.canUndo || isUndoRedoLoading || !$filesStore.currentFile) return;
     
     isUndoRedoLoading = true;
-    console.log('🔄 Starting undo operation...');
+    const rel = $filesStore.currentFile.path;
+    const testPath = $gitStatusStore?.testPath || 'test/clt-tests';
+    const filePathToSend = rel.startsWith(testPath + '/') ? rel : `${testPath}/${rel}`;
+    console.log('🔄 Starting undo operation for file:', filePathToSend);
     
     try {
       const response = await fetch(`${API_URL}/api/git-undo`, {
         method: 'POST',
-        credentials: 'include'
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify({ filePath: filePathToSend })
       });
       
       if (response.ok) {
@@ -585,17 +601,24 @@
     }
   }
 
-  // Handle redo operation
+  // Handle redo operation (file-specific)
   async function handleRedo() {
-    if (!undoRedoState.canRedo || isUndoRedoLoading) return;
+    if (!undoRedoState.canRedo || isUndoRedoLoading || !$filesStore.currentFile) return;
     
     isUndoRedoLoading = true;
-    console.log('🔄 Starting redo operation...');
+    const rel = $filesStore.currentFile.path;
+    const testPath = $gitStatusStore?.testPath || 'test/clt-tests';
+    const filePathToSend = rel.startsWith(testPath + '/') ? rel : `${testPath}/${rel}`;
+    console.log('🔄 Starting redo operation for file:', filePathToSend);
     
     try {
       const response = await fetch(`${API_URL}/api/git-redo`, {
         method: 'POST',
-        credentials: 'include'
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify({ filePath: filePathToSend })
       });
       
       if (response.ok) {
@@ -858,7 +881,7 @@
         <button
           class="undo-button"
           on:click={handleUndo}
-          disabled={!undoRedoState.canUndo || isUndoRedoLoading}
+          disabled={isUndoRedoLoading || !undoRedoState.canUndo}
           title="Undo last commit"
         >
           {#if isUndoRedoLoading}
@@ -875,7 +898,7 @@
         <button
           class="redo-button"
           on:click={handleRedo}
-          disabled={!undoRedoState.canRedo || isUndoRedoLoading}
+          disabled={isUndoRedoLoading || !undoRedoState.canRedo}
           title="Redo last undone commit"
         >
           {#if isUndoRedoLoading}
