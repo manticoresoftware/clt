@@ -1478,55 +1478,17 @@ function createFilesStore() {
 
     // Reload current file content from backend (for git operations)
     reloadCurrentFile: async () => {
-      const currentState = get(store);
+      const currentState = getState();
       if (!currentState.currentFile) {
         console.warn('No current file to reload');
         return;
       }
 
       const filePath = currentState.currentFile.path;
-      console.log(`🔄 Reloading file content from backend: ${filePath}`);
-
-      try {
-        const response = await fetch(`${API_URL}/api/get-file?path=${encodeURIComponent(filePath)}`, {
-          credentials: 'include'
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed to reload file: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        
-        update(state => {
-          if (!state.currentFile || state.currentFile.path !== filePath) {
-            // File changed while we were loading, ignore this reload
-            return state;
-          }
-
-          // Update file content with fresh data from backend
-          const updatedFile = {
-            ...state.currentFile,
-            content: data.content || '',
-            dirty: false,
-            lastSaved: new Date(),
-            // Preserve existing metadata but update content-related fields
-            testStructure: data.testStructure || state.currentFile.testStructure,
-            commands: data.commands || state.currentFile.commands
-          };
-
-          console.log('✅ File content reloaded successfully');
-          
-          return {
-            ...state,
-            currentFile: updatedFile
-          };
-        });
-
-      } catch (error) {
-        console.error('❌ Error reloading file content:', error);
-        throw error;
-      }
+      console.log(`🔄 Reloading file: ${filePath}`);
+      
+      // Simply reload the file using the same logic as opening it
+      await storeModule.loadFile(filePath);
     },
 
     // New methods for improved test execution

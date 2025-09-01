@@ -334,3 +334,17 @@ export const gitStatusStore = createGitStatusStore();
 // Export functions for direct import
 export const checkUnstagedChanges = gitStatusStore.checkUnstagedChanges;
 export const checkoutFile = gitStatusStore.checkoutFile;
+
+// Git operations notification store for triggering UI refreshes
+export const gitOperationsStore = writable({
+  lastOperation: null as string | null,
+  timestamp: 0
+});
+
+// Helper function to notify about git operations
+export function notifyGitOperation(operation: string) {
+  gitOperationsStore.set({
+    lastOperation: operation,
+    timestamp: Date.now()
+  });
+}
