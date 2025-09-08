@@ -52,10 +52,89 @@ const defaultState: FilesState = {
   fileTree: [],
   currentFile: null,
   configDirectory: '',
-  dockerImage: 'ghcr.io/manticoresoftware/manticoresearch:test-kit-latest',
+  dockerImage: '', // Changed to empty - will be populated by smart resolution
   saving: false,
   running: false,
   runningTests: new Map()
+};
+
+// Constants for docker image management
+const GLOBAL_DEFAULT_IMAGE = process.env.DOCKER_IMAGE || null; // Use env var or null if not set
+const USER_DOCKER_IMAGE_KEY = 'clt_user_docker_image';
+
+// Helper function to load user-set docker image from localStorage
+const loadUserDockerImage = (): string => {
+  try {
+    return localStorage.getItem(USER_DOCKER_IMAGE_KEY) || '';
+  } catch (error) {
+    console.warn('Failed to load user docker image from localStorage:', error);
+    return '';
+  }
+};
+
+// Helper function to save user-set docker image to localStorage
+const saveUserDockerImage = (image: string): void => {
+  try {
+    if (image.trim()) {
+      localStorage.setItem(USER_DOCKER_IMAGE_KEY, image.trim());
+    } else {
+      localStorage.removeItem(USER_DOCKER_IMAGE_KEY);
+    }
+  } catch (error) {
+    console.warn('Failed to save user docker image to localStorage:', error);
+  }
+};
+
+// Helper function to extract default image from test file content
+const extractDefaultImageFromContent = (content: string): string | null => {
+  if (!content) return null;
+  
+  // Parse the content to get commands
+  const commands = parseRecFileContent(content);
+  
+  // Look for "Default image:" pattern in comment sections
+  const defaultImageRegex = /Default\s+image:\s*([^\s\n]+)/i;
+  
+  for (const command of commands) {
+    if (command.type === 'comment' && command.command) {
+      const match = command.command.match(defaultImageRegex);
+      if (match && match[1]) {
+        console.log('Found default image in test description:', match[1]);
+        return match[1].trim();
+      }
+    }
+  }
+  
+  return null;
+};
+
+// Helper function to get effective docker image based on priority logic
+const getEffectiveDockerImage = (currentFileContent?: string): string => {
+  // Priority 1: User-set image from localStorage
+  const userImage = loadUserDockerImage();
+  if (userImage) {
+    console.log('Using user-set docker image:', userImage);
+    return userImage;
+  }
+  
+  // Priority 2: Default image from test description
+  if (currentFileContent) {
+    const defaultImage = extractDefaultImageFromContent(currentFileContent);
+    if (defaultImage) {
+      console.log('Using default image from test description:', defaultImage);
+      return defaultImage;
+    }
+  }
+  
+  // Priority 3: Global default from env (or null if not set)
+  if (GLOBAL_DEFAULT_IMAGE) {
+    console.log('Using global default docker image from env:', GLOBAL_DEFAULT_IMAGE);
+    return GLOBAL_DEFAULT_IMAGE;
+  }
+  
+  // No default available - user must set image
+  console.log('No default image available - user must set docker image');
+  return '';
 };
 
 // Helper function to parse commands from the content of a .rec file
@@ -271,7 +350,13 @@ const checkFileLoaded = async (path: string) => {
 };
 
 function createFilesStore() {
-  const { subscribe, set, update } = writable<FilesState>(defaultState);
+  // Initialize with user's saved docker image
+  const initialState = {
+    ...defaultState,
+    dockerImage: loadUserDockerImage()
+  };
+  
+  const { subscribe, set, update } = writable<FilesState>(initialState);
   let runModule: any; // Reference to the module itself for self-referencing
 
   // Helper function to get patterns using WASM
@@ -915,7 +1000,9 @@ function createFilesStore() {
     if (!state.currentFile || state.runningTests.has(state.currentFile.path)) return;
 
     try {
-      const result = await runTest(state.currentFile.path, state.dockerImage);
+      const effectiveDockerImage = getEffectiveDockerImage(state.currentFile?.content);
+      console.log('🐳 Using docker image for test:', effectiveDockerImage);
+      const result = await runTest(state.currentFile.path, effectiveDockerImage);
 
       update(state => {
         if (!state.currentFile) return state;
@@ -1073,10 +1160,14 @@ function createFilesStore() {
       ...state,
       configDirectory: directory
     })),
-    setDockerImage: (image: string) => update(state => ({
-      ...state,
-      dockerImage: image
-    })),
+    setDockerImage: (image: string) => update(state => {
+      // Save to localStorage for persistence
+      saveUserDockerImage(image);
+      return {
+        ...state,
+        dockerImage: image
+      };
+    }),
     setFileTree: (tree: FileNode[]) => update(state => ({
       ...state,
       fileTree: tree
@@ -1497,7 +1588,17 @@ function createFilesStore() {
     stopCurrentTest,
     runCurrentTest,
     isCurrentFileRunning,
-    getCurrentFileTestInfo
+    getCurrentFileTestInfo,
+    clearUserDockerImage: () => update(state => {
+      // Clear from localStorage
+      saveUserDockerImage('');
+      return {
+        ...state,
+        dockerImage: ''
+      };
+    }),
+    getUserDockerImage: () => loadUserDockerImage(),
+    getEffectiveDockerImage: (fileContent?: string) => getEffectiveDockerImage(fileContent)
   };
 
   // Set the self-reference to allow calling other methods

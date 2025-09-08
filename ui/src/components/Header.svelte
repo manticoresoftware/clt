@@ -9,7 +9,20 @@
   import InteractiveSession from './InteractiveSession.svelte';
 
   let dockerImage = $filesStore.dockerImage;
+  let showClearButton = false;
   let interactiveSession: any;
+  
+  // Update clear button visibility when dockerImage changes
+  $: showClearButton = dockerImage.trim() !== '';
+  
+  // Calculate the effective placeholder (what would actually be used)
+  $: {
+    const effectiveImage = $filesStore.currentFile 
+      ? filesStore.getEffectiveDockerImage($filesStore.currentFile.content)
+      : filesStore.getEffectiveDockerImage();
+    
+    effectivePlaceholder = effectiveImage || 'No default image - please set docker image';
+  }
   
   // Subscribe to git status and GitHub store for smart button logic
   $: gitStatus = $gitStatusStore;
@@ -33,6 +46,16 @@
     filesStore.setDockerImage(dockerImage);
 
     // Run the test with new docker image if there's a file loaded
+    if ($filesStore.currentFile) {
+      filesStore.runTest();
+    }
+  }
+
+  function clearDockerImage() {
+    dockerImage = '';
+    filesStore.clearUserDockerImage();
+    
+    // Run the test with cleared image (will use auto-detection) if there's a file loaded
     if ($filesStore.currentFile) {
       filesStore.runTest();
     }
@@ -109,11 +132,23 @@
     <input
       id="docker-image"
       type="text"
-      placeholder="Docker image for test validation"
+      placeholder={effectivePlaceholder}
       bind:value={dockerImage}
       on:blur={updateDockerImage}
       disabled={$filesStore.running}
     />
+    {#if showClearButton && !$filesStore.running}
+      <button
+        class="clear-image-button"
+        on:click={clearDockerImage}
+        title="Clear custom image and use auto-detection"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    {/if}
     {#if $filesStore.running}
       <span class="loading-indicator">
         <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -248,6 +283,50 @@
   .loading-indicator {
     margin-left: var(--spacing-sm);
     color: var(--color-text-accent);
+  }
+
+  .docker-image-container {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    position: relative;
+  }
+
+  .docker-image-container label {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    font-weight: 500;
+    color: var(--color-text-secondary);
+  }
+
+  .docker-image-container input {
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    font-size: 0.875rem;
+    min-width: 300px;
+  }
+
+  .clear-image-button {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .clear-image-button:hover {
+    background-color: var(--color-bg-hover);
+    color: var(--color-text-primary);
   }
 
   .user-profile {
