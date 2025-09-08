@@ -1373,7 +1373,8 @@
   }
 
   .send-button:hover:not(:disabled) {
-    background-color: var(--color-bg-accent-hover);
+    background-color: var(--color-bg-accent-hover, #0056b3); /* Fallback color if variable not defined */
+    opacity: 0.9; /* Ensure button remains visible */
   }
 
   .send-button:disabled {
