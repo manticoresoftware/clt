@@ -127,7 +127,11 @@ export function convertStructuredToCommands(testStructure) {
           stepPath: currentPath,
           isInputOutputPair: false,
           isNested: level > 0,
-          nestingLevel: level
+          nestingLevel: level,
+          // Change tracking properties
+          hasChanges: step.hasChanges || false,
+          originalContent: step.originalContent,
+          modifiedAt: step.modifiedAt
         };
 
         globalStepIndex++; // Increment global index
@@ -176,7 +180,11 @@ export function convertStructuredToCommands(testStructure) {
           isNested: level > 0,
           nestingLevel: level,
           // Store nested steps for expansion
-          nestedSteps: step.steps
+          nestedSteps: step.steps,
+          // Change tracking properties
+          hasChanges: step.hasChanges || false,
+          originalArgs: step.originalArgs,
+          modifiedAt: step.modifiedAt
         };
 
         globalStepIndex++; // Increment global index for block
@@ -200,7 +208,11 @@ export function convertStructuredToCommands(testStructure) {
           stepPath: currentPath,
           isInputOutputPair: false,
           isNested: level > 0,
-          nestingLevel: level
+          nestingLevel: level,
+          // Change tracking properties
+          hasChanges: step.hasChanges || false,
+          originalContent: step.originalContent,
+          modifiedAt: step.modifiedAt
         });
 
         globalStepIndex++; // Increment global index for comment
@@ -252,17 +264,83 @@ export function updateStructuredCommand(testStructure, commandIndex, commands, n
   if (finalIndex >= 0 && finalIndex < targetSteps.length) {
     const step = { ...targetSteps[finalIndex] };
 
+    // Track original values before first modification
+    if (!step.hasChanges) {
+      if (step.type === 'input' || step.type === 'comment') {
+        step.originalContent = step.content;
+      } else if (step.type === 'block') {
+        step.originalArgs = [...(step.args || [])];
+      }
+      step.modifiedAt = new Date();
+    }
+
+    // Update the content
     if (step.type === 'input') {
       step.content = newValue;
+      step.hasChanges = step.originalContent !== newValue;
     } else if (step.type === 'block') {
       step.args = [newValue];
+      step.hasChanges = step.originalArgs?.[0] !== newValue;
     } else if (step.type === 'comment') {
       step.content = newValue;
+      step.hasChanges = step.originalContent !== newValue;
     }
 
     targetSteps[finalIndex] = step;
 
     // Update the store with new structure
+    filesStore.updateTestStructure(updatedStructure);
+  }
+}
+
+// Discard changes for a specific command in structured format
+export function discardStructuredCommand(testStructure, commandIndex, commands) {
+  if (!testStructure) {
+    console.error('No test structure available for discard');
+    return;
+  }
+
+  // Find the corresponding step in structured format
+  const command = commands[commandIndex];
+  if (!command || !command.hasChanges) {
+    console.error('Command not found or has no changes to discard:', commandIndex);
+    return;
+  }
+
+  // Create updated structure
+  const updatedStructure = { ...testStructure };
+
+  // Navigate to the correct location using stepPath
+  let targetSteps = updatedStructure.steps;
+  const stepPath = command.stepPath;
+
+  // Navigate to the parent container
+  for (let i = 0; i < stepPath.length - 1; i++) {
+    targetSteps = targetSteps[stepPath[i]].steps;
+  }
+
+  // Get the final index and restore original values
+  const finalIndex = stepPath[stepPath.length - 1];
+
+  if (finalIndex >= 0 && finalIndex < targetSteps.length) {
+    const step = { ...targetSteps[finalIndex] };
+
+    // Restore original values
+    if (step.type === 'input' || step.type === 'comment') {
+      step.content = step.originalContent || null;
+    } else if (step.type === 'block') {
+      step.args = step.originalArgs ? [...step.originalArgs] : [];
+    }
+
+    // Clear change tracking
+    delete step.originalContent;
+    delete step.originalArgs;
+    delete step.hasChanges;
+    delete step.modifiedAt;
+
+    targetSteps[finalIndex] = step;
+
+    // Update the store with restored structure
     filesStore.updateTestStructure(updatedStructure);
   }
 }

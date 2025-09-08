@@ -4,6 +4,7 @@
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
   import OutputCodeMirror from './OutputCodeMirror.svelte';
   import { filesStore } from '../stores/filesStore';
+  import { convertStructuredToCommands, discardStructuredCommand } from './EditorLogic';
   import {
     ScrollSyncManager,
     getStatusIcon,
@@ -203,6 +204,15 @@
     dispatch('deleteCommand', { index });
   }
 
+  function handleDiscardCommand() {
+    // Get current commands array from store
+    const currentFile = $filesStore.currentFile;
+    if (currentFile?.testStructure) {
+      const commands = convertStructuredToCommands(currentFile.testStructure);
+      discardStructuredCommand(currentFile.testStructure, index, commands);
+    }
+  }
+
   // Handle expansion on click (simple toggle)
   function handleExpectedOutputClick(event: MouseEvent) {
     event.stopPropagation();
@@ -335,7 +345,7 @@
   });
 </script>
 
-<div class="command-card {((command.status === 'failed' || command.error) && !command.initializing) ? 'failed-command' : ''} {command.type === 'block' ? 'block-command' : ''} {command.isBlockCommand ? 'is-block-command' : ''} {command.isNested ? 'nested-command' : ''}\" style={command.isNested ? `margin-left: ${command.nestingLevel * 20}px;` : ''}>
+<div class="command-card {((command.status === 'failed' || command.error) && !command.initializing) ? 'failed-command' : ''} {command.type === 'block' ? 'block-command' : ''} {command.isBlockCommand ? 'is-block-command' : ''} {command.isNested ? 'nested-command' : ''} {command.hasChanges ? 'modified-command' : ''}" style={command.isNested ? `margin-left: ${command.nestingLevel * 20}px;` : ''}>
   <!-- Command header -->
   <div class="command-header">
     <div class="command-title">
@@ -483,6 +493,23 @@
       </button>
 
       <div class="action-separator"></div>
+
+      <!-- Discard Changes Button (only show if command has changes) -->
+      {#if command.hasChanges}
+        <button
+          class="action-button discard"
+          on:click={handleDiscardCommand}
+          title="Discard changes"
+          aria-label="Discard changes to this command"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+            <path d="M21 3v5h-5"></path>
+            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+            <path d="M3 21v-5h5"></path>
+          </svg>
+        </button>
+      {/if}
 
       <!-- Delete Button -->
       <button
@@ -1461,5 +1488,21 @@
 
   .status-spinner circle {
     stroke: currentColor;
+  }
+
+  /* Modified command styling */
+  .command-card.modified-command {
+    border-left: 3px solid #f59e0b;
+    background-color: rgba(245, 158, 11, 0.05);
+  }
+
+  /* Discard button styling */
+  .action-button.discard {
+    color: #f59e0b;
+  }
+
+  .action-button.discard:hover {
+    background-color: rgba(245, 158, 11, 0.1);
+    color: #d97706;
   }
 </style>

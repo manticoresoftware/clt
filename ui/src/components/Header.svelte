@@ -11,6 +11,7 @@
   let dockerImage = $filesStore.dockerImage;
   let showClearButton = false;
   let interactiveSession: any;
+  let effectivePlaceholder = 'No default image - please set docker image';
   
   // Update clear button visibility when dockerImage changes
   $: showClearButton = dockerImage.trim() !== '';

@@ -22,6 +22,12 @@ interface TestStep {
   actualOutput?: string;
   duration?: number;
   isExpanded?: boolean;   // For block expansion
+  
+  // Change tracking properties
+  originalContent?: string | null;
+  originalArgs?: string[];
+  hasChanges?: boolean;
+  modifiedAt?: Date;
 }
 
 interface TestStructure {
@@ -59,7 +65,7 @@ const defaultState: FilesState = {
 };
 
 // Constants for docker image management
-const GLOBAL_DEFAULT_IMAGE = process.env.DOCKER_IMAGE || null; // Use env var or null if not set
+const GLOBAL_DEFAULT_IMAGE = null; // Environment variables not available in browser
 const USER_DOCKER_IMAGE_KEY = 'clt_user_docker_image';
 
 // Helper function to load user-set docker image from localStorage
