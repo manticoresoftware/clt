@@ -65,7 +65,9 @@ const defaultState: FilesState = {
 };
 
 // Constants for docker image management
-const GLOBAL_DEFAULT_IMAGE = null; // Environment variables not available in browser
+// This will be replaced at build time by Vite with the actual environment variable value
+const GLOBAL_DEFAULT_IMAGE = __DEFAULT_DOCKER_IMAGE__;
+console.log('🐳 GLOBAL_DEFAULT_IMAGE loaded:', GLOBAL_DEFAULT_IMAGE); // Debug log
 const USER_DOCKER_IMAGE_KEY = 'clt_user_docker_image';
 
 // Helper function to load user-set docker image from localStorage
