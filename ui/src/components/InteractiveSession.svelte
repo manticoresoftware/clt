@@ -736,12 +736,13 @@
         {/if}
 
         <!-- Logs Section -->
-        <div class="logs-section">
+        <!-- Logs Section -->
+        <div class="logs-section" class:logs-section-empty={!isRunning && !error && !lastRunOutput}>
           <div class="logs-header">
             <h3>Live Output</h3>
           </div>
 
-          <div class="logs-container" bind:this={logsContainer} on:scroll={handleScroll}>
+          <div class="logs-container" class:logs-container-empty={!isRunning && !error && !lastRunOutput} bind:this={logsContainer} on:scroll={handleScroll}>
             {#if isRunning && logs.length > 0}
               {#each logs as log}
                 <div class="log-line">{log}</div>
@@ -756,7 +757,18 @@
             {:else if lastRunOutput}
               <pre class="output-content">{lastRunOutput}</pre>
             {:else}
-              <div class="no-logs">No sessions yet. Enter your request below to start.</div>
+              <div class="no-logs">
+                <div class="no-logs-content">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="no-logs-icon">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                  </svg>
+                  <p>Enter your request below to start a new AI session</p>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="arrow-down">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <polyline points="19 12 12 19 5 12"></polyline>
+                  </svg>
+                </div>
+              </div>
             {/if}
           </div>
         </div>
@@ -953,6 +965,12 @@
     flex-direction: column;
     min-height: 0;
     padding: 0 20px 0 20px;
+    transition: all 0.3s ease;
+  }
+
+  .logs-section-empty {
+    flex: 0;
+    min-height: auto;
   }
 
   .logs-header {
@@ -1021,6 +1039,15 @@
     font-size: 12px;
     line-height: 1.4;
     min-height: 200px;
+    transition: min-height 0.3s ease, padding 0.3s ease;
+  }
+
+  .logs-container-empty {
+    min-height: 100px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .log-line {
@@ -1151,10 +1178,50 @@
 
   .no-logs {
     color: var(--color-text-tertiary);
-    font-style: italic;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 20px;
+    width: 100%;
+  }
+
+  .no-logs-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
     text-align: center;
-    padding: 40px 20px;
-    scroll-snap-align: end;
+  }
+
+  .no-logs-icon {
+    color: var(--color-text-secondary);
+    opacity: 0.7;
+  }
+
+  .no-logs p {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 500;
+    font-style: normal;
+  }
+
+  .arrow-down {
+    color: var(--color-text-accent);
+    animation: bounce 2s infinite;
+  }
+
+  @keyframes bounce {
+    0%, 20%, 50%, 80%, 100% {
+      transform: translateY(0);
+    }
+    40% {
+      transform: translateY(-10px);
+    }
+    60% {
+      transform: translateY(-5px);
+    }
   }
 
   @media (prefers-color-scheme: dark) {
