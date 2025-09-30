@@ -14,13 +14,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 # ! We are handling exit codes so we cannot use set -e here
-
 # Detect proper path to the binary to run
 ARCH=$(arch)
 bin_path="$PROJECT_DIR/bin/${ARCH/arm64/aarch64}"
-
 container_exec() {
 	image=$1
 	command=$2
@@ -30,26 +27,21 @@ container_exec() {
 		>&2 echo "Directory with tests does not exist: $directory"
 		return 1
 	fi
-
 	if [ -z "$image" ] || [ -z "$command" ]; then
 		>&2 echo 'Usage: container_exec "image" "command"'
 		return 1
 	fi
-
 	if [ ! -d "$PWD/.clt" ]; then
 		>&2 echo "Directory '.clt' does not exist in the current directory: $PWD"
 		return 1
 	fi
-
 	# Merge base of patterns
 	temp_file=$(mktemp)
 	cat "$PROJECT_DIR/.clt/patterns" > "$temp_file"
-
 	# Merge project .patterns to extend original
 	if [ -f ".clt/patterns" ]; then
 		cat .clt/patterns >> "$temp_file"
 	fi
-
 	flag=
 	if [ -n "$interactive" ]; then
 		flag="-i"
@@ -61,29 +53,24 @@ container_exec() {
 		-v \"$bin_path/cmp:/usr/bin/clt-cmp\" \
 		-v \"$PWD/$directory:$DOCKER_PROJECT_DIR/$directory\" \
 		-v \"$PWD/.clt:$DOCKER_PROJECT_DIR/.clt\" \
-		-v \"$temp_file:$DOCKER_PROJECT_DIR/.clt/patterns\" \
+		$(if [[ "$OSTYPE" != "darwin"* ]]; then echo "-v \\\"$temp_file:$DOCKER_PROJECT_DIR/.clt/patterns\\\""; fi) \
 		-w \"$DOCKER_PROJECT_DIR\" \
 		$CLT_RUN_ARGS \
 		--entrypoint /bin/bash \
 		--rm $flag -t \"$image\" \
 		-i -c \"$command\")
-
 	if [ -n "$interactive" ]; then
 		eval "$process"
 		exit_code=$?
 	else
 		eval "$process" & pid=$!
-
 		trap "kill -s INT '$pid'; exit 130" SIGINT
 		trap "kill -s TERM '$pid'; exit 143" SIGTERM
 		wait "$pid"
 		exit_code=$?
-
 		trap - SIGINT SIGTERM
 	fi
-
 	# Clean up temp file
 	rm -f "$temp_file"
-
 	return $exit_code
 }
