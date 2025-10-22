@@ -377,6 +377,35 @@ export function updateSessionMetadata(session) {
 }
 
 /**
+ * Check if current branch is a default branch (main/master)
+ * Reuses logic from autoCommitAndPush to avoid duplication
+ * @param {string} userRepoPath - Path to user repository
+ * @returns {Promise<Object>} Object with isDefault boolean and branch names
+ */
+export async function isOnDefaultBranch(userRepoPath) {
+  try {
+    const git = simpleGit(userRepoPath);
+    
+    const isRepo = await git.checkIsRepo();
+    if (!isRepo) {
+      return { isDefault: false, currentBranch: null, defaultBranch: null };
+    }
+
+    const currentBranch = await git.revparse(['--abbrev-ref', 'HEAD']);
+    const defaultBranch = await getDefaultBranch(git, userRepoPath);
+    
+    return {
+      isDefault: currentBranch === defaultBranch,
+      currentBranch,
+      defaultBranch
+    };
+  } catch (error) {
+    console.error('Error checking default branch:', error);
+    return { isDefault: false, currentBranch: null, defaultBranch: null };
+  }
+}
+
+/**
  * Auto-commit and push changes when not on default branch
  * @param {string} userRepoPath - Path to user repository
  * @param {string} filePath - Relative path of the saved file
