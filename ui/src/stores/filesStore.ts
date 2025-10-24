@@ -350,7 +350,10 @@ function createFilesStore() {
         });
 
         if (!response.ok) {
-          throw new Error(`Failed to save file: ${response.statusText}`);
+          const errorData = await response.json().catch(() => ({ error: response.statusText }));
+          const errorMessage = errorData.error || `Failed to save file: ${response.statusText}`;
+          alert(errorMessage);
+          throw new Error(errorMessage);
         }
 
         const result = await response.json();
@@ -418,7 +421,10 @@ function createFilesStore() {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to save file: ${response.statusText}`);
+        const errorData = await response.json().catch(() => ({ error: response.statusText }));
+        const errorMessage = errorData.error || `Failed to save file: ${response.statusText}`;
+        alert(errorMessage);
+        throw new Error(errorMessage);
       }
 
       const result = await response.json();
@@ -486,7 +492,10 @@ function createFilesStore() {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to save file: ${response.statusText}`);
+        const errorData = await response.json().catch(() => ({ error: response.statusText }));
+        const errorMessage = errorData.error || `Failed to save file: ${response.statusText}`;
+        alert(errorMessage);
+        throw new Error(errorMessage);
       }
 
       return await response.json();
@@ -519,15 +528,18 @@ function createFilesStore() {
       });
 
       if (!startResponse.ok) {
-        const errorData = await startResponse.json();
+        const errorData = await startResponse.json().catch(() => ({ error: startResponse.statusText }));
+        const errorMessage = errorData.error || `Failed to start test: ${startResponse.statusText}`;
         
-        // Handle concurrent test limit with user-friendly message
-        if (startResponse.status === 429 && errorData.error && errorData.error.includes('Maximum concurrent tests reached')) {
-          alert('You have reached the maximum number of concurrent tests (3). Please wait for a test to complete before starting a new one.');
-          return; // Don't throw, just return gracefully
+        // Always show alert for any error
+        alert(errorMessage);
+        
+        // Handle concurrent test limit - don't throw, just return gracefully
+        if (startResponse.status === 429 && errorMessage.includes('Maximum concurrent tests reached')) {
+          return;
         }
         
-        throw new Error(errorData.error || `Failed to start test: ${startResponse.statusText}`);
+        throw new Error(errorMessage);
       }
 
       const { jobId, timeout } = await startResponse.json();
