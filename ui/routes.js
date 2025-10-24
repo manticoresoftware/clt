@@ -703,7 +703,7 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
 
       // Attempt auto-commit and push if not on default branch
       console.log('🚀 [DELETE-FILE] Attempting auto-commit and push...');
-      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      // userRepoPath already declared above at line 670
       console.log('🚀 [DELETE-FILE] User repo path:', userRepoPath);
       console.log('🚀 [DELETE-FILE] File path for commit:', filePath);
       
