@@ -760,6 +760,19 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         });
       }
 
+      // Pull latest changes from remote branch before modifying
+      console.log(`🔄 Pulling latest changes from origin/${currentBranch}...`);
+      try {
+        await git.pull('origin', currentBranch, ['--rebase']);
+        console.log('✅ Successfully pulled latest changes');
+      } catch (pullError) {
+        console.error('❌ Pull failed:', pullError);
+        return res.status(409).json({
+          error: 'Failed to pull latest changes from remote branch. There may be conflicts or the branch may have diverged.',
+          details: pullError.message
+        });
+      }
+
       // Remove [skip ci] from commit message
       const newCommitMessage = lastCommitMessage.replace(skipCiPattern, '').trim();
       
