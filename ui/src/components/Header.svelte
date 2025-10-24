@@ -8,8 +8,13 @@
   import { API_URL } from '../config.js';
   import InteractiveSession from './InteractiveSession.svelte';
 
-  let dockerImage = $filesStore.dockerImage;
   let interactiveSession: any;
+  let dockerImage = $filesStore.dockerImage;
+  
+  // Update local dockerImage when store changes (e.g., from URL param)
+  $: if ($filesStore.dockerImage !== dockerImage) {
+    dockerImage = $filesStore.dockerImage;
+  }
   
   // Subscribe to git status and GitHub store for smart button logic
   $: gitStatus = $gitStatusStore;
