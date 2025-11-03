@@ -111,16 +111,16 @@ mod tests {
 
     #[test]
     fn test_mcp_response_constructors() {
-        let success_response = McpResponse::success(Some(json!(1)), json!({"test": "data"}));
+        let success_response = McpResponse::success(json!(1), json!({"test": "data"}));
         assert_eq!(success_response.jsonrpc, "2.0");
-        assert_eq!(success_response.id, Some(json!(1)));
+        assert_eq!(success_response.id, json!(1));
         assert!(success_response.result.is_some());
         assert!(success_response.error.is_none());
 
         let error_response =
-            McpResponse::error(Some(json!(2)), -32602, "Invalid params".to_string());
+            McpResponse::error(json!(2), -32602, "Invalid params".to_string());
         assert_eq!(error_response.jsonrpc, "2.0");
-        assert_eq!(error_response.id, Some(json!(2)));
+        assert_eq!(error_response.id, json!(2));
         assert!(error_response.result.is_none());
         assert!(error_response.error.is_some());
         assert_eq!(error_response.error.unwrap().code, -32602);

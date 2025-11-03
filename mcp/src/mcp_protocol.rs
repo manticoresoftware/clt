@@ -61,7 +61,7 @@ pub struct McpRequest {
 #[derive(Debug, Serialize)]
 pub struct McpResponse {
     pub jsonrpc: String,
-    pub id: Option<serde_json::Value>,
+    pub id: serde_json::Value, // Always required - never None for valid responses
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -270,7 +270,7 @@ pub struct GetPatternsOutput {
 // TestStructure and TestStep are now imported from parser crate
 
 impl McpResponse {
-    pub fn success(id: Option<serde_json::Value>, result: serde_json::Value) -> Self {
+    pub fn success(id: serde_json::Value, result: serde_json::Value) -> Self {
         Self {
             jsonrpc: "2.0".to_string(),
             id,
@@ -279,7 +279,7 @@ impl McpResponse {
         }
     }
 
-    pub fn error(id: Option<serde_json::Value>, code: i32, message: String) -> Self {
+    pub fn error(id: serde_json::Value, code: i32, message: String) -> Self {
         Self {
             jsonrpc: "2.0".to_string(),
             id,
