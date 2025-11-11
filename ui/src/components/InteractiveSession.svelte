@@ -756,7 +756,7 @@
             {:else if lastRunOutput}
               <pre class="output-content">{lastRunOutput}</pre>
             {:else}
-              <div class="no-logs">No sessions yet. Enter your request below to start.</div>
+              <div class="no-logs">No sessions yet. Enter your request in the input field below to start.</div>
             {/if}
           </div>
         </div>
@@ -766,11 +766,21 @@
           <div class="input-container">
             <textarea
               bind:value={input}
-              placeholder="Enter your request..."
+              placeholder="Write a test for... (e.g., 'Test fuzzy search with OPTION fuzzy=1' or 'Verify AUTOCOMPLETE returns correct results')"
               disabled={isRunning}
               on:keypress={handleKeyPress}
               rows="3"
+              class="main-input"
             ></textarea>
+            {#if !isRunning && !lastRunOutput}
+              <div class="starter-templates">
+                <span class="templates-label">Quick start:</span>
+                <button class="template-btn" on:click={() => input = "Write a test that verifies fuzzy search works correctly with min_infix_len='2'"}>🔍 Test fuzzy search</button>
+                <button class="template-btn" on:click={() => input = "Create a test for AUTOCOMPLETE function with different layouts"}>✨ Test autocomplete</button>
+                <button class="template-btn" on:click={() => input = "Write a test that checks distributed table query results"}>🌐 Test distributed</button>
+                <button class="template-btn" on:click={() => input = "Generate a test for fulltext search with MATCH operator"}>📝 Test fulltext</button>
+              </div>
+            {/if}
             <div class="input-actions">
               {#if isRunning}
                 <button class="cancel-button" on:click={cancelCommand}>
@@ -1157,7 +1167,39 @@
     scroll-snap-align: end;
   }
 
-  @media (prefers-color-scheme: dark) {
+    @media (prefers-color-scheme: dark) {
+      .template-btn {
+        background: #1f2937;
+        border-color: #374151;
+        color: #e5e7eb;
+      }
+
+      .template-btn:hover {
+        background: #3b82f6;
+        border-color: #3b82f6;
+        color: white;
+      }
+
+      .starter-templates {
+        background: #111827;
+        border-color: #374151;
+      }
+
+      .templates-label {
+        color: #9ca3af;
+      }
+
+      .input-container textarea.main-input {
+        border-color: #3b82f6;
+      }
+
+      .input-container textarea.main-input:focus {
+        border-color: #60a5fa;
+        box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.2);
+      }
+    }
+
+    @media (prefers-color-scheme: dark) {
     .session-status-header {
       background-color: #1f2937 !important;
       border-color: #374151 !important;
@@ -1262,28 +1304,72 @@
     gap: 12px;
   }
 
-  .input-container textarea {
+  .input-container textarea.main-input {
     width: 100%;
     padding: 12px;
-    border: 1px solid var(--color-border);
-    border-radius: 4px;
+    border: 2px solid #3b82f6;
+    border-radius: 6px;
     background-color: var(--color-bg-textarea);
     color: var(--color-text-primary);
     font-family: monospace;
     font-size: 14px;
     resize: vertical;
     min-height: 60px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
   }
 
-  .input-container textarea:focus {
+  .input-container textarea.main-input:focus {
     outline: none;
-    border-color: var(--color-bg-accent);
-    box-shadow: 0 0 0 2px rgba(var(--color-accent-rgb), 0.2);
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
   }
 
   .input-container textarea:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+    border-color: var(--color-border);
+  }
+
+  .starter-templates {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    padding: 12px;
+    background: var(--color-bg-secondary);
+    border-radius: 6px;
+    border: 1px solid var(--color-border);
+  }
+
+  .templates-label {
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    font-weight: 500;
+    margin-right: 4px;
+  }
+
+  .template-btn {
+    padding: 6px 12px;
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    color: var(--color-text-primary);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+  }
+
+  .template-btn:hover {
+    background: var(--color-bg-accent);
+    color: white;
+    border-color: var(--color-bg-accent);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+
+  .template-btn:active {
+    transform: translateY(0);
   }
 
   .input-actions {
