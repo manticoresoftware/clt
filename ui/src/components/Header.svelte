@@ -9,7 +9,39 @@
   import InteractiveSession from './InteractiveSession.svelte';
 
   let interactiveSession: any;
-  let dockerImage = $filesStore.dockerImage;
+  let dockerImage = ''; // Empty by default - user hasn't entered anything
+  let defaultImage = 'ghcr.io/manticoresoftware/manticoresearch:test-kit-latest'; // Will be updated from backend
+  
+  // Sync input field with store's userDockerImage (what user explicitly set)
+  $: {
+    if ($filesStore.userDockerImage !== null) {
+      // User has explicitly set an image (including from URL param)
+      dockerImage = $filesStore.userDockerImage;
+    } else if ($filesStore.currentFile?.fileDockerImage) {
+      // File has its own docker image, show it
+      dockerImage = $filesStore.currentFile.fileDockerImage;
+    } else {
+      // No user input, no file image - keep input empty
+      dockerImage = '';
+    }
+  }
+  
+  // Fetch default docker image from backend config
+  async function loadDefaultImage() {
+    try {
+      const response = await fetch(`${API_URL}/api/config`, {
+        credentials: 'include'
+      });
+      if (response.ok) {
+        const config = await response.json();
+        if (config.dockerImage) {
+          defaultImage = config.dockerImage;
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load default docker image:', error);
+    }
+  }
   
   // Subscribe to git status and GitHub store for smart button logic
   $: gitStatus = $gitStatusStore;
@@ -30,7 +62,9 @@
   $: showCreatePrLink = !existingPr && hasGitChanges && githubCompareUrl;
 
   function updateDockerImage() {
-    filesStore.setDockerImage(dockerImage);
+    // Trim the input - empty string means "use default/file image"
+    const trimmedImage = dockerImage.trim();
+    filesStore.setDockerImage(trimmedImage);
 
     // Run the test with new docker image if there's a file loaded
     if ($filesStore.currentFile) {
@@ -41,6 +75,7 @@
   // Fetch auth state when component mounts and initialize git status
   onMount(() => {
     fetchAuthState();
+    loadDefaultImage(); // Load default docker image from backend
     
   // Initialize git status polling with immediate fetch
   gitStatusStore.fetchGitStatus().then(() => {
@@ -109,7 +144,7 @@
     <input
       id="docker-image"
       type="text"
-      placeholder="Docker image for test validation"
+      placeholder={defaultImage}
       bind:value={dockerImage}
       on:blur={updateDockerImage}
       disabled={$filesStore.running}

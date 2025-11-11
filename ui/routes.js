@@ -384,6 +384,13 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
     });
   });
 
+  // API endpoint to get configuration (including default docker image)
+  app.get('/api/config', isAuthenticated, (req, res) => {
+    return res.json({
+      dockerImage: process.env.DOCKER_IMAGE || 'ghcr.io/manticoresoftware/manticoresearch:test-kit-latest'
+    });
+  });
+
   // API endpoint to get the file tree
   app.get('/api/get-file-tree', isAuthenticated, async (req, res) => {
     try {
