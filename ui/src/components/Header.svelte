@@ -11,11 +11,6 @@
   let interactiveSession: any;
   let dockerImage = $filesStore.dockerImage;
   
-  // Update local dockerImage when store changes (e.g., from URL param)
-  $: if ($filesStore.dockerImage !== dockerImage) {
-    dockerImage = $filesStore.dockerImage;
-  }
-  
   // Subscribe to git status and GitHub store for smart button logic
   $: gitStatus = $gitStatusStore;
   $: github = $githubStore;
