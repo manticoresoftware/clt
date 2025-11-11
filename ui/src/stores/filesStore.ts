@@ -33,6 +33,7 @@ interface RecordingFile {
   path: string;
   // Structured format (WASM-based)
   testStructure?: TestStructure;
+  fileDockerImage?: string | null; // Docker image from file metadata
   dirty: boolean;
   lastSaved?: Date;
   status?: 'success' | 'failed';
@@ -43,16 +44,21 @@ interface FilesState {
   currentFile: RecordingFile | null;
   configDirectory: string;
   dockerImage: string;
+  userDockerImage: string | null; // User's explicit input (null = use default/file)
   saving: boolean;
   running: boolean;
   runningTests: Map<string, any>;
 }
 
+// Default docker image - will be updated from backend config
+let DEFAULT_DOCKER_IMAGE = 'ghcr.io/manticoresoftware/manticoresearch:test-kit-latest';
+
 const defaultState: FilesState = {
   fileTree: [],
   currentFile: null,
   configDirectory: '',
-  dockerImage: 'ghcr.io/manticoresoftware/manticoresearch:test-kit-latest',
+  dockerImage: DEFAULT_DOCKER_IMAGE, // This is the effective image used for running tests
+  userDockerImage: null, // User hasn't entered anything by default
   saving: false,
   running: false,
   runningTests: new Map()
@@ -229,6 +235,41 @@ const mergeFileTreePreservingState = (oldTree: FileNode[], newTree: FileNode[]):
   return mergeNodes(newTree);
 };
 
+// Helper function to extract docker image from file content
+const extractDockerImageFromFile = (testStructure: TestStructure | null, rawContent: string | null): string | null => {
+  // First, try to extract from testStructure.description
+  if (testStructure?.description) {
+    const match = testStructure.description.match(/docker\s+image:\s*(.+)/i);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+
+  // If not found in description, try raw content before first ––– input –––
+  if (rawContent) {
+    const inputMarkerIndex = rawContent.indexOf('––– input –––');
+    const contentBeforeInput = inputMarkerIndex !== -1 ? rawContent.substring(0, inputMarkerIndex) : rawContent;
+    const match = contentBeforeInput.match(/docker\s+image:\s*(.+)/i);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+
+  return null;
+};
+
+// Helper function to get effective docker image based on priority
+const getEffectiveDockerImage = (state: FilesState): string => {
+  // Priority: userDockerImage > currentFile.fileDockerImage > default
+  if (state.userDockerImage && state.userDockerImage.trim() !== '') {
+    return state.userDockerImage;
+  }
+  if (state.currentFile?.fileDockerImage) {
+    return state.currentFile.fileDockerImage;
+  }
+  return DEFAULT_DOCKER_IMAGE;
+};
+
 // Helper function to determine if a file is loaded correctly
 const checkFileLoaded = async (path: string) => {
   try {
@@ -246,6 +287,7 @@ const checkFileLoaded = async (path: string) => {
         return {
           success: true,
           testStructure: data.structuredData,
+          rawContent: data.content,
           method: 'wasm'
         };
       } else if (data.structuredData) {
@@ -253,6 +295,7 @@ const checkFileLoaded = async (path: string) => {
         return {
           success: true,
           testStructure: data.structuredData,
+          rawContent: data.content,
           method: 'structured'
         };
       } else {
@@ -1085,10 +1128,38 @@ function createFilesStore() {
       ...state,
       configDirectory: directory
     })),
-    setDockerImage: (image: string) => update(state => ({
-      ...state,
-      dockerImage: image
-    })),
+    setDockerImage: (image: string) => update(state => {
+      const userImage = image && image.trim() !== '' ? image.trim() : null;
+      const effectiveImage = userImage || state.currentFile?.fileDockerImage || DEFAULT_DOCKER_IMAGE;
+      return {
+        ...state,
+        userDockerImage: userImage,
+        dockerImage: effectiveImage
+      };
+    }),
+    // Load configuration from backend (including default docker image)
+    loadConfig: async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/config`, {
+          credentials: 'include'
+        });
+        if (response.ok) {
+          const config = await response.json();
+          if (config.dockerImage) {
+            DEFAULT_DOCKER_IMAGE = config.dockerImage;
+            // Update store's dockerImage if no user override
+            update(state => {
+              if (!state.userDockerImage && !state.currentFile?.fileDockerImage) {
+                return { ...state, dockerImage: DEFAULT_DOCKER_IMAGE };
+              }
+              return state;
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load config:', error);
+      }
+    },
     setFileTree: (tree: FileNode[]) => update(state => ({
       ...state,
       fileTree: tree
@@ -1283,16 +1354,29 @@ function createFilesStore() {
               steps: processSteps(result.testStructure.steps)
             };
 
+            // Extract docker image from file
+            const fileDockerImage = extractDockerImageFromFile(result.testStructure, result.rawContent || null);
+            
             // Update store with the new structured data
-            update(state => ({
-              ...state,
-              currentFile: {
-                path,
-                testStructure: processedTestStructure,
-                dirty: false,
-                status: 'pending'
+            update(state => {
+              const newState = {
+                ...state,
+                currentFile: {
+                  path,
+                  testStructure: processedTestStructure,
+                  fileDockerImage,
+                  dirty: false,
+                  status: 'pending'
+                }
+              };
+              
+              // If user hasn't set a custom image, use effective image (file or default)
+              if (!state.userDockerImage) {
+                newState.dockerImage = getEffectiveDockerImage(newState);
               }
-            }));
+              
+              return newState;
+            });
 
             return true;
           }
