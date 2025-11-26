@@ -66,10 +66,8 @@
     const trimmedImage = dockerImage.trim();
     filesStore.setDockerImage(trimmedImage);
 
-    // Run the test with new docker image if there's a file loaded
-    if ($filesStore.currentFile) {
-      filesStore.runTest();
-    }
+    // Don't automatically run test - user should click "Run Test" button explicitly
+    // This prevents unwanted test execution when just updating the Docker image
   }
 
   // Fetch auth state when component mounts and initialize git status
