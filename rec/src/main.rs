@@ -227,7 +227,12 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 
 		// Read output now from stdout that is already merged with stderr
 		let mut stdout_reader = BufReader::new(child_stdout);
-		for command in commands {
+		for (index, command) in commands.iter().enumerate() {
+			// Sleep for delay before executing command (except for the first one)
+			if delay > 0 && index > 0 {
+				tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+			}
+
 			let command_with_marker = format!("{}\necho '{}'\n", command, END_MARKER);
 			child_stdin.write_all(command_with_marker.as_bytes()).await
 				.map_err(|e| RecError::TestExecutionFailed(
@@ -278,11 +283,6 @@ async fn async_main(opt: Opt) -> anyhow::Result<()> {
 			let duration_line = get_duration_line(duration);
 			let content = format!("\n{}\n{}\n{}\n{}\n{}\n", input_line, command, output_line, output, duration_line);
 			output_fh.write_all(&content.as_bytes()).await?;
-
-			// Sleep for delay before process next command
-			if delay > 0 {
-				tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-			}
 		}
 
 		// Emulate Ctrl+D
