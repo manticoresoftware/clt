@@ -42,7 +42,7 @@ Test options:
   -d, --debug, --diff
     Show diff produced by cmp tool to stdout
   -D, --delay=timeout-in-ms
-    Delay between commands in ms (default: 5)
+    Delay between commands in ms (default: 50)
   [docker image]
     Docker image to run commands in
 

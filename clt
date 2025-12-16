@@ -33,7 +33,7 @@ DOCKER_PROJECT_DIR='/.clt'
 export PROJECT_DIR DOCKER_PROJECT_DIR
 
 # Set the default delay in ms between each command in the given test
-export DEFAULT_DELAY=5
+export DEFAULT_DELAY=50
 
 case "$cmd" in
 	record)
