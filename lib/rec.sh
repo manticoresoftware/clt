@@ -50,7 +50,7 @@ record() {
 replay() {
 	image=$1
 	record_file=$2
-	delay=${3:-$DEFAULT_DELAY}
+	delay=${3:-$CLT_DEFAULT_DELAY}
 	if [ -z "$image" ] || [ -z "$record_file" ]; then
 		>&2 echo 'Usage: replay "image" "record_file"'
 		return 1
@@ -148,7 +148,7 @@ test() {
 	image=$1
 	record_file=$2
 	show_diff=${3:-0}
-	delay=${4:-$DEFAULT_DELAY}
+	delay=${4:-$CLT_DEFAULT_DELAY}
 	if [ -z "$image" ] || [ -z "$record_file" ]; then
 		>&2 echo 'Usage: test "image" "record_file"'
 		return 1
