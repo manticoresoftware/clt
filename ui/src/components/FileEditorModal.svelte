@@ -2,6 +2,7 @@
   import { createEventDispatcher } from 'svelte';
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
   import { API_URL } from '../config.js';
+  import { branchStore } from '../stores/branchStore';
 
   export let visible = false;
   export let filePath: string | null = null;
@@ -14,6 +15,13 @@
   let error: string | null = null;
   let saving = false;
   let successMessage: string | null = null;
+  
+  // Check if on default branch (master/main) - READ ONLY mode
+  $: isOnDefaultBranch = $branchStore.currentBranch === $branchStore.defaultBranch;
+  $: isReadOnly = isOnDefaultBranch;
+  
+  // DEBUG LOG
+  $: console.log('🔒 FileEditorModal - currentBranch:', $branchStore.currentBranch, 'defaultBranch:', $branchStore.defaultBranch, 'isReadOnly:', isReadOnly);
 
   // Load file content when modal opens
   $: if (visible && filePath) {
@@ -160,7 +168,7 @@
     <div class="modal-content" on:click|stopPropagation>
       <div class="modal-header">
         <div class="modal-title">
-          <span>Edit File</span>
+          <span>{isReadOnly ? '🔒 View File (Read-Only)' : 'Edit File'}</span>
           {#if fileName}
             <span class="file-name">→ {fileName}</span>
           {/if}
@@ -178,22 +186,24 @@
               <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
           </button>
-          <button
-            class="action-button save-button"
-            on:click={saveFile}
-            disabled={loading || saving}
-            title="Save file"
-          >
-            {#if saving}
-              <div class="spinner"></div>
-            {:else}
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                <polyline points="17,21 17,13 7,13 7,21"/>
-                <polyline points="7,3 7,8 15,8"/>
-              </svg>
-            {/if}
-          </button>
+          {#if !isReadOnly}
+            <button
+              class="action-button save-button"
+              on:click={saveFile}
+              disabled={loading || saving}
+              title="Save file"
+            >
+              {#if saving}
+                <div class="spinner"></div>
+              {:else}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                  <polyline points="17,21 17,13 7,13 7,21"/>
+                  <polyline points="7,3 7,8 15,8"/>
+                </svg>
+              {/if}
+            </button>
+          {/if}
           <button
             class="action-button close-button"
             on:click={closeModal}
@@ -227,10 +237,28 @@
             <div class="success-message">{successMessage}</div>
           </div>
         {:else}
-          <div class="editor-container">
+          {#if isReadOnly}
+            <div class="readonly-warning">
+              <div class="warning-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+              </div>
+              <div class="warning-content">
+                <div class="warning-title">🔒 Master Branch is Read-Only</div>
+                <div class="warning-message">
+                  You cannot edit files on the <strong>{$branchStore.defaultBranch}</strong> branch.
+                  Create a new branch to make changes.
+                </div>
+              </div>
+            </div>
+          {/if}
+          <div class="editor-container" class:readonly-mode={isReadOnly}>
             <SimpleCodeMirror
               bind:value={fileContent}
               placeholder="File content will appear here..."
+              readOnly={isReadOnly}
             />
           </div>
         {/if}
@@ -445,4 +473,54 @@
   .retry-button:hover {
     background-color: var(--color-bg-accent-hover);
   }
+
+  /* Read-only warning banner */
+  .readonly-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px 20px;
+    margin: 16px 16px 0 16px;
+    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+    border: 2px solid #f59e0b;
+    border-radius: 8px;
+    color: #92400e;
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.2);
+  }
+
+  .warning-icon {
+    flex-shrink: 0;
+    color: #f59e0b;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .warning-content {
+    flex: 1;
+  }
+
+  .warning-title {
+    font-weight: 700;
+    font-size: 15px;
+    margin-bottom: 6px;
+    color: #78350f;
+  }
+
+  .warning-message {
+    font-size: 13px;
+    line-height: 1.5;
+    color: #92400e;
+  }
+
+  .warning-message strong {
+    font-weight: 700;
+    color: #78350f;
+  }
+
+  /* Read-only editor styling - CLEAN, NO UGLY COLORS */
+  .editor-container.readonly-mode {
+    user-select: text;
+  }
+
 </style>

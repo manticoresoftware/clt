@@ -8,7 +8,7 @@ import {
   slugify
 } from './routes.js';
 import { ensureRepositoryCheckout } from './repositoryManager.js';
-import { getDefaultBranch, checkExistingPR, isPRBranch } from './helpers.js';
+import { getDefaultBranch, checkExistingPR, isPRBranch, isOnDefaultBranch } from './helpers.js';
 import tokenManager from './tokenManager.js';
 
 // Setup Git routes
@@ -625,6 +625,17 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
     const username = req.user.username;
     const userRepo = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
 
+    // Check if on default branch - block commits
+    const branchCheck = await isOnDefaultBranch(userRepo);
+    if (branchCheck.isDefault) {
+      return res.status(403).json({ 
+        error: `Cannot commit changes on default branch (${branchCheck.defaultBranch}). Please create a new branch before committing.`,
+        currentBranch: branchCheck.currentBranch,
+        defaultBranch: branchCheck.defaultBranch,
+        isDefaultBranch: true
+      });
+    }
+
     const git = simpleGit({ baseDir: userRepo });
     await ensureGitRemoteWithToken(git, req.user.token, REPO_URL);
 
@@ -749,6 +760,19 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         });
       }
 
+      // Pull latest changes from remote branch before modifying
+      console.log(`🔄 Pulling latest changes from origin/${currentBranch}...`);
+      try {
+        await git.pull('origin', currentBranch, ['--rebase']);
+        console.log('✅ Successfully pulled latest changes');
+      } catch (pullError) {
+        console.error('❌ Pull failed:', pullError);
+        return res.status(409).json({
+          error: 'Failed to pull latest changes from remote branch. There may be conflicts or the branch may have diverged.',
+          details: pullError.message
+        });
+      }
+
       // Remove [skip ci] from commit message
       const newCommitMessage = lastCommitMessage.replace(skipCiPattern, '').trim();
       
@@ -792,6 +816,17 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
 
       if (!repoExists) {
         return res.status(404).json({ error: 'Repository not found' });
+      }
+
+      // Check if on default branch - block file checkout (discarding changes)
+      const branchCheck = await isOnDefaultBranch(userRepo);
+      if (branchCheck.isDefault) {
+        return res.status(403).json({ 
+          error: `Cannot discard file changes on default branch (${branchCheck.defaultBranch}). Please create a new branch before editing.`,
+          currentBranch: branchCheck.currentBranch,
+          defaultBranch: branchCheck.defaultBranch,
+          isDefaultBranch: true
+        });
       }
 
       try {
@@ -1094,6 +1129,17 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
         return res.status(404).json({ error: 'Repository not found' });
       }
 
+      // Check if on default branch - block undo operations
+      const branchCheck = await isOnDefaultBranch(userRepo);
+      if (branchCheck.isDefault) {
+        return res.status(403).json({ 
+          error: `Cannot undo changes on default branch (${branchCheck.defaultBranch}). Please create a new branch before editing.`,
+          currentBranch: branchCheck.currentBranch,
+          defaultBranch: branchCheck.defaultBranch,
+          isDefaultBranch: true
+        });
+      }
+
       const git = simpleGit({ baseDir: userRepo });
       const isRepo = await git.checkIsRepo();
       
@@ -1223,6 +1269,17 @@ export function setupGitRoutes(app, isAuthenticated, dependencies) {
 
       if (!repoExists) {
         return res.status(404).json({ error: 'Repository not found' });
+      }
+
+      // Check if on default branch - block redo operations
+      const branchCheck = await isOnDefaultBranch(userRepo);
+      if (branchCheck.isDefault) {
+        return res.status(403).json({ 
+          error: `Cannot redo changes on default branch (${branchCheck.defaultBranch}). Please create a new branch before editing.`,
+          currentBranch: branchCheck.currentBranch,
+          defaultBranch: branchCheck.defaultBranch,
+          isDefaultBranch: true
+        });
       }
 
       const git = simpleGit({ baseDir: userRepo });

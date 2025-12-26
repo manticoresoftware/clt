@@ -127,6 +127,7 @@ You can configure the server to listen on different ports and hosts:
 HOST=localhost       # Set to '0.0.0.0' to listen on all interfaces
 FRONTEND_PORT=5173   # Default frontend port (Vite)
 BACKEND_PORT=3000    # Default backend port (Express)
+DOCKER_IMAGE=ghcr.io/manticoresoftware/manticoresearch:test-kit-latest  # Default docker image for tests
 ```
 
 ### Development Mode
@@ -145,7 +146,7 @@ This will bypass the authentication check and allow you to access the applicatio
 2. The file explorer on the left shows available .rec files
 3. Click on a file to open it in the editor
 4. Add commands and expected outputs
-5. Configure the Docker image at the top for validation
+5. Configure the Docker image at the top for validation (see [DOCKER_IMAGE.md](./DOCKER_IMAGE.md) for details)
 6. Save files as needed
 7. Run tests to see real-time diff comparison with pattern recognition
 
@@ -157,6 +158,12 @@ This will bypass the authentication check and allow you to access the applicatio
 - `config/` - Application configuration
 - `pkg/` - WebAssembly module for diff comparison (compiled from wasm-diff)
 - `.clt/patterns` - Pattern definitions for variable matching in tests
+
+## Documentation
+
+- [API.md](./API.md) - Complete API endpoints reference
+- [DOCKER_IMAGE.md](./DOCKER_IMAGE.md) - Docker image configuration guide
+- [INSTALL.md](./INSTALL.md) - Installation instructions
 
 ## Development
 
@@ -201,6 +208,7 @@ npm run test
    ```javascript
    GET  /api/get-file-tree     # Hierarchical file listing
    GET  /api/get-file          # File content retrieval
+   GET  /api/config            # Configuration (docker image, etc.)
    POST /api/save-file         # File content saving
    POST /api/move-file         # File/directory movement
    DELETE /api/delete-file     # File/directory deletion

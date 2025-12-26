@@ -1592,6 +1592,16 @@
   </div>
 
   <div class="file-explorer-footer">
+    <!-- Master Branch Warning Banner -->
+    {#if $branchStore.currentBranch === $branchStore.defaultBranch && $branchStore.currentBranch !== 'unknown'}
+      <div class="master-branch-warning">
+        <div class="warning-icon">🔒</div>
+        <div class="warning-text">
+          <strong>Read-Only Mode:</strong> You're on <strong>{$branchStore.defaultBranch}</strong> branch. Create a new branch to edit files.
+        </div>
+      </div>
+    {/if}
+
     <div class="branch-info">
       <span>
         {#if $branchStore.isLoading}
@@ -1894,6 +1904,36 @@
     color: var(--color-text-error);
     margin-top: 2px;
     margin-bottom: 2px;
+  }
+
+  /* Master Branch Warning Banner */
+  .master-branch-warning {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+    border: 2px solid #f59e0b;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #92400e;
+    box-shadow: 0 2px 6px rgba(245, 158, 11, 0.15);
+  }
+
+  .master-branch-warning .warning-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  .master-branch-warning .warning-text {
+    flex: 1;
+    line-height: 1.4;
+  }
+
+  .master-branch-warning .warning-text strong {
+    font-weight: 700;
+    color: #78350f;
   }
 
   .branch-info {

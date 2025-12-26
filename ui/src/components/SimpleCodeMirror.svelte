@@ -11,6 +11,7 @@
   export let value = '';
   export let placeholder = '';
   export let disabled = false;
+  export let readOnly = false;
 
   const dispatch = createEventDispatcher();
 
@@ -18,6 +19,7 @@
   let container;
   let isDarkMode = false;
   let themeCompartment = new Compartment();
+  let readOnlyCompartment = new Compartment();
   
   // Variables to manage editor state and prevent update loops
   let isInternalUpdate = false;
@@ -44,6 +46,10 @@
         extensions: [
           StreamLanguage.define(shell), // Shell/bash syntax highlighting
           themeCompartment.of(getTheme()), // Theme based on user preference
+          readOnlyCompartment.of([
+            EditorView.editable.of(!readOnly),
+            EditorState.readOnly.of(readOnly)
+          ]),
           history(), // Enable undo/redo history
           keymap.of([...historyKeymap, ...defaultKeymap]), // Include history keymaps (CMD+Z, CMD+Shift+Z)
           lineNumbers(), // Add line numbers
@@ -93,6 +99,9 @@
 
           }),
           EditorView.updateListener.of((update) => {
+            // Block all updates if readOnly
+            if (readOnly) return;
+            
             if (update.docChanged) {
               const newValue = update.state.doc.toString();
               if (newValue !== value) {
@@ -115,6 +124,7 @@
           }),
           EditorView.domEventHandlers({
             focus: () => {
+              if (readOnly) return;
               isUserTyping = true;
               dispatch('focus');
             },
@@ -189,11 +199,22 @@
   $: if (editorView && value !== undefined) {
     updateEditor();
   }
+
+  // React to readOnly prop changes - FORCE UPDATE WHEN IT CHANGES
+  $: if (editorView) {
+    console.log('🔒 SimpleCodeMirror readOnly prop changed to:', readOnly);
+    editorView.dispatch({
+      effects: readOnlyCompartment.reconfigure([
+        EditorView.editable.of(!readOnly),
+        EditorState.readOnly.of(readOnly)
+      ])
+    });
+  }
 </script>
 
 <div class="codemirror-wrapper">
   <div bind:this={container} class="codemirror-container"></div>
-  {#if !value && placeholder}
+  {#if !value?.trim() && placeholder}
     <div class="placeholder">{placeholder}</div>
   {/if}
 </div>

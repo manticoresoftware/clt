@@ -4,6 +4,7 @@
   import SimpleCodeMirror from './SimpleCodeMirror.svelte';
   import OutputCodeMirror from './OutputCodeMirror.svelte';
   import { filesStore } from '../stores/filesStore';
+  import { branchStore } from '../stores/branchStore';
   import {
     ScrollSyncManager,
     getStatusIcon,
@@ -19,6 +20,9 @@
   export let wasmLoaded: boolean = false;
   export let patternMatcher: any = null;
   export let isRunning: boolean = false;
+
+  // Check if on master branch - READ ONLY
+  $: isOnMasterBranch = $branchStore.currentBranch === $branchStore.defaultBranch;
 
   // Check if current file has a running test
   $: isCurrentFileRunning = $filesStore.currentFile ? $filesStore.runningTests.has($filesStore.currentFile.path) : false;
@@ -505,10 +509,11 @@
   <div class="command-body">
     {#if command.type === 'block'}
       <!-- Block reference input -->
-      <SimpleCodeMirror
+			<SimpleCodeMirror
         placeholder="Enter path to file (without .recb extension)"
         bind:value={command.command}
         on:input={handleCommandInput}
+        readOnly={isOnMasterBranch}
       />
     {:else if command.type === 'comment'}
       <!-- Comment input -->
@@ -516,6 +521,7 @@
         placeholder="Enter your comment here..."
         bind:value={command.command}
         on:input={handleCommandInput}
+        readOnly={isOnMasterBranch}
       />
     {:else}
       <!-- Standard command input with syntax highlighting -->
@@ -523,6 +529,7 @@
         placeholder="Enter command..."
         bind:value={command.command}
         on:input={handleCommandInput}
+        readOnly={isOnMasterBranch}
       />
 
       <!-- Output section (only for regular commands and only when test has been run) -->
@@ -541,7 +548,7 @@
           <div class="output-wrapper {command.isOutputExpanded ? 'expanded' : ''}" on:click={handleExpectedOutputClick}>
             <div
               class="output-content"
-              contenteditable="true"
+              contenteditable={!isOnMasterBranch}
               bind:this={expectedOutputEl}
               on:input={handleExpectedOutputInput}
               on:blur={handleOutputBlur}

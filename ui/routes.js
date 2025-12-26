@@ -7,7 +7,7 @@ import {
   generateRecFileToMapWasm,
   validateTestFromMapWasm
 } from './wasmNodeWrapper.js';
-import { autoCommitAndPush } from './helpers.js';
+import { autoCommitAndPush, isOnDefaultBranch } from './helpers.js';
 
 // Helper functions that were in server.js
 export function getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig) {
@@ -384,6 +384,13 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
     });
   });
 
+  // API endpoint to get configuration (including default docker image)
+  app.get('/api/config', isAuthenticated, (req, res) => {
+    return res.json({
+      dockerImage: process.env.DOCKER_IMAGE || 'ghcr.io/manticoresoftware/manticoresearch:test-kit-latest'
+    });
+  });
+
   // API endpoint to get the file tree
   app.get('/api/get-file-tree', isAuthenticated, async (req, res) => {
     try {
@@ -490,6 +497,19 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
 
       if (!filePath) {
         return res.status(400).json({ error: 'File path is required' });
+      }
+
+      // Check if on default branch - block file modifications
+      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const branchCheck = await isOnDefaultBranch(userRepoPath);
+      
+      if (branchCheck.isDefault) {
+        return res.status(403).json({ 
+          error: `Cannot save files on default branch (${branchCheck.defaultBranch}). Please create a new branch before editing.`,
+          currentBranch: branchCheck.currentBranch,
+          defaultBranch: branchCheck.defaultBranch,
+          isDefaultBranch: true
+        });
       }
 
       // Use the user's test directory as the base
@@ -607,6 +627,19 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
         return res.status(400).json({ error: 'Source and target paths are required' });
       }
 
+      // Check if on default branch - block file modifications
+      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const branchCheck = await isOnDefaultBranch(userRepoPath);
+      
+      if (branchCheck.isDefault) {
+        return res.status(403).json({ 
+          error: `Cannot move files on default branch (${branchCheck.defaultBranch}). Please create a new branch before editing.`,
+          currentBranch: branchCheck.currentBranch,
+          defaultBranch: branchCheck.defaultBranch,
+          isDefaultBranch: true
+        });
+      }
+
       // Use the user's test directory as the base
       const testDir = getUserTestPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
       const absoluteSourcePath = path.join(testDir, sourcePath);
@@ -640,6 +673,19 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
         return res.status(400).json({ error: 'File path is required' });
       }
 
+      // Check if on default branch - block file modifications
+      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const branchCheck = await isOnDefaultBranch(userRepoPath);
+      
+      if (branchCheck.isDefault) {
+        return res.status(403).json({ 
+          error: `Cannot delete files on default branch (${branchCheck.defaultBranch}). Please create a new branch before editing.`,
+          currentBranch: branchCheck.currentBranch,
+          defaultBranch: branchCheck.defaultBranch,
+          isDefaultBranch: true
+        });
+      }
+
       // Use the user's test directory as the base
       const testDir = getUserTestPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
       const absolutePath = path.join(testDir, filePath);
@@ -664,7 +710,7 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
 
       // Attempt auto-commit and push if not on default branch
       console.log('🚀 [DELETE-FILE] Attempting auto-commit and push...');
-      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      // userRepoPath already declared above at line 670
       console.log('🚀 [DELETE-FILE] User repo path:', userRepoPath);
       console.log('🚀 [DELETE-FILE] File path for commit:', filePath);
       
@@ -692,6 +738,19 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
 
       if (!dirPath) {
         return res.status(400).json({ error: 'Directory path is required' });
+      }
+
+      // Check if on default branch - block directory creation
+      const userRepoPath = getUserRepoPath(req, WORKDIR, ROOT_DIR, getAuthConfig);
+      const branchCheck = await isOnDefaultBranch(userRepoPath);
+      
+      if (branchCheck.isDefault) {
+        return res.status(403).json({ 
+          error: `Cannot create directories on default branch (${branchCheck.defaultBranch}). Please create a new branch before editing.`,
+          currentBranch: branchCheck.currentBranch,
+          defaultBranch: branchCheck.defaultBranch,
+          isDefaultBranch: true
+        });
       }
 
       // Use the user's test directory as the base
