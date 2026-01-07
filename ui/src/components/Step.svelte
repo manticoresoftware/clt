@@ -543,6 +543,13 @@
               <button class="use-actual-link" on:click={handleUseActual} title="Copy actual output to expected output">
                 (use actual)
               </button>
+              {#if command.status === 'failed'}
+                <button class="use-actual-icon" on:click={handleUseActual} title="Copy actual output to expected output">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                </button>
+              {/if}
             {/if}
           </div>
           <div class="output-wrapper {command.isOutputExpanded ? 'expanded' : ''}" on:click={handleExpectedOutputClick}>
@@ -913,7 +920,7 @@
     background-color: rgba(var(--color-accent-rgb, 80, 70, 228), 0.1);
   }
 
-  .use-actual-link:active {
+  .use-actual-icon:active {
     transform: scale(0.95);
   }
 
