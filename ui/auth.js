@@ -162,7 +162,16 @@ export function addAuthRoutes(app) {
   // GitHub authentication routes
   app.get('/auth/github', (req, res, next) => {
     console.log('GitHub auth route accessed');
-    passport.authenticate('github', { scope: authConfig.github.scope })(req, res, next);
+    // Capture returnTo parameter from query and pass it through OAuth state
+    const returnTo = req.query.returnTo || req.session.returnTo;
+    // Store in session for callback
+    if (returnTo) {
+      req.session.returnTo = returnTo;
+    }
+    passport.authenticate('github', {
+      scope: authConfig.github.scope,
+      state: returnTo || undefined
+    })(req, res, next);
   });
 
   app.get(
@@ -170,8 +179,8 @@ export function addAuthRoutes(app) {
     (req, res, next) => {
       console.log('GitHub callback received', req.query);
       passport.authenticate('github', {
-        // Redirect to the frontend URL after successful login
-        successRedirect: process.env.GITHUB_SUCCESS_URL || `http://${process.env.HOST || 'localhost'}:${process.env.FRONTEND_PORT || 5173}`,
+        // Get returnTo from session (stored from state or query param)
+        successRedirect: req.session.returnTo || process.env.GITHUB_SUCCESS_URL || `http://${process.env.HOST || 'localhost'}:${process.env.FRONTEND_PORT || 5173}`,
         // Redirect to the frontend login page on failure
         failureRedirect: (process.env.GITHUB_FAILURE_URL || `http://${process.env.HOST || 'localhost'}:${process.env.FRONTEND_PORT || 5173}`) +
           '?error=Authentication%20failed.%20You%20might%20not%20be%20authorized%20to%20access%20this%20application.',
