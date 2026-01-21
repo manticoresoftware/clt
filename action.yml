@@ -238,8 +238,12 @@ runs:
 
         should_comment="$should_exit"
         if [[ ${{ github.event_name }} == 'pull_request' ]]; then
-          if [ "${{ inputs.comment_mode }}" -eq 'always' ]; then
+          if [ "${{ inputs.comment_mode }}" == 'always' ]; then
             should_comment=1
+          elif [ "${{ inputs.comment_mode }}" == 'failures' ]; then
+            should_comment="$should_exit"
+          else
+            should_comment=0
           fi
         else
           should_comment=0
