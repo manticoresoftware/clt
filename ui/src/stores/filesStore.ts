@@ -702,6 +702,7 @@ function createFilesStore() {
             // Process final results using same logic as original implementation
             if (status.testStructure) {
               console.log('🔍 Processing final enriched testStructure with actual outputs');
+              const testFailed = !status.success || status.exitCode !== 0;
 
               update(state => {
                 if (!state.currentFile?.testStructure) return state;
@@ -712,7 +713,7 @@ function createFilesStore() {
                     const processedStep = {
                       ...step,
                       actualOutput: step.actualOutput || '',
-                      status: step.status || 'success',
+                      status: step.status || (testFailed ? 'failed' : 'success'),
                       error: step.error || false
                     };
                     
