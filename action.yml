@@ -68,13 +68,13 @@ runs:
   using: "composite"
   steps:
     - name: Checkout the calling repo
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       with:
         repository: ${{ inputs.repository }}
         ref: ${{ inputs.ref }}
 
     - name: Checkout CLT
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       # TODO: remove the env section once https://github.com/actions/runner/issues/2525 is solved. Using 'env' is just a workaround.
       env:
         GH_ACTION_REPOSITORY: ${{ github.action_repository }}
@@ -86,7 +86,7 @@ runs:
 
     - name: Download artifact
       if:  ${{ inputs.artifact }}
-      uses: manticoresoftware/download_artifact_with_retries@main
+      uses: manticoresoftware/download_artifact_with_retries@v5
       with:
         name: ${{ inputs.artifact }}
         path: .
