@@ -387,7 +387,8 @@ export function setupRoutes(app, isAuthenticated, dependencies) {
   // API endpoint to get configuration (including default docker image)
   app.get('/api/config', isAuthenticated, (req, res) => {
     return res.json({
-      dockerImage: process.env.DOCKER_IMAGE || 'ghcr.io/manticoresoftware/manticoresearch:test-kit-latest'
+      dockerImage: process.env.DOCKER_IMAGE || 'ghcr.io/manticoresoftware/manticoresearch:test-kit-latest',
+      askAiEnabled: !!process.env.ASK_AI_COMMAND
     });
   });
 

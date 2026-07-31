@@ -26,8 +26,10 @@
     }
   }
   
-  // Fetch default docker image from backend config
-  async function loadDefaultImage() {
+  let askAiEnabled = false;
+
+  // Fetch config from backend (default docker image, feature flags)
+  async function loadConfig() {
     try {
       const response = await fetch(`${API_URL}/api/config`, {
         credentials: 'include'
@@ -37,9 +39,10 @@
         if (config.dockerImage) {
           defaultImage = config.dockerImage;
         }
+        askAiEnabled = !!config.askAiEnabled;
       }
     } catch (error) {
-      console.error('Failed to load default docker image:', error);
+      console.error('Failed to load config:', error);
     }
   }
   
@@ -73,7 +76,7 @@
   // Fetch auth state when component mounts and initialize git status
   onMount(() => {
     fetchAuthState();
-    loadDefaultImage(); // Load default docker image from backend
+    loadConfig();
     
   // Initialize git status polling with immediate fetch
   gitStatusStore.fetchGitStatus().then(() => {
@@ -159,16 +162,18 @@
 
   <div class="user-profile">
     {#if $authStore.isAuthenticated && !$authStore.isLoading}
-      <button
-        class="interactive-button"
-        on:click={openInteractiveSession}
-        title="Ask AI"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-        </svg>
-        Ask AI
-      </button>
+      {#if askAiEnabled}
+        <button
+          class="interactive-button"
+          on:click={openInteractiveSession}
+          title="Ask AI"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+          </svg>
+          Ask AI
+        </button>
+      {/if}
       
       <!-- Create PR Link - only show when no existing PR and has changes -->
       {#if showCreatePrLink}
