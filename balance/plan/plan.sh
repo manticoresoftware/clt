@@ -33,7 +33,7 @@ while IFS= read -r test; do
 		[[ -n "$known_weight" ]] && weight="$known_weight"
 	fi
 	printf '%012d\t%s\n' "$weight" "$test" >> "$candidates"
-done < "$CLT_BALANCE_TESTS"
+done <<< "$CLT_BALANCE_TESTS"
 
 if [[ ! -s "$candidates" ]]; then
 	printf 'matrix={"chunk":[]}\n' >> "$CLT_BALANCE_OUTPUT"
