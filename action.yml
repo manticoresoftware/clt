@@ -279,7 +279,7 @@ runs:
       run: bash clt/scripts/update-timings.sh
 
     - name: Save timing measurements
-      if: ${{ always() && steps.update-timings.outcome == 'success' }}
+      if: ${{ always() && steps.update-timings.outcome == 'success' && env.CLT_TIMINGS_PERSIST != 'false' }}
       uses: actions/cache/save@v5
       with:
         path: ${{ runner.temp }}/clt-timings/timings.tsv

@@ -1,0 +1,39 @@
+name: Balance CLT tests
+description: Restore internal timing measurements and build a deterministic duration-balanced test matrix.
+inputs:
+  tests:
+    description: Newline-separated CLT recording paths without the .rec suffix.
+    required: true
+  workers:
+    description: Number of matrix chunks to create.
+    required: true
+outputs:
+  matrix:
+    description: JSON matrix with duration-balanced CLT chunks.
+    value: ${{ steps.plan.outputs.matrix }}
+runs:
+  using: composite
+  steps:
+    - id: paths
+      name: Prepare timing cache
+      shell: bash
+      run: |
+        mkdir -p "$RUNNER_TEMP/clt-timings"
+        echo "path=$RUNNER_TEMP/clt-timings/timings.tsv" >> "$GITHUB_OUTPUT"
+
+    - name: Restore timing measurements
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ steps.paths.outputs.path }}
+        key: clt-timings-v1-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          clt-timings-v1-${{ github.repository_id }}-
+
+    - id: plan
+      name: Balance test matrix
+      shell: bash
+      env:
+        CLT_BALANCE_TESTS: ${{ inputs.tests }}
+        CLT_BALANCE_WORKERS: ${{ inputs.workers }}
+        CLT_BALANCE_TIMINGS: ${{ steps.paths.outputs.path }}
+      run: CLT_BALANCE_OUTPUT="$GITHUB_OUTPUT" bash "$GITHUB_ACTION_PATH/plan.sh"
