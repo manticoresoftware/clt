@@ -30,7 +30,7 @@ printf 'tests/slow\ntests/medium\ntests/unknown\n' > "$tmpdir/tests.list"
 	CLT_BALANCE_WORKERS=2 \
 	CLT_BALANCE_TIMINGS="$tmpdir/timings.tsv" \
 	CLT_BALANCE_OUTPUT="$tmpdir/output" \
-	bash "$root/balance/plan.sh"
+	bash "$root/balance/plan/plan.sh"
 )
 matrix="$(cut -d= -f2- "$tmpdir/output")"
 assert_eq "$(jq '.chunk | length' <<< "$matrix")" 2 "planner must create requested worker count"

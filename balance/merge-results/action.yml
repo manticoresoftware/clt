@@ -1,5 +1,5 @@
-name: Merge CLT timings
-description: Merge CLT timing artifacts and persist the internal repository-scoped cache.
+name: Persist CLT timing cache
+description: Collect per-job CLT timing measurements and save the internal repository-scoped cache for the next run.
 runs:
   using: composite
   steps:
@@ -25,12 +25,12 @@ runs:
         pattern: clt-timings-*
         path: ${{ steps.paths.outputs.artifacts }}
 
-    - name: Merge timing measurements
+    - name: Collect timing measurements
       shell: bash
       env:
         CLT_TIMINGS_PATH: ${{ steps.paths.outputs.timings }}
         CLT_TIMINGS_ARTIFACTS: ${{ steps.paths.outputs.artifacts }}
-      run: bash "$GITHUB_ACTION_PATH/merge.sh"
+      run: bash "$GITHUB_ACTION_PATH/merge-results.sh"
 
     - name: Save timing measurements
       uses: actions/cache/save@v5

@@ -21,4 +21,4 @@ else
 	awk -F '\t' 'length($1) == 64 && $1 ~ /^[0-9a-f]+$/ && $2 ~ /^[1-9][0-9]*$/ { duration[$1] = $2 } END { for (identifier in duration) print identifier "\t" duration[identifier] }' "${inputs[@]}" | sort > "$temporary"
 fi
 mv "$temporary" "$CLT_TIMINGS_PATH"
-printf 'Merged timing measurements from %s artifacts\n' "$(find "$CLT_TIMINGS_ARTIFACTS" -type f -name '*.tsv' | wc -l | tr -d ' ')"
+printf 'Collected timing measurements from %s jobs\n' "$(find "$CLT_TIMINGS_ARTIFACTS" -type f -name '*.tsv' | wc -l | tr -d ' ')"
