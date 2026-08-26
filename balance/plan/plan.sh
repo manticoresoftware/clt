@@ -20,6 +20,15 @@ hash_content() {
 	fi
 }
 
+median_samples() {
+	tr ',' '\n' <<< "$1" | sort -n | awk '
+	{ values[NR] = $1 }
+	END {
+		if (NR % 2 == 1) print values[(NR + 1) / 2]
+		else print int((values[NR / 2] + values[NR / 2 + 1]) / 2)
+	}'
+}
+
 candidates="$(mktemp)"
 queue_dir="$(mktemp -d)"
 trap 'rm -f "$candidates"; rm -rf "$queue_dir"' EXIT
@@ -29,7 +38,9 @@ while IFS= read -r test; do
 	identifier="$(hash_content "${test}.rec")"
 	weight=1000
 	if [[ -f "$CLT_BALANCE_TIMINGS" ]]; then
-		known_weight="$(awk -F '\t' -v identifier="$identifier" '$1 == identifier && $2 ~ /^[1-9][0-9]*$/ { value = $2 } END { print value }' "$CLT_BALANCE_TIMINGS")"
+		known_samples="$(awk -F '	' -v identifier="$identifier" '$1 == identifier && $2 ~ /^[1-9][0-9]*(,[1-9][0-9]*)*$/ { value = $2 } END { print value }' "$CLT_BALANCE_TIMINGS")"
+		known_weight=""
+		[[ -n "$known_samples" ]] && known_weight="$(median_samples "$known_samples")"
 		[[ -n "$known_weight" ]] && weight="$known_weight"
 	fi
 	printf '%012d\t%s\n' "$weight" "$test" >> "$candidates"

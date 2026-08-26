@@ -1,5 +1,9 @@
 name: 'Run CLT test'
 description: 'This action runs a CLT test'
+outputs:
+  timing-results:
+    description: 'Path to the current worker timing measurements.'
+    value: ${{ steps.collect-timings.outputs.path }}
 inputs:
   image:
     description: |-
@@ -96,13 +100,6 @@ runs:
         ${{ inputs.init_code }}
       shell: bash
 
-    - name: Restore timing measurements
-      uses: actions/cache/restore@v5
-      with:
-        path: ${{ runner.temp }}/clt-timings/timings.tsv
-        key: clt-timings-v1-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}
-        restore-keys: |
-          clt-timings-v1-${{ github.repository_id }}-
 
     - name: Run all tests
       env:
@@ -269,18 +266,13 @@ runs:
         fi
       shell: bash
 
-    - id: update-timings
-      name: Update timing measurements
+    - id: collect-timings
+      name: Collect timing measurements
       if: ${{ always() }}
       shell: bash
       env:
         CLT_TIMINGS_TESTS: ${{ runner.temp }}/clt-timing-tests
-        CLT_TIMINGS_PATH: ${{ runner.temp }}/clt-timings/timings.tsv
-      run: bash clt/scripts/update-timings.sh
-
-    - name: Save timing measurements
-      if: ${{ always() && steps.update-timings.outcome == 'success' && env.CLT_TIMINGS_PERSIST != 'false' }}
-      uses: actions/cache/save@v5
-      with:
-        path: ${{ runner.temp }}/clt-timings/timings.tsv
-        key: clt-timings-v1-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+        CLT_TIMINGS_RESULTS_PATH: ${{ runner.temp }}/clt-timings/results.tsv
+      run: |
+        bash clt/scripts/update-timings.sh
+        echo "path=$CLT_TIMINGS_RESULTS_PATH" >> "$GITHUB_OUTPUT"

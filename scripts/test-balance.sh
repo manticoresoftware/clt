@@ -22,7 +22,7 @@ mkdir -p "$tmpdir/tests"
 printf 'slow\n' > "$tmpdir/tests/slow.rec"
 printf 'medium\n' > "$tmpdir/tests/medium.rec"
 printf 'unknown\n' > "$tmpdir/tests/unknown.rec"
-printf '%s\t9000\n%s\t5000\n' "$(hash_content "$tmpdir/tests/slow.rec")" "$(hash_content "$tmpdir/tests/medium.rec")" > "$tmpdir/timings.tsv"
+printf '%s\t1000,9000,9000\n%s\t5000\n' "$(hash_content "$tmpdir/tests/slow.rec")" "$(hash_content "$tmpdir/tests/medium.rec")" > "$tmpdir/timings.tsv"
 (
 	cd "$tmpdir"
 	CLT_BALANCE_TESTS=$'tests/slow\ntests/medium\ntests/unknown' \
@@ -33,6 +33,6 @@ printf '%s\t9000\n%s\t5000\n' "$(hash_content "$tmpdir/tests/slow.rec")" "$(hash
 )
 matrix="$(cut -d= -f2- "$tmpdir/output")"
 assert_eq "$(jq '.chunk | length' <<< "$matrix")" 2 "planner must create requested worker count"
-assert_eq "$(jq -r '.chunk[0].test_prefix' <<< "$matrix")" tests/slow "largest known test must occupy the first queue"
+assert_eq "$(jq -r '.chunk[0].test_prefix' <<< "$matrix")" tests/slow "planner must use the median of retained timing samples"
 assert_eq "$(jq -r '.chunk[1].test_prefix' <<< "$matrix")" $'tests/medium\ntests/unknown' "planner must place remaining work on the least loaded queue"
 printf 'Timing planner tests passed\n'
