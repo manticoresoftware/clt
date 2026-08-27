@@ -284,6 +284,84 @@ jobs:
             apt-get install -y curl
 ```
 
+### Timing-balanced matrix
+
+For independent recordings with uneven runtimes, use the timing actions to assign work
+by observed duration. The planner and collector keep the timing ledger internal; the
+calling workflow passes discovered recording paths and transfers each worker's result
+file to one fan-in job.
+
+The root action exposes `timing-results`: a runner-local TSV file containing one
+`content_hash<TAB>duration_ms` row for every successful recording in that worker.
+Matrix jobs do not share a filesystem, so upload that file as an artifact. Its name must
+start with `clt-timings-` for the collector to find it.
+
+```yaml
+jobs:
+  discover:
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.balance.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: recordings
+        shell: bash
+        run: |
+          {
+            echo 'tests<<EOF'
+            find test/clt-tests -name '*.rec' -print | sort | sed 's/\.rec$//'
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+      - id: balance
+        uses: manticoresoftware/clt/balance/plan@<clt-ref>
+        with:
+          tests: ${{ steps.recordings.outputs.tests }}
+          workers: 20
+
+  clt:
+    needs: discover
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - id: run-clt
+        uses: manticoresoftware/clt@<clt-ref>
+        with:
+          image: ghcr.io/example/test-kit:latest
+          test_prefix: ${{ matrix.chunk.test_prefix }}
+      - name: Stage timing measurements
+        if: ${{ always() }}
+        run: |
+          mkdir -p timing-artifact
+          if [[ -f "${{ steps.run-clt.outputs.timing-results }}" ]]; then
+            cp "${{ steps.run-clt.outputs.timing-results }}" "timing-artifact/${{ matrix.chunk.id }}.tsv"
+          else
+            : > "timing-artifact/${{ matrix.chunk.id }}.tsv"
+          fi
+      - name: Upload timing measurements
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: clt-timings-${{ matrix.chunk.id }}
+          path: timing-artifact/${{ matrix.chunk.id }}.tsv
+          retention-days: 1
+
+  persist-timing-cache:
+    needs: clt
+    if: ${{ always() }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: manticoresoftware/clt/balance/merge-results@<clt-ref>
+```
+
+Use the same immutable CLT revision for the root action, planner, and collector. The
+planner restores repository-scoped measurements, assigns a conservative default to new
+recordings, and emits deterministic duration-balanced chunks. The collector restores
+that history, adds successful measurements from all workers, keeps the five newest
+samples for each recording content hash, and saves the next cache entry. The fan-in job
+must remain the only timing-cache writer.
+
 ## Project Structure
 
 CLT uses a specific directory structure for its key files:
