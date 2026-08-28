@@ -71,7 +71,7 @@ done < <(sort -rn "$candidates" | awk -F '\t' '!seen[$2]++')
 chunks='[]'
 for ((worker = 0; worker < CLT_BALANCE_WORKERS; worker++)); do
 	tests="$(jq -Rsc 'split("\n") | map(select(length > 0))' < "$queue_dir/$worker.tests")"
-	chunk="$(jq -cn --argjson id "$worker" --argjson tests "$tests" '{id:$id, tests:$tests, test_prefix:($tests | join("\n"))}')"
+	chunk="$(jq -cn --argjson id "$worker" --argjson tests "$tests" '{id:$id, tests:$tests}')"
 	chunks="$(jq -cn --argjson chunks "$chunks" --argjson chunk "$chunk" '$chunks + [$chunk]')"
 done
 printf 'matrix=%s\n' "$(jq -cn --argjson chunks "$chunks" '{chunk:$chunks}')" >> "$CLT_BALANCE_OUTPUT"

@@ -33,6 +33,6 @@ printf '%s\t1000,9000,9000\n%s\t5000\n' "$(hash_content "$tmpdir/tests/slow.rec"
 )
 matrix="$(cut -d= -f2- "$tmpdir/output")"
 assert_eq "$(jq '.chunk | length' <<< "$matrix")" 2 "planner must create requested worker count"
-assert_eq "$(jq -r '.chunk[0].test_prefix' <<< "$matrix")" tests/slow "planner must use the median of retained timing samples"
-assert_eq "$(jq -r '.chunk[1].test_prefix' <<< "$matrix")" $'tests/medium\ntests/unknown' "planner must place remaining work on the least loaded queue"
+assert_eq "$(jq -r '.chunk[0].tests | join("\n")' <<< "$matrix")" tests/slow "planner must use the median of retained timing samples"
+assert_eq "$(jq -r '.chunk[1].tests | join("\n")' <<< "$matrix")" $'tests/medium\ntests/unknown' "planner must place remaining work on the least loaded queue"
 printf 'Timing planner tests passed\n'

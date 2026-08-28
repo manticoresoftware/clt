@@ -252,6 +252,7 @@ CLT provides a ready-to-use GitHub action to run tests in your CI/CD pipeline. Y
 | `artifact` | Artifact to download for local built docker image | Not set |
 | `repository` | Repository to checkout | Not set |
 | `ref` | Branch name or ref to checkout | Default branch |
+| `tests` | JSON array of exact recording paths; takes precedence over `test_prefix` | Not set |
 
 ### Example Workflow
 
@@ -329,7 +330,7 @@ jobs:
         uses: manticoresoftware/clt@<clt-ref>
         with:
           image: ghcr.io/example/test-kit:latest
-          test_prefix: ${{ matrix.chunk.test_prefix }}
+          tests: ${{ toJSON(matrix.chunk.tests) }}
       - name: Stage timing measurements
         if: ${{ always() }}
         run: |
