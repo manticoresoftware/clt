@@ -1,0 +1,40 @@
+name: Persist CLT timing cache
+description: Collect per-job CLT timing measurements and save the internal repository-scoped cache for the next run.
+runs:
+  using: composite
+  steps:
+    - id: paths
+      name: Prepare timing cache
+      shell: bash
+      run: |
+        mkdir -p "$RUNNER_TEMP/clt-timings" "$RUNNER_TEMP/clt-timing-artifacts"
+        echo "timings=$RUNNER_TEMP/clt-timings/timings.tsv" >> "$GITHUB_OUTPUT"
+        echo "artifacts=$RUNNER_TEMP/clt-timing-artifacts" >> "$GITHUB_OUTPUT"
+
+    - name: Restore timing measurements
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ steps.paths.outputs.timings }}
+        key: clt-timings-v1-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          clt-timings-v1-${{ github.repository_id }}-
+
+    - name: Download timing measurements
+      uses: actions/download-artifact@v5
+      with:
+        pattern: clt-timings-*
+        path: ${{ steps.paths.outputs.artifacts }}
+
+    - name: Collect timing measurements
+      shell: bash
+      env:
+        CLT_TIMINGS_PATH: ${{ steps.paths.outputs.timings }}
+        CLT_TIMINGS_ARTIFACTS: ${{ steps.paths.outputs.artifacts }}
+      run: bash "$GITHUB_ACTION_PATH/merge-results.sh"
+
+    - name: Save timing measurements
+      if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
+      uses: actions/cache/save@v5
+      with:
+        path: ${{ steps.paths.outputs.timings }}
+        key: clt-timings-v1-${{ github.repository_id }}-${{ github.run_id }}-${{ github.run_attempt }}

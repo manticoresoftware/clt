@@ -1,5 +1,9 @@
 name: 'Run CLT test'
 description: 'This action runs a CLT test'
+outputs:
+  timing-results:
+    description: 'Path to the current worker timing measurements.'
+    value: ${{ steps.collect-timings.outputs.path }}
 inputs:
   image:
     description: |-
@@ -25,6 +29,13 @@ inputs:
     required: false
     type: string
     default: 'tests/'
+  tests:
+    description: |-
+      JSON array of exact CLT recording paths. Each path may include or omit the .rec suffix.
+      When set, this takes precedence over test_prefix and never expands a glob.
+    required: false
+    type: string
+    default: ''
   timeout:
     description: |-
       Allowed timeout in minutes for tests
@@ -63,7 +74,6 @@ inputs:
       Example: 'https://clt-ui.example.com'
     required: false
     type: string
-
 runs:
   using: "composite"
   steps:
@@ -97,44 +107,72 @@ runs:
         ${{ inputs.init_code }}
       shell: bash
 
+
     - name: Run all tests
       env:
         GITHUB_TOKEN: ${{ github.token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
+        CLT_EXACT_TESTS: ${{ inputs.tests }}
       run: |
         set +e
         should_exit=0
         test_success=0
         test_failed=0
+        timings_tests="${RUNNER_TEMP}/clt-timing-tests"
+        : > "$timings_tests"
         start_time=$(date +%s)
         declare -A failed_tests
         if [ -f "${{ inputs.artifact }}" ]; then
           cat "${{ inputs.artifact }}" | docker import - "${{ inputs.image }}"
         fi
-        while read -r prefix; do
-          for test in ${prefix}*.rec; do
-            echo "Running test: $test with command: CLT_RUN_ARGS=\"${{ inputs.run_args }}\" clt/clt test -t $test ${{ inputs.image }}"
-            echo "Run locally: clt test -d -t $test ${{ inputs.image }}"
-            CLT_RUN_ARGS="${{ inputs.run_args }}" clt/clt test -t $test ${{ inputs.image }}
-            exit_code=$?
-            rep_file=$(echo $test | cut -d. -f1).rep
-            cat $rep_file
-            if [ $exit_code -ne 0 ]; then
-              echo -n $'\n'$'\n'$'\n'
-              echo "🚨 Test failed with exit code: $exit_code"
-              echo "CLT-CMP diff output:"
-              cmp_file=$(echo $test | cut -d. -f1).cmp
-              output="$(cat "$cmp_file")"
-              failed_tests[$test]="$output"
-              echo "$output"
+        run_test() {
+          local test="$1"
+          echo "Running test: $test with command: CLT_RUN_ARGS=\"${{ inputs.run_args }}\" clt/clt test -t $test ${{ inputs.image }}"
+          echo "Run locally: clt test -d -t $test ${{ inputs.image }}"
+          CLT_RUN_ARGS="${{ inputs.run_args }}" clt/clt test -t "$test" "${{ inputs.image }}"
+          exit_code=$?
+          rep_file="${test%.rec}.rep"
+          cat "$rep_file"
+          if [ $exit_code -ne 0 ]; then
+            echo -n $'\n'$'\n'$'\n'
+            echo "🚨 Test failed with exit code: $exit_code"
+            echo "CLT-CMP diff output:"
+            cmp_file="${test%.rec}.cmp"
+            output="$(cat "$cmp_file")"
+            failed_tests[$test]="$output"
+            echo "$output"
+            should_exit=1
+            ((test_failed++))
+          else
+            ((test_success++))
+            printf '%s\n' "$test" >> "$timings_tests"
+          fi
+          echo "–––"
+        }
+
+        if [[ -n "$CLT_EXACT_TESTS" ]]; then
+          if ! jq -e 'type == "array" and all(.[]; type == "string")' <<< "$CLT_EXACT_TESTS" >/dev/null; then
+            echo 'tests must be a JSON array of strings' >&2
+            exit 2
+          fi
+          while IFS= read -r requested_test; do
+            [[ -n "$requested_test" ]] || continue
+            test="${requested_test%.rec}.rec"
+            if [[ ! -f "$test" ]]; then
+              echo "Requested exact test does not exist: $test" >&2
               should_exit=1
               ((test_failed++))
-            else
-              ((test_success++))
+              continue
             fi
-            echo "–––"
-          done
-        done <<< "$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "${{ inputs.test_prefix }}")"
+            run_test "$test"
+          done < <(jq -r '.[]' <<< "$CLT_EXACT_TESTS")
+        else
+          while read -r prefix; do
+            for test in ${prefix}*.rec; do
+              run_test "$test"
+            done
+          done <<< "$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<< "${{ inputs.test_prefix }}")"
+        fi
         end_time=$(date +%s)
         test_duration=$((end_time - start_time))
 
@@ -200,8 +238,10 @@ runs:
         job_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         commit_url="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
         commit_sha="$(echo "${{ github.sha }}" | cut -c1-7 )"
+        test_scope="${{ inputs.test_prefix }}"
+        [[ -n "$CLT_EXACT_TESTS" ]] && test_scope="exact test selection"
         echo "## ${{ github.job }}" >> $GITHUB_STEP_SUMMARY
-        echo "${test_emoji} CLT tests in \`${{ inputs.test_prefix }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "${test_emoji} CLT tests in \`$test_scope\`" >> $GITHUB_STEP_SUMMARY
         echo "✅ OK: $test_success" >> $GITHUB_STEP_SUMMARY
         echo "❌ Failed: $test_failed" >> $GITHUB_STEP_SUMMARY
         echo "⏳ Duration: ${test_duration}s" >> $GITHUB_STEP_SUMMARY
@@ -258,3 +298,14 @@ runs:
           exit 1
         fi
       shell: bash
+
+    - id: collect-timings
+      name: Collect timing measurements
+      if: ${{ always() }}
+      shell: bash
+      env:
+        CLT_TIMINGS_TESTS: ${{ runner.temp }}/clt-timing-tests
+        CLT_TIMINGS_RESULTS_PATH: ${{ runner.temp }}/clt-timings/results.tsv
+      run: |
+        bash clt/scripts/update-timings.sh
+        echo "path=$CLT_TIMINGS_RESULTS_PATH" >> "$GITHUB_OUTPUT"
