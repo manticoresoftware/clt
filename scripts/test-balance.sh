@@ -25,7 +25,7 @@ printf 'unknown\n' > "$tmpdir/tests/unknown.rec"
 printf '%s\t1000,9000,9000\n%s\t5000\n' "$(hash_content "$tmpdir/tests/slow.rec")" "$(hash_content "$tmpdir/tests/medium.rec")" > "$tmpdir/timings.tsv"
 (
 	cd "$tmpdir"
-	CLT_BALANCE_TESTS=$'tests/slow\ntests/medium\ntests/unknown' \
+	CLT_BALANCE_TESTS=$'tests/slow.rec\ntests/medium\ntests/unknown' \
 	CLT_BALANCE_WORKERS=2 \
 	CLT_BALANCE_TIMINGS="$tmpdir/timings.tsv" \
 	CLT_BALANCE_OUTPUT="$tmpdir/output" \

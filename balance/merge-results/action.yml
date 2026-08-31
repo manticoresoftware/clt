@@ -33,6 +33,7 @@ runs:
       run: bash "$GITHUB_ACTION_PATH/merge-results.sh"
 
     - name: Save timing measurements
+      if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
       uses: actions/cache/save@v5
       with:
         path: ${{ steps.paths.outputs.timings }}

@@ -2,7 +2,7 @@ name: Balance CLT tests
 description: Restore internal timing measurements and build a deterministic duration-balanced test matrix.
 inputs:
   tests:
-    description: Newline-separated CLT recording paths without the .rec suffix.
+    description: Newline-separated exact CLT recording paths. Each path may include or omit the .rec suffix.
     required: true
   workers:
     description: Number of matrix chunks to create.

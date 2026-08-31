@@ -34,8 +34,11 @@ queue_dir="$(mktemp -d)"
 trap 'rm -f "$candidates"; rm -rf "$queue_dir"' EXIT
 
 while IFS= read -r test; do
-	[[ -n "$test" && -f "${test}.rec" ]] || continue
-	identifier="$(hash_content "${test}.rec")"
+	[[ -n "$test" ]] || continue
+	recording="${test%.rec}.rec"
+	[[ -f "$recording" ]] || continue
+	test="${recording%.rec}"
+	identifier="$(hash_content "$recording")"
 	weight=1000
 	if [[ -f "$CLT_BALANCE_TIMINGS" ]]; then
 		known_samples="$(awk -F '	' -v identifier="$identifier" '$1 == identifier && $2 ~ /^[1-9][0-9]*(,[1-9][0-9]*)*$/ { value = $2 } END { print value }' "$CLT_BALANCE_TIMINGS")"
