@@ -119,7 +119,9 @@ runs:
         test_success=0
         test_failed=0
         timings_tests="${RUNNER_TEMP}/clt-timing-tests"
+        last_started_test="${RUNNER_TEMP}/clt-last-started-test"
         : > "$timings_tests"
+        rm -f "$last_started_test"
         start_time=$(date +%s)
         declare -A failed_tests
         if [ -f "${{ inputs.artifact }}" ]; then
@@ -127,6 +129,7 @@ runs:
         fi
         run_test() {
           local test="$1"
+          printf '%s\n' "$test" > "$last_started_test"
           echo "Running test: $test with command: CLT_RUN_ARGS=\"${{ inputs.run_args }}\" clt/clt test -t $test ${{ inputs.image }}"
           echo "Run locally: clt test -d -t $test ${{ inputs.image }}"
           CLT_RUN_ARGS="${{ inputs.run_args }}" clt/clt test -t "$test" "${{ inputs.image }}"
@@ -147,6 +150,7 @@ runs:
             ((test_success++))
             printf '%s\n' "$test" >> "$timings_tests"
           fi
+          rm -f "$last_started_test"
           echo "–––"
         }
 
@@ -298,6 +302,22 @@ runs:
           exit 1
         fi
       shell: bash
+
+    - name: Report interrupted CLT test
+      if: ${{ always() }}
+      shell: bash
+      env:
+        CLT_LAST_STARTED_TEST: ${{ runner.temp }}/clt-last-started-test
+      run: |
+        [[ -f "$CLT_LAST_STARTED_TEST" ]] || exit 0
+        test="$(<"$CLT_LAST_STARTED_TEST")"
+        rep_file="${test%.rec}.rep"
+        echo "Last started CLT test: $test"
+        if [[ -f "$rep_file" ]]; then
+          cat "$rep_file"
+        else
+          echo "No replay file found: $rep_file"
+        fi
 
     - id: collect-timings
       name: Collect timing measurements
