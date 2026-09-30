@@ -407,6 +407,22 @@ export function setupTestRoutes(app, isAuthenticated, dependencies) {
           const hasProcessError = testInfo.exitCode !== 0;
           const overallStatus = hasValidationErrors || hasProcessError ? 'failed' : 'completed';
 
+          // Mark unresolved steps as failed when the process itself errored (e.g. command not found, exit 127)
+          if (hasProcessError && testStructure?.steps) {
+            function markUnresolvedStepsFailed(steps) {
+              steps.forEach(step => {
+                if (!step.status) {
+                  step.status = 'failed';
+                  step.error = true;
+                }
+                if (step.steps?.length > 0) {
+                  markUnresolvedStepsFailed(step.steps);
+                }
+              });
+            }
+            markUnresolvedStepsFailed(testStructure.steps);
+          }
+
           // Return final results
           return res.json({
             running: false,
