@@ -4,6 +4,9 @@ outputs:
   timing-results:
     description: 'Path to the current worker timing measurements.'
     value: ${{ steps.collect-timings.outputs.path }}
+  test-results:
+    description: 'Path to JSON Lines with a result for each executed CLT test.'
+    value: ${{ steps.init-test-results.outputs.path }}
 inputs:
   image:
     description: |-
@@ -108,6 +111,14 @@ runs:
       shell: bash
 
 
+    - id: init-test-results
+      name: Initialize per-test results
+      shell: bash
+      run: |
+        results_path="$RUNNER_TEMP/clt-test-results.jsonl"
+        : > "$results_path"
+        echo "path=$results_path" >> "$GITHUB_OUTPUT"
+
     - name: Run all tests
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -120,20 +131,33 @@ runs:
         test_failed=0
         timings_tests="${RUNNER_TEMP}/clt-timing-tests"
         last_started_test="${RUNNER_TEMP}/clt-last-started-test"
+        last_started_at="${RUNNER_TEMP}/clt-last-started-at-ms"
+        test_results="${RUNNER_TEMP}/clt-test-results.jsonl"
         : > "$timings_tests"
-        rm -f "$last_started_test"
+        rm -f "$last_started_test" "$last_started_at"
         start_time=$(date +%s)
         declare -A failed_tests
+        record_test_result() {
+          local test="$1" status="$2" exit_code="$3" duration_ms="$4"
+          jq -cn --arg test "$test" --arg status "$status" \
+            --argjson exit_code "$exit_code" --argjson duration_ms "$duration_ms" \
+            '{test: $test, status: $status, exit_code: $exit_code, duration_ms: $duration_ms}' >> "$test_results"
+        }
         if [ -f "${{ inputs.artifact }}" ]; then
           cat "${{ inputs.artifact }}" | docker import - "${{ inputs.image }}"
         fi
         run_test() {
           local test="$1"
+          local started_ms
+          started_ms=$(date +%s%3N)
           printf '%s\n' "$test" > "$last_started_test"
+          printf '%s\n' "$started_ms" > "$last_started_at"
           echo "Running test: $test with command: CLT_RUN_ARGS=\"${{ inputs.run_args }}\" clt/clt test -t $test ${{ inputs.image }}"
           echo "Run locally: clt test -d -t $test ${{ inputs.image }}"
           CLT_RUN_ARGS="${{ inputs.run_args }}" clt/clt test -t "$test" "${{ inputs.image }}"
           exit_code=$?
+          local finished_ms
+          finished_ms=$(date +%s%3N)
           rep_file="${test%.rec}.rep"
           cat "$rep_file"
           if [ $exit_code -ne 0 ]; then
@@ -146,11 +170,13 @@ runs:
             echo "$output"
             should_exit=1
             ((test_failed++))
+            record_test_result "$test" "failed" "$exit_code" "$((finished_ms - started_ms))"
           else
             ((test_success++))
+            record_test_result "$test" "passed" "0" "$((finished_ms - started_ms))"
             printf '%s\n' "$test" >> "$timings_tests"
           fi
-          rm -f "$last_started_test"
+          rm -f "$last_started_test" "$last_started_at"
           echo "–––"
         }
 
@@ -166,6 +192,7 @@ runs:
               echo "Requested exact test does not exist: $test" >&2
               should_exit=1
               ((test_failed++))
+              record_test_result "$test" "missing" "null" "0"
               continue
             fi
             run_test "$test"
@@ -308,9 +335,18 @@ runs:
       shell: bash
       env:
         CLT_LAST_STARTED_TEST: ${{ runner.temp }}/clt-last-started-test
+        CLT_LAST_STARTED_AT: ${{ runner.temp }}/clt-last-started-at-ms
+        CLT_RESULTS_PATH: ${{ runner.temp }}/clt-test-results.jsonl
       run: |
         [[ -f "$CLT_LAST_STARTED_TEST" ]] || exit 0
         test="$(<"$CLT_LAST_STARTED_TEST")"
+        started_ms=$(cat "$CLT_LAST_STARTED_AT" 2>/dev/null || date +%s%3N)
+        finished_ms=$(date +%s%3N)
+        if [[ -f "$CLT_RESULTS_PATH" ]]; then
+          jq -cn --arg test "$test" --arg status "interrupted" \
+            --argjson exit_code null --argjson duration_ms "$((finished_ms - started_ms))" \
+            '{test: $test, status: $status, exit_code: $exit_code, duration_ms: $duration_ms}' >> "$CLT_RESULTS_PATH"
+        fi
         rep_file="${test%.rec}.rep"
         echo "Last started CLT test: $test"
         if [[ -f "$rep_file" ]]; then
